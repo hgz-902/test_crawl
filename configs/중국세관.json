@@ -8,12 +8,14 @@
   "ignore_https_errors": false,
   "notes": "크롤링 자동화 브라우져 접근 불가 > 다른 크롤링 방법 고려 필요",
   "search_terms": [],
+  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
       "xpath": "//*[@id=\"0e899049775d4ec4897f855113a712fe\"]/div[2]/div/ul/li[2]/a",
       "xpath_2": "//*[@id=\"0e899049775d4ec4897f855113a712fe\"]/div[2]/div/ul/li[3]/a",
       "loop": true,
+      "loop_mode": "items",
       "loop_limit": 3,
       "action": "click",
       "wait_state": "attached"
@@ -28,5 +30,5 @@
     }
   ],
   "created_at": "2026-04-29T09:32:56+09:00",
-  "updated_at": "2026-04-29T09:52:14+09:00"
+  "updated_at": "2026-05-13T13:57:41+09:00"
 }

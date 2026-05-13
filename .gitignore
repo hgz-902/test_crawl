@@ -19,6 +19,7 @@ env/
 # Runtime logs
 logs/
 *.log
+outputs/
 
 # Build artifacts
 build/
