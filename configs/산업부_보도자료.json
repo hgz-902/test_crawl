@@ -1,0 +1,83 @@
+{
+  "name": "산업부_보도자료",
+  "start_url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
+  "output_dir": "outputs/motir_news",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18",
+    "19",
+    "20"
+  ],
+  "filter_terms": [
+    "석유",
+    "정유",
+    "화학",
+    "유가",
+    "주유소",
+    "LNG",
+    "전력",
+    "수소",
+    "재생에너지",
+    "태양광",
+    "풍력",
+    "도시가스",
+    "SMR",
+    "ESS",
+    "배터리",
+    "전기차"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"mytable\"]/tbody/tr[1]/td[3]/div/a",
+      "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 10,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[6]/p/span[1]/a[1]",
+      "xpath_2": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[6]/p/span[2]/a[1]",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "attr": "href",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-28T18:13:20+09:00",
+  "updated_at": "2026-05-12T10:11:29+09:00"
+}

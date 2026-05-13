@@ -1,0 +1,32 @@
+{
+  "name": "중국세관",
+  "start_url": "http://www.customs.gov.cn/customs/xwfb34/ywjj/index.html",
+  "output_dir": "outputs/customs",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "크롤링 자동화 브라우져 접근 불가 > 다른 크롤링 방법 고려 필요",
+  "search_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"0e899049775d4ec4897f855113a712fe\"]/div[2]/div/ul/li[2]/a",
+      "xpath_2": "//*[@id=\"0e899049775d4ec4897f855113a712fe\"]/div[2]/div/ul/li[3]/a",
+      "loop": true,
+      "loop_limit": 3,
+      "action": "click",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"f08dd59a4fc045b08ef189810ee8bbaa\"]/div[2]/div[2]/div[2]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-29T09:32:56+09:00",
+  "updated_at": "2026-04-29T09:52:14+09:00"
+}

@@ -1,0 +1,122 @@
+{% extends "layout.html" %}
+{% block title %}설정 목록{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>크롤러 설정</h1>
+  </div>
+  <a class="button primary" href="/configs/new">새 설정</a>
+</section>
+
+{% if error %}
+<div class="notice error">{{ error }}</div>
+{% endif %}
+
+{% if configs %}
+<div class="table-wrap">
+  <table class="configs-table">
+    <thead>
+      <tr>
+        <th class="center-col">번호</th>
+        <th class="center-col">이름</th>
+        <th>목록 URL</th>
+        <th class="meta-col">검색어</th>
+        <th class="meta-col">필터</th>
+        <th class="center-col">출력 경로</th>
+        <th class="note-col">특이사항</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for config in configs %}
+      <tr>
+        <td class="center-col">{{ loop.revindex }}</td>
+        <td class="center-col">{{ config.name }}</td>
+        <td class="url config-url">{{ config.start_url }}</td>
+        <td class="meta-cell">
+          {% if config.search_terms %}
+          <details class="note-toggle">
+            <summary class="note-icon" aria-label="검색어 보기" title="검색어">
+              <span aria-hidden="true">🔎</span>
+            </summary>
+            <div class="note-popover">{{ config.search_terms | join('\n') }}</div>
+          </details>
+          {% else %}
+          <span class="note-empty">-</span>
+          {% endif %}
+        </td>
+        <td class="meta-cell">
+          {% if config.filter_terms %}
+          <details class="note-toggle">
+            <summary class="note-icon" aria-label="필터 보기" title="필터">
+              <span aria-hidden="true">⛶</span>
+            </summary>
+            <div class="note-popover">{{ config.filter_terms | join('\n') }}</div>
+          </details>
+          {% else %}
+          <span class="note-empty">-</span>
+          {% endif %}
+        </td>
+        <td class="center-col">{{ config.output_dir }}</td>
+        <td class="notes-cell">
+          {% if config.notes %}
+          <details class="note-toggle">
+            <summary class="note-icon" aria-label="특이사항 보기" title="특이사항">
+              <span aria-hidden="true">📝</span>
+            </summary>
+            <div class="note-popover">{{ config.notes }}</div>
+          </details>
+          {% else %}
+          <span class="note-empty">-</span>
+          {% endif %}
+        </td>
+        <td class="actions">
+          <a class="button" href="/configs/{{ config.path.stem }}">편집</a>
+          <form method="post" action="/configs/{{ config.path.stem }}/run">
+            <button type="submit">실행</button>
+          </form>
+          <form method="post" action="/configs/{{ config.path.stem }}/delete" data-confirm="이 설정을 삭제할까요?">
+            <button class="danger" type="submit">삭제</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">아직 등록된 설정이 없습니다.</div>
+{% endif %}
+<script>
+  (() => {
+    const table = document.querySelector(".configs-table");
+    if (!table) return;
+
+    const syncRowHeights = () => {
+      table.querySelectorAll("tbody tr").forEach((row) => {
+        const cells = Array.from(row.children);
+        if (!cells.length) return;
+
+        cells.forEach((cell) => {
+          cell.style.height = "auto";
+        });
+
+        let maxHeight = 0;
+        cells.forEach((cell) => {
+          const height = cell.getBoundingClientRect().height;
+          if (height > maxHeight) maxHeight = height;
+        });
+
+        cells.forEach((cell) => {
+          cell.style.height = `${Math.ceil(maxHeight)}px`;
+        });
+      });
+    };
+
+    const schedule = () => requestAnimationFrame(syncRowHeights);
+    window.addEventListener("load", schedule, { once: true });
+    window.addEventListener("resize", schedule);
+    schedule();
+  })();
+</script>
+{% endblock %}

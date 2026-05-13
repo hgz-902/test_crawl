@@ -1,0 +1,42 @@
+{
+  "name": "산업부_공지사항",
+  "start_url": "https://www.motir.go.kr/kor/article/ATCL6e90bb9de",
+  "output_dir": "outputs/motir_alert",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"mytable\"]/tbody/tr[1]/td[3]/div/a",
+      "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[6]/p/span/a[1]",
+      "loop": false,
+      "action": "download",
+      "attr": "href",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-28T18:17:09+09:00",
+  "updated_at": "2026-04-30T14:38:04+09:00"
+}

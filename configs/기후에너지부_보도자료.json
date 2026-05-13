@@ -1,0 +1,83 @@
+{
+  "name": "기후에너지부_보도자료",
+  "start_url": "https://mcee.go.kr/home/web/board/list.do?maxPageItems=10&maxIndexPages=10&searchKey=&searchValue=&boardMasterId=939&menuId=10598&boardCategoryId=&condition.hideCate=&condition.createDeptCode=&condition.createDeptName=&condition.fromDate=&condition.toDate=&order=&condition.createId=&decorator=&condition.proxyParam1=&condition.proxyParam2=&condition.proxyParam3=&proxyListPath=&proxyReadPath=&initialLoad=&pagerOffset={search_term}",
+  "output_dir": "outputs/mcee_10598",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "0",
+    "10",
+    "20",
+    "30",
+    "40",
+    "50",
+    "60",
+    "70",
+    "80",
+    "90",
+    "100",
+    "110",
+    "120",
+    "130",
+    "140",
+    "150",
+    "160",
+    "170",
+    "180",
+    "190",
+    "200"
+  ],
+  "filter_terms": [
+    "석유",
+    "정유",
+    "화학",
+    "유가",
+    "주유소",
+    "LNG",
+    "전력",
+    "수소",
+    "재생에너지",
+    "태양광",
+    "풍력",
+    "도시가스",
+    "SMR",
+    "ESS",
+    "배터리",
+    "전기차"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"content_body\"]/div/table/tbody/tr[1]/td[2]/a",
+      "xpath_2": "//*[@id=\"content_body\"]/div/table/tbody/tr[2]/td[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 10,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "downlaod_file",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[1]/a",
+      "xpath_2": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-27T18:16:30+09:00",
+  "updated_at": "2026-05-12T10:47:01+09:00"
+}

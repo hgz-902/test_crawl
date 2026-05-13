@@ -1,0 +1,25 @@
+{
+  "name": "구글",
+  "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+  "output_dir": "outputs/google",
+  "timeout_ms": 60000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "Google News RSS를 사용. Action=parser, attr=google로 실행한다.",
+  "search_terms": [
+    "SK이노베이션",
+    "최태원",
+    "유가전망"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "google_rss",
+      "action": "parser",
+      "attr": "google"
+    }
+  ],
+  "created_at": "2026-04-28T13:12:25+09:00",
+  "updated_at": "2026-05-05T20:21:57+09:00"
+}
