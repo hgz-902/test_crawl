@@ -241,3 +241,50 @@ Make TheBell collection work in the existing crawler product before the user per
 - reviewer: check parser scoping, duplicate/right-rail link exclusion, output path shape, and provider coupling.
 - QA: verify page-count semantics, two search terms, JSON item contents, UI panel behavior, and regression tests.
 - auditor: verify external request bounds, paywall/login text handling, retention/artifact risks, and user-owned Git push boundary.
+
+## Active Slice: InvestChosun Generic News Collection
+
+### Universal Shared Goal
+Finish the requested InvestChosun crawler slice or identify a concrete blocker with evidence, without expanding source-code churn.
+
+### Project Shared Goal
+Add InvestChosun as a generic HTML news execution-step config for `최태원` and `SK`, verify pagination, article detail title/body extraction, body-noise removal, and UI editability before user-owned push.
+
+### Expected Deliverables
+- `configs\인베스트조선.json`.
+- Search URL with visible variables: `q={search_term}&pn={page_number}`.
+- Generic editor steps only: `open_detail`, `extract_title`, `extract_body`.
+- Verification proof for two search terms and two pages.
+- UI proof that provider-specific Naver/Daum panels are absent.
+
+### Project Team Binding
+- Use Codex main as orchestrator/integrator/local verifier.
+- This slice is config-only and classified trivial; no Alpha worker wave is required.
+- Legacy OpenClaw fallback is not used.
+
+### Role-Specific Small Goals
+- developer: keep implementation config-only unless site evidence proves a shared workflow defect.
+- reviewer: check origin baseline, no unexpected source changes, no provider-panel drift, and XPath maintainability.
+- QA: verify two search terms, page count semantics, title/body outputs, body-noise removal, and UI editor view.
+- auditor: verify no API credentials are introduced, no download step is added, and push remains user-owned.
+
+### Connection Goals
+- Follow `SOURCE_CHANGE_GUARDRAIL.md`.
+- Use original news storage shape from origin Yonhap: `filter\<NNN_search_term>\texts\YYYYMMDD` plus `filter\workflow_records.json`.
+- Record any source-code reason for a later `$git-push-change-log`; none was needed for this slice.
+
+### Preferred Context Package
+- `SOURCE_CHANGE_GUARDRAIL.md`
+- origin `configs\연합뉴스.json`
+- current `configs\마켓인사이트.json`
+- current `configs\인베스트조선.json`
+
+### Active Risk References
+- XPath drift on InvestChosun search/detail pages.
+- Generic `filter\workflow_records.json` is origin-compatible but not run-versioned.
+- Body extraction may still require config-level `exclude_xpath` tuning if InvestChosun changes article-side widgets.
+
+### Preferred Command Or Entrypoint References
+- config validation: `.venv\Scripts\python.exe` with `crawler_app.workflow.load_workflow_config`.
+- live proof: `crawler_app.workflow.run_workflow_config` with `output_dir` overridden to `qa-artifacts`.
+- UI proof: local server `http://127.0.0.1:3020/configs/인베스트조선`.

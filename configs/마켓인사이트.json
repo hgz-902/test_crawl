@@ -6,7 +6,7 @@
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "마켓인사이트는 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. open_detail의 mode를 pagination으로 두면 loop_limit은 가져올 검색 결과 페이지 수로 동작하며, 1페이지부터 해당 페이지까지 각 페이지의 기사 목록을 반복 클릭한다. 기사 목록 XPath가 바뀌면 open_detail의 XPath 1/2를, 기사 상세 제목/본문 구조가 바뀌면 extract_title/extract_body XPath를 수정한다. 현재 설정은 검색어별 2페이지까지 수집한다.",
+  "notes": "마켓인사이트는 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다.",
   "search_terms": [
     "최태원",
     "SK",
@@ -53,5 +53,5 @@
     }
   ],
   "created_at": "2026-05-14T19:10:00+09:00",
-  "updated_at": "2026-05-14T20:17:23+09:00"
+  "updated_at": "2026-05-14T20:37:05+09:00"
 }

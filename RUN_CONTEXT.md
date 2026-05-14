@@ -747,3 +747,32 @@
   - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
   - `node --check static\app.js`: pass.
   - no blocker.
+
+## InvestChosun News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add InvestChosun collection for `최태원` and `SK` using the existing generic news execution-step flow, then verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin news baseline from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - confirmed InvestChosun search URL uses `q` for the search term and `pn` for the page number.
+  - added `configs\인베스트조선.json`.
+  - configured `open_detail`, `extract_title`, and `extract_body` only; no `download_file`, provider parser, UI panel, or shared source-code change.
+  - adjusted article list XPath to a direct repeatable path so loop inference resolves all 10 current-page items.
+  - removed image-expand and ranking/recommendation blocks from body extraction with config `exclude_xpath`.
+- still not done:
+  - no git push was run.
+- next one action:
+  - if the user wants to push, use `$git-push-change-log` and stage only intended files for this site plus any already-approved unpushed commit state.
+- related files/paths:
+  - `configs\인베스트조선.json`
+  - `qa-artifacts\investchosun-live-20260514-v2\summary.json`
+  - `qa-artifacts\investchosun-ui-20260514\ui_result.json`
+  - `qa-artifacts\investchosun-ui-20260514\editor-3020.png`
+- validation result or blocker:
+  - live proof succeeded: 40 records total, `최태원` 20 and `SK` 20, pages `[1, 2]`, 80 extracted title/body files, 0 downloads.
+  - body cleanup proof: `이미지 크게보기` and `많이 본 뉴스` were absent from verified body extracts.
+  - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.

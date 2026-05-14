@@ -393,3 +393,37 @@
 - Current config collects up to 2 MarketInsight search result pages per search term; users change the page count through the `open_detail` step `loop_limit` when mode is `pagination`.
 - Per-page item count is inferred from the `open_detail` XPath pair rather than a separate item-limit field in this mode.
 - Output accumulation source-code changes were considered, then canceled by user request; generic storage remains the previous `filter\<NNN_search_term>\texts\YYYYMMDD` plus `filter\workflow_records.json` shape.
+
+## Active Implementation Plan Update: InvestChosun News Config
+
+### Status
+- 2026-05-14: completed with pass, pending user-owned push.
+
+### Completion Criteria
+- `인베스트조선` config is added as a generic HTML news execution-step site.
+- No shared source code or UI source is changed for this site slice.
+- Search terms are `최태원` and `SK`.
+- `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2` collect pages 1 and 2 per search term.
+- Title/body text is extracted from article detail pages.
+- Obvious non-article body descendants such as image expand blocks and ranking/news recommendation blocks are excluded by config.
+- UI editor shows generic 실행 단계 and no Naver/Daum provider panel.
+
+### Completed
+- Checked `SOURCE_CHANGE_GUARDRAIL.md` and origin `연합뉴스` baseline.
+- Confirmed InvestChosun search URL: `https://www.investchosun.com/svc/news/search.html?q={search_term}&pn={page_number}`.
+- Added `configs\인베스트조선.json`.
+- Used direct list XPath `li > div.list_detail > dl > dt > a` so the workflow loop-index inference can resolve 10 articles per page.
+- Added `exclude_xpath` to `extract_body` to remove `center_img` and `ranking` blocks without changing shared source code.
+
+### Validation
+- live proof: `qa-artifacts\investchosun-live-20260514-v2`, 40 records total, 20 for `최태원`, 20 for `SK`, 80 title/body extracted files, 0 downloads, no workflow errors.
+- pagination proof: first URL `q=최태원&pn=1`, last URL `q=SK&pn=2`, recorded pages `[1, 2]`.
+- body cleanup proof: `이미지 크게보기` hits `0`, `많이 본 뉴스` hits `0` in the verified v2 run.
+- UI proof: `qa-artifacts\investchosun-ui-20260514\editor-3020.png` and `ui_result.json`; editor has `open_detail`, `extract_title`, and `extract_body`; Naver/Daum panels absent.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+- `node --check static\app.js`: pass.
+
+### Remaining Follow-Up
+- InvestChosun HTML may drift; update config XPath from the UI if result/detail structures change.
+- Generic news output keeps Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` storage plus `filter\workflow_records.json`.
+- No git push was run; user owns push execution.

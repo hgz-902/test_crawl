@@ -649,3 +649,34 @@
   - MarketInsight HTML may drift; XPath updates should be made in the config editor.
   - current config uses `open_detail.loop_limit=2` for page count when mode is `pagination`; users must adjust the `open_detail` limit when they want more pages.
   - generic output accumulation remains canceled and may overwrite `filter\workflow_records.json` on repeated runs, matching the previous behavior.
+
+## InvestChosun News Config Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: new generic HTML news site config only; no shared source-code, UI source, storage contract, parser provider, or runtime schema edit.
+  - Alpha wave required: no.
+  - waiver: config-only site onboarding using origin Yonhap-style news baseline.
+- current goal:
+  - collect InvestChosun search results for `최태원` and `SK` through the existing generic execution-step workflow, up to pre-push verification.
+- completed:
+  - origin news baseline checked at `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - `configs\인베스트조선.json` added.
+  - configured `start_url` as `https://www.investchosun.com/svc/news/search.html?q={search_term}&pn={page_number}`.
+  - configured only `open_detail`, `extract_title`, and `extract_body`.
+  - configured `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2`.
+  - used config `exclude_xpath` to remove image-expand and ranking/recommendation blocks from body extraction.
+- validation or blocker:
+  - live proof: `qa-artifacts\investchosun-live-20260514-v2`, 40 records, 80 extracted title/body files, 0 downloads, no workflow errors.
+  - per-term proof: `최태원` 20 records, `SK` 20 records.
+  - pagination proof: pages `[1, 2]`, first URL `q=최태원&pn=1`, last URL `q=SK&pn=2`.
+  - body cleanup proof: `이미지 크게보기` hits `0`, `많이 본 뉴스` hits `0`.
+  - UI proof: `qa-artifacts\investchosun-ui-20260514\editor-3020.png` and `ui_result.json`; editor shows generic 3-step workflow and no Naver/Daum panels.
+  - config validation: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+- remaining risk:
+  - InvestChosun HTML may drift; list/detail XPath should be updated from the UI if the site structure changes.
+  - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
+  - no git push was run; user owns push execution.
