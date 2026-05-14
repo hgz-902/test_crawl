@@ -708,3 +708,42 @@
   - Future Google changes should prefer config changes such as search terms, locale URL parameters, and item limit; parser/source changes require a recorded RSS-specific reason.
 - validation result or blocker:
   - generic XPath preview probe failed with XML/HTML parser mismatch; no source code was changed.
+
+## MarketInsight News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add MarketInsight collection for `최태원` and `SK`, fix the existing `open_detail` pagination mode, and verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin `연합뉴스` config from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed MarketInsight search endpoint: `https://marketinsight.hankyung.com/search?keyword={search_term}`.
+  - confirmed search results repeat under `ul.news-list li`, with detail links at `h3.news-tit a`.
+  - confirmed article details expose title under `article.article-view .article-head h1` and body under `article.article-view .article-body`.
+  - added `configs\마켓인사이트.json`.
+  - fixed workflow behavior so `open_detail` can stay as the first and only click loop with `loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2`.
+  - kept `next_button` available but changed pagination UI defaults to `page_number`.
+  - kept output accumulation source-code change canceled per user request; the only shared source-code change left is the `open_detail` pagination behavior fix.
+- design notes and tradeoffs:
+  - a shared source-code change is needed because the existing UI already exposes `pagination` mode on `open_detail`, but the workflow engine did not interpret that mode as "collect pages 1..limit using the item XPath pair."
+  - MarketInsight is a news-style HTML execution-step site, not API-backed and not RSS/platform-backed.
+  - current config collects up to 2 pages per search term.
+  - `open_detail.loop_limit` is the user-facing page-count setting when `open_detail.loop_mode=pagination`.
+  - per-page items are inferred from the `open_detail` XPath pair.
+  - `page_number` is now the default pagination mode because it is clearer and more stable for URL/page-parameter sites; `next_button` remains available for sites that require it.
+- next one action:
+  - wait for the user's push-prep instruction; do not push automatically.
+- validation result or blocker:
+  - smoke proof succeeded under `qa-artifacts\marketinsight-smoke-20260514`: 4 records, 8 extracted title/body files.
+  - full first-page live proof succeeded under `qa-artifacts\marketinsight-live-20260514`: 30 records, 60 extracted title/body files, 0 downloads, no workflow errors.
+  - pagination live proof succeeded under `qa-artifacts\marketinsight-open-detail-pagination-20260514`: 60 records, 120 extracted title/body files, 0 downloads, no workflow errors.
+  - pagination evidence: `click_loop_step_indexes` was `[1]`; the first record started from `page=1` and the last SK record started from `https://marketinsight.hankyung.com/search?keyword=SK&page=2`.
+  - output followed generic news/Yonhap-style storage: `filter\<NNN_search_term>\texts\YYYYMMDD` and `filter\workflow_records.json`.
+  - pagination UI proof succeeded under `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514`: editor page contained only `open_detail`, `extract_title`, and `extract_body`; `open_detail` had `pagination/page_number/limit=2`; Naver/Daum-specific panels were absent.
+  - latest `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - latest `node --check static\app.js`: pass.
+  - TestClient render check: `/configs/new` defaults `pagination_mode` to `page_number`, not `next_button`.
+  - UI proof succeeded under `qa-artifacts\marketinsight-ui-20260514`: list contained `마켓인사이트`, editor opened, generic steps were present, and Naver/Daum-specific panels were absent.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+  - `node --check static\app.js`: pass.
+  - no blocker.

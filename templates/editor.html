@@ -261,8 +261,8 @@
             <label class="step-pagination-mode">
               <span>page</span>
               <select data-step-prop="pagination_mode" {% if step.action == "parser" %}disabled{% endif %}>
-                <option value="next_button" {% if not step.pagination_mode or step.pagination_mode == "next_button" %}selected{% endif %}>next_button</option>
-                <option value="page_number" {% if step.pagination_mode == "page_number" %}selected{% endif %}>page_number</option>
+                <option value="page_number" {% if not step.pagination_mode or step.pagination_mode == "page_number" %}selected{% endif %}>page_number</option>
+                <option value="next_button" {% if step.pagination_mode == "next_button" %}selected{% endif %}>next_button</option>
                 {% if step.pagination_mode and step.pagination_mode not in ["next_button", "page_number"] %}
                 <option value="{{ step.pagination_mode }}" selected>{{ step.pagination_mode }}</option>
                 {% endif %}

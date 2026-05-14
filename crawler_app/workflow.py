@@ -526,12 +526,23 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                     )
                 if not str(step.get("xpath") or "").strip():
                     raise WorkflowConfigError(f"steps[{index}].xpath is required when loop_mode=pagination.")
-                if pagination_mode == "page_number" and "{page_number}" not in str(step.get("xpath") or ""):
+                if (
+                    pagination_mode == "page_number"
+                    and "{page_number}" not in str(step.get("xpath") or "")
+                    and not str(step.get("xpath_2") or "").strip()
+                ):
                     raise WorkflowConfigError(
                         f"steps[{index}].xpath must include {{page_number}} when pagination_mode=page_number."
                     )
                 if action != "click":
                     raise WorkflowConfigError(f"steps[{index}].loop is only supported for click when loop_mode=pagination.")
+                if str(step.get("xpath_2") or "").strip():
+                    if pagination_mode != "page_number":
+                        raise WorkflowConfigError(
+                            f"steps[{index}].pagination_mode must be page_number when using pagination on item anchors."
+                        )
+                    if _build_board_loop_spec(str(step.get("xpath") or ""), str(step.get("xpath_2") or "")) is None:
+                        raise WorkflowConfigError(f"steps[{index}] loop anchors must define one repeating index.")
             else:
                 if not step.get("xpath_2"):
                     raise WorkflowConfigError(f"steps[{index}].xpath_2 is required when loop=true.")
@@ -789,7 +800,27 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
         try:
             for search_term_index, search_term in enumerate(search_terms or [None]):
                 term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
-                if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
+                if _config_primary_loop_is_paginated_items(config):
+                    records = _run_paginated_item_loops(
+                        browser=context,
+                        config=config,
+                        search_term=search_term,
+                        search_term_index=search_term_index,
+                        search_term_count=len(search_terms) or 1,
+                        output_dir=term_output_dir,
+                        timeout_ms=timeout_ms,
+                        step_wait_ms=step_wait_ms,
+                        parse_pause_seconds=parse_pause_seconds,
+                        item_loop_step_index=primary_loop_step_index or 1,
+                    )
+                    execution.records.extend(records)
+                    execution.downloaded_files.extend(
+                        path for record in records for path in record.get("downloaded_files", [])
+                    )
+                    execution.extracted_files.extend(
+                        path for record in records for path in record.get("extracted_files", [])
+                    )
+                elif primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
                     records = _run_nested_pagination_click_loops(
                         browser=context,
                         config=config,
@@ -1963,6 +1994,65 @@ def _run_nested_pagination_click_loops(
     return records
 
 
+def _run_paginated_item_loops(
+    browser: Any,
+    config: dict[str, Any],
+    search_term: str | None,
+    search_term_index: int,
+    search_term_count: int,
+    output_dir: Path,
+    timeout_ms: int,
+    step_wait_ms: int,
+    parse_pause_seconds: int,
+    item_loop_step_index: int,
+) -> list[dict[str, Any]]:
+    steps = config.get("steps") or []
+    item_loop_step = steps[item_loop_step_index - 1]
+    item_loop_spec = _build_board_loop_spec(str(item_loop_step.get("xpath") or ""), str(item_loop_step.get("xpath_2") or ""))
+    if item_loop_spec is None:
+        return []
+
+    page_limit = _step_loop_limit(item_loop_step) or 1
+    records: list[dict[str, Any]] = []
+    for page_number in range(1, page_limit + 1):
+        page = _new_workflow_page(browser)
+        listing_url = _render_page_url(str(config["start_url"]), search_term, page_number)
+        try:
+            page.goto(listing_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            item_exclude_xpath = str(item_loop_step.get("exclude_xpath") or "").strip()
+            item_numbers = _resolve_board_loop_item_numbers(page, item_loop_spec, exclude_xpath=item_exclude_xpath)
+            listing_url = page.url
+        finally:
+            page.close()
+
+        for item_number in item_numbers:
+            record = _run_one_item(
+                browser,
+                config,
+                len(records),
+                timeout_ms,
+                step_wait_ms,
+                parse_pause_seconds=parse_pause_seconds,
+                search_term=search_term,
+                search_term_index=search_term_index,
+                search_term_count=search_term_count,
+                output_dir_override=output_dir,
+                primary_loop_step_index=item_loop_step_index,
+                start_url_override=listing_url,
+                start_step_index=item_loop_step_index,
+                board_loop_spec=item_loop_spec,
+                board_item_number=item_number,
+            )
+            record["pagination_page_number"] = page_number
+            record["pagination_page_url"] = listing_url
+            if record.get("steps"):
+                record["steps"][0]["pagination_target_page"] = page_number
+                record["steps"][0]["pagination_page_url"] = listing_url
+            records.append(record)
+
+    return records
+
+
 def _resolve_page_loop_count(
     browser: Any,
     config: dict[str, Any],
@@ -2689,6 +2779,21 @@ def _config_primary_pagination_spec(config: dict[str, Any]) -> PaginationLoopSpe
     return None
 
 
+def _config_primary_loop_is_paginated_items(config: dict[str, Any]) -> bool:
+    steps = config.get("steps") or []
+    loop_index = _config_primary_loop_step_index(config)
+    if not loop_index or loop_index < 1 or loop_index > len(steps):
+        return False
+    step = steps[loop_index - 1]
+    return (
+        isinstance(step, dict)
+        and bool(step.get("loop"))
+        and _step_loop_mode(step) == "pagination"
+        and str(step.get("action") or "") == "click"
+        and bool(str(step.get("xpath_2") or "").strip())
+    )
+
+
 def _config_primary_loop_mode(config: dict[str, Any]) -> str | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -3398,6 +3503,13 @@ def _render_template_value(template: str, search_term: str | None, *, url_encode
         replacement = quote_plus(search_term or "") if url_encode else (search_term or "")
         rendered = rendered.replace("{search_term}", replacement)
     return rendered
+
+
+def _render_page_url(template: str, search_term: str | None, page_number: int) -> str:
+    rendered = _render_template_value(template, search_term, url_encode=True)
+    if "{page_number}" in rendered:
+        return rendered.replace("{page_number}", str(page_number))
+    return _set_query_param(rendered, "page", str(page_number))
 
 
 def _step_url(page: Any, locator: Any, step: dict[str, Any]) -> str:

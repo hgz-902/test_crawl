@@ -370,7 +370,7 @@ function syncStepLoop(row) {
   if (paginationSection) paginationSection.hidden = !enabled || mode !== "pagination";
   if (paginationMode) {
     paginationMode.disabled = !enabled || action !== "click" || mode !== "pagination";
-    if (paginationMode.disabled && action !== "click") paginationMode.value = "next_button";
+    if (paginationMode.disabled && action !== "click") paginationMode.value = "page_number";
   }
 }
 
@@ -523,8 +523,8 @@ function createStepRow() {
         <label class="step-pagination-mode">
           <span>page</span>
           <select data-step-prop="pagination_mode">
-            <option value="next_button" selected>next_button</option>
-            <option value="page_number">page_number</option>
+            <option value="page_number" selected>page_number</option>
+            <option value="next_button">next_button</option>
           </select>
           <button
             type="button"

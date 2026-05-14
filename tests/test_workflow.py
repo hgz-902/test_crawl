@@ -16,6 +16,7 @@ from crawler_app.workflow import (
     _config_click_loop_step_indexes,
     _config_filter_terms,
     _config_primary_loop_step_index,
+    _config_primary_loop_is_paginated_items,
     _config_primary_loop_mode,
     _config_search_terms,
     _download_multiple_step,
@@ -29,6 +30,7 @@ from crawler_app.workflow import (
     _resolve_board_loop_items,
     _resolve_board_loop_item_numbers,
     _resolve_step_xpath,
+    _render_page_url,
     _render_template_value,
     _relocate_path,
     _save_extract_outputs,
@@ -38,6 +40,7 @@ from crawler_app.workflow import (
     _attach_dialog_handler,
     _run_nested_click_loops,
     _run_nested_pagination_click_loops,
+    _run_paginated_item_loops,
     _run_one_item,
     _run_step,
     preview_workflow_config,
@@ -700,6 +703,43 @@ class WorkflowDownloadTests(unittest.TestCase):
         }
 
         validate_workflow_config(config)
+
+    def test_validate_workflow_config_allows_pagination_mode_on_item_anchors(self) -> None:
+        config = {
+            "name": "sample",
+            "start_url": "https://example.com/search?keyword={search_term}",
+            "output_dir": "outputs/sample",
+            "steps": [
+                {
+                    "name": "open_detail",
+                    "xpath": "//ul/li[1]/a",
+                    "xpath_2": "//ul/li[2]/a",
+                    "action": "click",
+                    "loop": True,
+                    "loop_mode": "pagination",
+                    "pagination_mode": "page_number",
+                    "loop_limit": 2,
+                },
+                {"name": "extract_body", "xpath": "//article", "action": "extract", "attr": "text"},
+            ],
+        }
+
+        validate_workflow_config(config)
+        self.assertTrue(_config_primary_loop_is_paginated_items(config))
+
+    def test_render_page_url_adds_or_replaces_page_parameter(self) -> None:
+        self.assertEqual(
+            _render_page_url("https://example.com/search?keyword={search_term}", "SK", 2),
+            "https://example.com/search?keyword=SK&page=2",
+        )
+        self.assertEqual(
+            _render_page_url("https://example.com/search?page=1&keyword={search_term}", "최태원", 3),
+            "https://example.com/search?page=3&keyword=%EC%B5%9C%ED%83%9C%EC%9B%90",
+        )
+        self.assertEqual(
+            _render_page_url("https://example.com/search?keyword={search_term}&p={page_number}", "SK", 4),
+            "https://example.com/search?keyword=SK&p=4",
+        )
 
     def test_validate_workflow_config_rejects_pagination_loop_after_first_step(self) -> None:
         config = {
@@ -2271,6 +2311,83 @@ class WorkflowDownloadTests(unittest.TestCase):
         self.assertEqual(records[2]["steps"][0]["pagination_target_page"], 2)
         self.assertEqual(records[0]["steps"][1]["index"], 2)
         self.assertEqual(records[0]["start_url"], "https://crkorea.kr/index.html?menuno=229&page=1")
+
+    def test_run_paginated_item_loops_uses_open_detail_limit_as_page_count(self) -> None:
+        config = {
+            "start_url": "https://marketinsight.hankyung.com/search?keyword={search_term}",
+            "output_dir": "outputs/marketinsight",
+            "steps": [
+                {
+                    "name": "open_detail",
+                    "xpath": "//ul/li[1]/a",
+                    "xpath_2": "//ul/li[2]/a",
+                    "action": "click",
+                    "loop": True,
+                    "loop_mode": "pagination",
+                    "pagination_mode": "page_number",
+                    "loop_limit": 2,
+                },
+                {"name": "extract_body", "xpath": "//article", "action": "extract", "attr": "text"},
+            ],
+        }
+        pages = [FakeLoopPage({}), FakeLoopPage({})]
+        opened_urls: list[str] = []
+        item_calls: list[tuple[int, str, int]] = []
+
+        def fake_new_page(browser: object) -> FakeLoopPage:
+            return pages.pop(0)
+
+        def fake_resolve_items(page: FakeLoopPage, spec: BoardLoopSpec, exclude_xpath: str = "") -> list[int]:
+            opened_urls.append(page.url)
+            return [1, 2]
+
+        def fake_run_one_item(
+            browser: object,
+            config_arg: dict[str, object],
+            item_index: int | None,
+            timeout_ms: int,
+            step_wait_ms: int,
+            **kwargs,
+        ) -> dict[str, object]:
+            start_url = str(kwargs["start_url_override"])
+            board_item_number = int(kwargs["board_item_number"])
+            item_calls.append((item_index or 0, start_url, board_item_number))
+            return {
+                "item_index": item_index,
+                "success": True,
+                "steps": [{"index": 1, "name": "open_detail", "success": True}],
+                "extracts": {},
+                "downloaded_files": [],
+                "extracted_files": [],
+                "error": None,
+                "start_url": start_url,
+                "final_url": f"{start_url}/detail/{board_item_number}",
+            }
+
+        with patch("crawler_app.workflow._new_workflow_page", side_effect=fake_new_page), patch(
+            "crawler_app.workflow._resolve_board_loop_item_numbers", side_effect=fake_resolve_items
+        ), patch("crawler_app.workflow._run_one_item", side_effect=fake_run_one_item):
+            records = _run_paginated_item_loops(
+                browser=object(),
+                config=config,
+                search_term="SK",
+                search_term_index=0,
+                search_term_count=1,
+                output_dir=Path(tempfile.gettempdir()),
+                timeout_ms=1000,
+                step_wait_ms=1000,
+                parse_pause_seconds=0,
+                item_loop_step_index=1,
+            )
+
+        self.assertEqual(opened_urls, [
+            "https://marketinsight.hankyung.com/search?keyword=SK&page=1",
+            "https://marketinsight.hankyung.com/search?keyword=SK&page=2",
+        ])
+        self.assertEqual(len(records), 4)
+        self.assertEqual(item_calls[0], (0, "https://marketinsight.hankyung.com/search?keyword=SK&page=1", 1))
+        self.assertEqual(item_calls[-1], (3, "https://marketinsight.hankyung.com/search?keyword=SK&page=2", 2))
+        self.assertEqual(records[-1]["pagination_page_number"], 2)
 
     def test_finalize_workflow_execution_marks_empty_loop_as_error(self) -> None:
         config = {

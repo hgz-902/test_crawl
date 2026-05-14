@@ -356,3 +356,40 @@
 - Manifest path: `qa-artifacts\thebell-yonhap-path-20260514\filter\workflow_records.json`.
 - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
 - `node --check static\app.js`: pass.
+
+## Active Implementation Plan Update: MarketInsight News Config
+
+### Status
+- 2026-05-14: completed with pass.
+
+### Completion Criteria
+- `마켓인사이트` config is added with a bounded shared workflow fix for the existing `open_detail` pagination mode.
+- Config uses the existing news execution-step pattern.
+- Search terms are `최태원` and `SK`.
+- Live proof confirms page-number pagination, search result detail pages, and title/body text files.
+- UI editor shows generic 실행 단계, not provider-specific API/RSS panels.
+
+### Plan
+1. Completed: checked `SOURCE_CHANGE_GUARDRAIL.md` and origin `연합뉴스` baseline.
+2. Completed: inspected MarketInsight search URL and result/detail HTML structure.
+3. Completed: added `configs\마켓인사이트.json`.
+4. Completed: fixed shared workflow handling so `open_detail` pagination mode treats `loop_limit` as page count.
+5. Completed: UI/editor proof.
+6. Completed: full tests and final ruling.
+
+### Validation
+- smoke proof: `qa-artifacts\marketinsight-smoke-20260514`, 4 records across `최태원` and `SK` with title/body extracts.
+- full live proof: `qa-artifacts\marketinsight-live-20260514`, 30 records, 60 extracted title/body files, 0 downloaded files, no workflow errors.
+- pagination proof: `qa-artifacts\marketinsight-open-detail-pagination-20260514`, 60 records, 120 extracted title/body files, 0 downloaded files, no workflow errors.
+- pagination evidence: `open_detail` was the only click loop, page 1 started at `page=1`, and page 2 started at `page=2`.
+- full live manifest: `qa-artifacts\marketinsight-live-20260514\filter\workflow_records.json`.
+- UI proof: `qa-artifacts\marketinsight-ui-20260514\home.png` and `qa-artifacts\marketinsight-ui-20260514\editor.png`.
+- UI result JSON confirmed `마켓인사이트` appears in the list, editor opens, generic execution-step config is present, and Naver/Daum-specific panels are absent.
+- pagination UI proof: `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514\editor-3020.png` and `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514\ui_result.json`; the editor contains only `open_detail`, `extract_title`, and `extract_body`, with `open_detail` set to `pagination/page_number/limit=2`.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+- `node --check static\app.js`: pass.
+
+### Remaining Follow-Up
+- Current config collects up to 2 MarketInsight search result pages per search term; users change the page count through the `open_detail` step `loop_limit` when mode is `pagination`.
+- Per-page item count is inferred from the `open_detail` XPath pair rather than a separate item-limit field in this mode.
+- Output accumulation source-code changes were considered, then canceled by user request; generic storage remains the previous `filter\<NNN_search_term>\texts\YYYYMMDD` plus `filter\workflow_records.json` shape.

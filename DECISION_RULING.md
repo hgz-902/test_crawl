@@ -614,3 +614,38 @@
   - keep Google RSS on the parser path unless a future approved source-change slice intentionally adds RSS/XML support to generic execution.
 - remaining risk:
   - Google RSS parser source changes after this point still need explicit source-change justification and `$git-push-change-log` notes.
+
+## MarketInsight News Config Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: shared workflow pagination behavior changed; MarketInsight config also changed.
+  - Alpha wave required: yes
+  - waiver: Codex worker roles not spawned in this turn; Codex main performed implementation and local verification directly under the user's immediate correction.
+- current goal:
+  - collect MarketInsight search results for `최태원` and `SK` while making existing `open_detail` pagination mode work as the user expected.
+- completed:
+  - origin news baseline checked.
+  - MarketInsight search/detail XPath structure confirmed.
+  - `configs\마켓인사이트.json` added.
+  - `open_detail` pagination mode fixed so `loop_limit` is page count, without adding a separate `page` step.
+  - pagination mode UI default changed to `page_number`; `next_button` remains selectable.
+  - smoke proof, live proof, pagination proof, UI proof, unit tests, and JS syntax check completed.
+  - output accumulation source-code change was canceled by user request; generic storage remains the previous non-run-versioned shape.
+- validation or blocker:
+  - smoke proof: `qa-artifacts\marketinsight-smoke-20260514`, 4 records and 8 title/body extracts.
+  - full live proof: `qa-artifacts\marketinsight-live-20260514`, 30 records and 60 title/body extracts for `최태원` and `SK`.
+  - pagination proof: `qa-artifacts\marketinsight-open-detail-pagination-20260514`, 60 records and 120 title/body extracts for `최태원` and `SK`.
+  - pagination evidence: `open_detail` was the only click loop; page 1 started at `page=1` and page 2 started at `page=2`.
+  - output path proof: `qa-artifacts\marketinsight-live-20260514\filter\<NNN_search_term>\texts\20260514` plus `filter\workflow_records.json`.
+  - UI proof: `qa-artifacts\marketinsight-ui-20260514\home.png`, `qa-artifacts\marketinsight-ui-20260514\editor.png`, and `qa-artifacts\marketinsight-ui-20260514\ui_result.json`.
+  - pagination UI proof: `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514\editor-3020.png` and `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514\ui_result.json`.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+  - TestClient render check confirmed new config pages default `pagination_mode` to `page_number`.
+  - no blocker.
+- remaining risk:
+  - MarketInsight HTML may drift; XPath updates should be made in the config editor.
+  - current config uses `open_detail.loop_limit=2` for page count when mode is `pagination`; users must adjust the `open_detail` limit when they want more pages.
+  - generic output accumulation remains canceled and may overwrite `filter\workflow_records.json` on repeated runs, matching the previous behavior.

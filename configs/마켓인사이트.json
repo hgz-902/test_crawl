@@ -1,0 +1,57 @@
+{
+  "name": "마켓인사이트",
+  "start_url": "https://marketinsight.hankyung.com/search?keyword={search_term}",
+  "output_dir": "outputs/marketinsight",
+  "timeout_ms": 60000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "마켓인사이트는 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. open_detail의 mode를 pagination으로 두면 loop_limit은 가져올 검색 결과 페이지 수로 동작하며, 1페이지부터 해당 페이지까지 각 페이지의 기사 목록을 반복 클릭한다. 기사 목록 XPath가 바뀌면 open_detail의 XPath 1/2를, 기사 상세 제목/본문 구조가 바뀌면 extract_title/extract_body XPath를 수정한다. 현재 설정은 검색어별 2페이지까지 수집한다.",
+  "search_terms": [
+    "최태원",
+    "SK",
+    "SK이노베이션",
+    "SK E&S",
+    "SK에너지",
+    "SK지오센트릭",
+    "SK어스온",
+    "SK엔무브",
+    "SK아이이테크놀로지",
+    "SK인천석유화학",
+    "SK온",
+    "대한상의"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//ul[contains(@class, 'news-list')]/li[1]/div[contains(@class, 'txt-cont')]/h3[contains(@class, 'news-tit')]/a",
+      "xpath_2": "//ul[contains(@class, 'news-list')]/li[2]/div[contains(@class, 'txt-cont')]/h3[contains(@class, 'news-tit')]/a",
+      "loop": true,
+      "loop_mode": "pagination",
+      "loop_limit": 2,
+      "pagination_mode": "page_number",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//article[contains(@class, 'article-view')]//div[contains(@class, 'article-head')]//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//article[contains(@class, 'article-view')]//div[contains(@class, 'article-body')]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-14T19:10:00+09:00",
+  "updated_at": "2026-05-14T20:17:23+09:00"
+}
