@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
@@ -1019,7 +1020,7 @@ class WorkflowDownloadTests(unittest.TestCase):
                     "name": "naver_news_api",
                     "action": "parser",
                     "attr": "naver",
-                    "page_limit": 2,
+                    "page_limit": 1,
                     "loop_limit": 20,
                 }
             ],
@@ -1053,8 +1054,10 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         step = normalized["steps"][0]
         self.assertEqual(step["attr"], "naver")
-        self.assertEqual(step["display"], 20)
-        self.assertIn("display=20", normalized["start_url"])
+        self.assertEqual(step["display"], 100)
+        self.assertEqual(step["page_limit"], 1)
+        self.assertIn("display=100", normalized["start_url"])
+        self.assertIn("start=1", normalized["start_url"])
         self.assertNotIn("fetch_detail", step)
         self.assertNotIn("allowed_detail_domains", step)
         self.assertNotIn("detail_timeout_seconds", step)
@@ -1115,6 +1118,74 @@ class WorkflowDownloadTests(unittest.TestCase):
         with self.assertRaises(WorkflowConfigError):
             validate_workflow_config(config)
 
+    def test_validate_workflow_config_allows_daum_news_api_parser_step(self) -> None:
+        config = {
+            "name": "daum-news",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum-news",
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 2,
+                    "loop_limit": 100,
+                }
+            ],
+        }
+
+        validate_workflow_config(config)
+
+    def test_normalize_workflow_config_syncs_daum_count_to_url(self) -> None:
+        config = {
+            "name": "daum-news",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=accuracy&page=3&size=10",
+            "output_dir": "outputs/daum-news",
+            "kakao_rest_api_key": "stale-key",
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 1,
+                    "loop_limit": 75,
+                    "kakao_rest_api_key": "nested-stale-key",
+                }
+            ],
+        }
+
+        normalized = normalize_workflow_config(config)
+
+        self.assertIn("sort=recency", normalized["start_url"])
+        self.assertIn("page=1", normalized["start_url"])
+        self.assertIn("size=50", normalized["start_url"])
+        self.assertIn("query={search_term}+site%3Av.daum.net", normalized["start_url"])
+        self.assertEqual(normalized["steps"][0]["page_limit"], 2)
+        self.assertNotIn("kakao_rest_api_key", normalized)
+        self.assertNotIn("kakao_rest_api_key", normalized["steps"][0])
+
+    def test_validate_workflow_config_rejects_too_broad_daum_limits(self) -> None:
+        config = {
+            "name": "daum-news",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum-news",
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 3,
+                    "loop_limit": 101,
+                }
+            ],
+        }
+
+        with self.assertRaises(WorkflowConfigError):
+            validate_workflow_config(config)
+
     def test_run_workflow_config_parses_naver_news_api_without_playwright(self) -> None:
         config = {
             "name": "naver-news",
@@ -1166,9 +1237,165 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "네이버 뉴스")
-            self.assertEqual(Path(execution.extracted_files[0]).name, "naver_news_api.json")
-            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            naver_output_path = Path(execution.extracted_files[0])
+            self.assertEqual(naver_output_path.name, "naver_news_api.json")
+            self.assertEqual(naver_output_path.parent.parent.name, "items")
+            self.assertEqual(naver_output_path.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertNotIn("filter", naver_output_path.parts)
+            naver_manifest_path = Path(execution.diagnostics["manifest_file"])
+            self.assertEqual(naver_manifest_path.name, "workflow_records.json")
+            self.assertEqual(naver_manifest_path.parent.parent.name, "runs")
+            self.assertEqual(naver_manifest_path.parent.name, f"{date.today():%Y%m%d}_1")
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+
+    def test_run_workflow_config_keeps_naver_api_outputs_in_term_path_when_filtering(self) -> None:
+        config = {
+            "name": "naver-news",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+            "output_dir": "outputs/naver-news",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "filter_terms": ["SK"],
+            "steps": [
+                {
+                    "name": "naver_news_api",
+                    "action": "parser",
+                    "attr": "naver",
+                    "page_limit": 1,
+                    "loop_limit": 20,
+                }
+            ],
+        }
+        api_items = [
+            {"post_id": "1", "title": "SK 뉴스", "detail_url": "https://n.news.naver.com/1", "link": "https://n.news.naver.com/1"},
+            {"post_id": "2", "title": "다른 뉴스", "detail_url": "https://n.news.naver.com/2", "link": "https://n.news.naver.com/2"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "naver-news")
+            with patch(
+                "crawler_app.workflow.fetch_naver_news_api_items",
+                return_value=(api_items, "https://openapi.naver.com/v1/search/news.json?query=SK&display=100&start=1&sort=date"),
+            ):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(execution.records), 1)
+            self.assertEqual(execution.diagnostics["nonfilter_record_count"], 1)
+            output_path = Path(execution.extracted_files[0])
+            self.assertIn("001_SK", output_path.parts)
+            self.assertIn("items", output_path.parts)
+            self.assertNotIn("filter", output_path.parts)
+            self.assertEqual(Path(execution.diagnostics["manifest_file"]).parent.parent.name, "runs")
+
+    def test_run_workflow_config_parses_daum_news_api_without_playwright(self) -> None:
+        config = {
+            "name": "daum-news",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum-news",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 1,
+                    "loop_limit": 20,
+                }
+            ],
+        }
+        api_items = [
+            {
+                "post_id": "https://v.daum.net/v/202605140001",
+                "title": "다음 뉴스",
+                "detail_url": "https://v.daum.net/v/202605140001",
+                "link": "https://v.daum.net/v/202605140001",
+                "pubDate": "2026-05-14T09:00:00.000+09:00",
+                "description": "요약 문장",
+                "source_domain": "v.daum.net",
+                "source_api": "kakao_daum_web_search",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "daum-news")
+            with patch(
+                "crawler_app.workflow.fetch_daum_news_api_items",
+                return_value=(api_items, "https://dapi.kakao.com/v2/search/web?query=SK&sort=recency&page=1&size=50"),
+            ):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.diagnostics["parser_name"], "daum")
+            self.assertEqual(execution.diagnostics["parser_item_count"], 1)
+            self.assertEqual(len(execution.records), 1)
+            self.assertEqual(execution.records[0]["steps"][0]["attr"], "daum")
+            self.assertEqual(execution.records[0]["extracts"]["title"], "다음 뉴스")
+            daum_output_path = Path(execution.extracted_files[0])
+            self.assertEqual(daum_output_path.name, "daum_news_api.json")
+            self.assertEqual(daum_output_path.parent.parent.name, "items")
+            self.assertEqual(daum_output_path.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertNotIn("filter", daum_output_path.parts)
+            daum_manifest_path = Path(execution.diagnostics["manifest_file"])
+            self.assertEqual(daum_manifest_path.name, "workflow_records.json")
+            self.assertEqual(daum_manifest_path.parent.parent.name, "runs")
+            self.assertEqual(daum_manifest_path.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+
+    def test_preview_workflow_config_skips_live_daum_api_calls(self) -> None:
+        config = {
+            "name": "daum-news",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum-news",
+            "timeout_ms": 1000,
+            "search_terms": ["최태원", "SK"],
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 1,
+                    "loop_limit": 20,
+                }
+            ],
+        }
+
+        with patch("crawler_app.workflow.fetch_daum_news_api_items") as fetcher:
+            preview = preview_workflow_config(config)
+
+        fetcher.assert_not_called()
+        self.assertTrue(preview["preview_skipped"])
+        self.assertEqual(preview["parser_item_count"], 0)
+        self.assertEqual(len(preview["search_term_runs"]), 2)
+
+    def test_preview_workflow_config_skips_live_naver_api_calls(self) -> None:
+        config = {
+            "name": "naver-news",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+            "output_dir": "outputs/naver-news",
+            "timeout_ms": 1000,
+            "search_terms": ["최태원", "SK"],
+            "steps": [
+                {
+                    "name": "naver_news_api",
+                    "action": "parser",
+                    "attr": "naver",
+                    "page_limit": 1,
+                    "loop_limit": 20,
+                }
+            ],
+        }
+
+        with patch("crawler_app.workflow.fetch_naver_news_api_items") as fetcher:
+            preview = preview_workflow_config(config)
+
+        fetcher.assert_not_called()
+        self.assertTrue(preview["preview_skipped"])
+        self.assertEqual(preview["parser_item_count"], 0)
+        self.assertEqual(len(preview["search_term_runs"]), 2)
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {

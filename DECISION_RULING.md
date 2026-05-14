@@ -217,16 +217,17 @@
   - Alpha wave required: no
   - waiver: orchestration/setup-only; no product runtime behavior change.
 - completed:
-  - initialized Git repository and connected `origin` to `https://github.com/hgz-902/test_crawl`.
+  - initialized Git repository and connected `origin` initially to `https://github.com/hgz-902/test_crawl`, then later corrected it to `https://github.com/K-Ternag/crawlService`.
   - created first local commit `Initial crawler project`.
   - excluded local secrets, virtualenv, logs, outputs, QA artifacts, and temporary files.
 - validation:
-  - remote exists and appears empty.
+  - actual remote exists but is not history-compatible with local `main`.
   - GitHub CLI auth is active for `hgz-902`.
   - tracked files exclude `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, and Office temp files.
   - tracked source scan found no real Naver key values.
 - remaining risk:
-  - first push still needs to be executed from the user's VS Code terminal: `git push -u origin main`.
+  - direct push is intentionally removed from the Codex process flow; the user will run any push/merge command manually.
+  - local `main` and `origin/main` currently have no merge base, so do not force-push or push to remote `main` without an explicit user-owned branch/merge decision.
 - remaining risks:
   - Naver official API caps `display` at 100, so the UI count is intentionally limited to 1-100 per search term.
   - home screenshot: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-news-ui-20260514\home.png`
@@ -238,6 +239,150 @@
   - Naver News API panel is rendered only for existing config `네이버`.
   - `기후에너지부_보도자료` editor remains the generic workflow editor and does not show the Naver panel.
   - `configs\네이버.json` now follows the existing `{search_term}` pattern used by other configs and stores multiple search terms in `search_terms`.
+
+## Origin Main Comparison Server Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: local comparison-server setup and memory/process wording only; no current crawler product runtime logic changed.
+  - Alpha wave required: no
+  - waiver: none.
+- completed:
+  - removed direct `git push` from the future crawler-site process memory.
+  - launched `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main` at `http://127.0.0.1:3001/`.
+  - patched the origin copy's template rendering call style so it runs against the installed FastAPI/Starlette dependency set.
+- validation:
+  - `GET http://127.0.0.1:3001/` returned 200.
+  - `GET http://127.0.0.1:3001/configs/네이버` returned 200.
+  - Playwright screenshots saved under `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\origin-main-3001-20260514`.
+- remaining risk:
+  - this origin copy is not a Git repository and was patched only as a local comparison runtime.
+  - local `main` and `origin/main` have no merge base, so direct main push remains unsafe unless the user chooses the merge/branch strategy.
+
+## Test Naver Config Removal Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: temporary config-file removal only; no runtime code, UI behavior, schema, or remote Git state changed.
+  - Alpha wave required: no
+  - waiver: none.
+- completed:
+  - removed `configs\네이버뉴스_최태원_2페이지.json`.
+- validation:
+  - path existence check returned false.
+  - crawler UI home at `http://127.0.0.1:3000/` returned 200 and no longer contained `네이버뉴스_최태원_2페이지`.
+- remaining risk:
+  - none for this deletion; broader local/remote Git divergence remains tracked separately.
+
+## Daum News Slice Interim Ruling
+- date: 2026-05-14
+- ruling: hold.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: new provider parser, config/UI panel, workflow validation, tests, and external API credential handling are in scope.
+  - Alpha wave required: yes
+  - waiver: none.
+- completed:
+  - selected a bounded API-oriented design after direct Daum search HTML returned CAPTCHA.
+  - recorded that Kakao Daum public Search docs do not expose a news-specific API; this slice will use Daum Web Search API filtered to Daum news hosts.
+  - Alpha developer worker started implementation.
+- validation:
+  - pending.
+- remaining risk:
+  - live API smoke requires `KAKAO_REST_API_KEY`.
+  - Kakao Web Search is not a news-specific endpoint, so Daum news host filtering must be explicit and documented.
+
+## Daum News Slice Final Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: new Daum provider parser, config/UI panel, workflow validation, API credential handling, live UI proof, and tests were in scope.
+  - Alpha wave required: yes
+  - waiver: none.
+- completed:
+  - implemented Daum API-oriented collection through Kakao Daum Web Search API.
+  - added `site:v.daum.net` query hint and Daum-news-domain filtering.
+  - added `configs\다음.json` with `최태원` and `SK`.
+  - added Daum-only UI settings panel and one news-count control.
+  - stored the Kakao REST API key in ignored `.env`; no key was written to tracked configs or docs.
+  - hardened credential handling, redirect handling, preview quota behavior, and Daum manifest paths after worker rework findings.
+- validation:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 106 tests pass.
+  - UI route `http://127.0.0.1:3000/configs/다음` returned 200 and showed the Daum panel.
+  - live UI run collected 40 items total: `최태원` 20 and `SK` 20.
+  - key scan found no provided Kakao key in tracked source outside ignored `.env`.
+  - final reviewer worker: pass.
+  - final QA worker: pass.
+  - final auditor worker: pass.
+- remaining risk:
+  - Kakao Web Search is not a news-specific API, so the Daum result quality depends on the `site:v.daum.net` query hint plus domain filter.
+  - general crawler logs/artifacts can still reveal local file paths if manually shared, though they do not contain the Kakao key.
+  - `configs\네이버.json` remains broad from earlier work and is tracked as a separate pre-existing risk, not part of this Daum slice.
+
+## API Count Semantics Rework Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: provider runtime semantics, UI config generation, save/preview routes, tests, configs, and validation artifacts were changed.
+  - Alpha wave required: yes
+  - waiver: none.
+- completed:
+  - Naver now uses fixed fetch parameters `display=100`, `start=1`, `page_limit=1`; saved item count is controlled only by `loop_limit`.
+  - Daum now uses fixed fetch parameters `size=50`, `page=1`, `page_limit=2`; saved item count is controlled only by `loop_limit`.
+  - Daum no longer short-circuits the fixed two-page fetch when requested saved count is small.
+  - Naver `sort=sim` persists through UI save and backend normalization.
+  - Naver API panel is shown for Naver API-shaped configs, including stale/renamed `네이버뉴스`.
+  - Preview strips provider credential fields and skips live API calls for both Naver and Daum.
+  - Naver manifests now store relative item paths like Daum.
+- validation:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 112 tests pass.
+  - bounded Naver live smoke: success, 3 saved items, runtime URL contains `display=100&start=1&sort=sim`.
+  - bounded Daum live smoke: success, 3 saved items, runtime final URL contains `page=2&size=50`.
+  - browser screenshots saved under `qa-artifacts\api-count-fixed-20260514`.
+  - tracked-source/QA-artifact secret scan found no provided real API keys outside ignored `.env`.
+  - Alpha developer worker implemented the initial change.
+  - Alpha reviewer found the Daum one-page runtime short-circuit; fixed.
+  - Alpha QA found Naver sort persistence and stale Naver config risks; fixed.
+  - Alpha auditor found preview credential reflection, Naver preview live-call, Naver-panel detection, and Naver manifest path risks; fixed.
+- remaining risk:
+  - `configs\네이버.json` and `configs\네이버뉴스.json` still contain many search terms; running them at count 30 can collect many records. This is intentional current config content, but users should lower the count or terms for small tests.
+  - Kakao Web Search remains a web-search API filtered to Daum news hosts, not a news-specific API.
+  - no git push was run; user owns push/merge execution.
+
+## Naver/Daum Cumulative Output Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: provider save paths, workflow manifest paths, filter handling, UI run safety, tests, and proof artifacts were changed.
+  - Alpha wave required: yes
+  - waiver: none.
+- completed:
+  - Naver/Daum provider manifests and per-item JSON files now accumulate under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+  - workflow manifests now accumulate under `<output_dir>\runs\YYYYMMDD_n\workflow_records.json`.
+  - Naver/Daum API outputs are no longer surfaced under `filter\<term>` for API parser runs; reported paths keep the root term shape the user requested.
+  - UI run safety blocks `output_dir` values that resolve outside the crawler project folder.
+- validation:
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 116 tests pass.
+  - `node --check static\app.js`: pass.
+  - proof script confirmed the requested example shape for both Naver and Daum:
+    - `002_SK\items\20260514_3\...`
+    - `runs\20260514_3\workflow_records.json`
+  - tracked-source secret scan found no provided real API keys outside ignored `.env`.
+  - Alpha reviewer identified workflow manifest overwrite and filter-path issues; fixed.
+  - Alpha QA confirmed `YYYYMMDD_1`, `_2`, `_3` folder rotation and `002_SK` naming in proof artifacts.
+  - Alpha auditor identified broader `output_dir` arbitrary-write and retention risks; UI output path containment was added, retention remains a known operational risk.
+- remaining risk:
+  - accumulated runs intentionally grow over time; a future retention/cleanup policy is still needed.
+  - direct non-UI runtime calls can still use arbitrary `output_dir` values; current containment is enforced for UI runs.
+  - older outputs from before this change may still exist in legacy flat layouts and should be treated as legacy artifacts.
+  - no git push was run; user owns push/merge execution.
   - latest-news count is mapped to both Naver API `display` and parser `loop_limit`; UI panel fixes `page_limit=1`.
   - accidental QA-created `configs\new_site.json` was removed.
 - Body cleanup and guardrails:

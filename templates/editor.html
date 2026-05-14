@@ -122,7 +122,39 @@
   </section>
   {% endif %}
 
-  {% if not show_naver_api_panel %}
+  {% if show_daum_api_panel %}
+  <section class="panel">
+    <details class="collapsible-panel" open>
+      <summary>
+        <h2>Daum News API</h2>
+        <span class="collapsible-toggle" aria-hidden="true">
+          <span class="collapsible-hint">접기/펼치기</span>
+          <span class="collapsible-icon">▾</span>
+        </span>
+      </summary>
+      <div class="collapsible-body">
+        <label class="check">
+          <input type="checkbox" data-daum-enabled>
+          Daum API 패널 사용
+        </label>
+        <div class="grid naver-grid">
+          <label>정렬
+            <select data-daum-sort>
+              <option value="recency">recency (최신순)</option>
+              <option value="accuracy">accuracy (정확도순)</option>
+            </select>
+          </label>
+          <label>검색어당 가져올 뉴스 개수
+            <input type="number" min="1" max="100" data-daum-count value="20">
+          </label>
+          <input type="hidden" data-daum-page-limit value="2">
+        </div>
+      </div>
+    </details>
+  </section>
+  {% endif %}
+
+  {% if not show_naver_api_panel and not show_daum_api_panel %}
   <section class="panel">
     <div class="section-row">
       <h2>실행 단계</h2>
@@ -163,7 +195,7 @@
         <button
           type="button"
           class="help-tip"
-          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver.&#10;click: 사용하지 않습니다."
+          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver, daum.&#10;click: 사용하지 않습니다."
           aria-label="Attr 설명"
         >?</button>
       </span>
@@ -267,7 +299,8 @@
           <option value="html" {% if step.attr == "html" %}selected{% endif %}>html</option>
           <option value="google" {% if step.attr == "google" %}selected{% endif %}>google</option>
           <option value="naver" {% if step.attr == "naver" %}selected{% endif %}>naver</option>
-          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver"] %}
+          <option value="daum" {% if step.attr == "daum" %}selected{% endif %}>daum</option>
+          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver", "daum"] %}
           <option value="{{ step.attr }}" selected>{{ step.attr }}</option>
           {% endif %}
         </select>

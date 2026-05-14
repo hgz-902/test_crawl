@@ -222,6 +222,82 @@ class WebLoggingTests(unittest.TestCase):
         self.assertNotIn("allowed_detail_domains", naver_response.text)
         self.assertIn("검색어 목록", generic_response.text)
         self.assertIn("실행 단계", generic_response.text)
+        self.assertNotIn("Daum News API", naver_response.text)
+        self.assertNotIn("Daum News API", generic_response.text)
+
+    def test_editor_shows_naver_api_panel_for_renamed_naver_api_config(self) -> None:
+        naver_news_config = {
+            "name": "네이버뉴스",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+            "output_dir": "outputs/naver-news",
+            "timeout_ms": 30000,
+            "renderer": "playwright",
+            "headless": True,
+            "ignore_https_errors": False,
+            "search_terms": ["최태원"],
+            "filter_terms": [],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver", "page_limit": 1, "loop_limit": 10}],
+        }
+
+        with TestClient(web.app) as client, patch.object(web, "get_config", return_value=naver_news_config):
+            response = client.get("/configs/%EB%84%A4%EC%9D%B4%EB%B2%84%EB%89%B4%EC%8A%A4")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Naver News API", response.text)
+        self.assertIn("data-naver-count", response.text)
+        self.assertNotIn("실행 단계", response.text)
+
+    def test_editor_shows_daum_api_panel_only_for_daum_config(self) -> None:
+        daum_config = {
+            "name": "다음",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "timeout_ms": 30000,
+            "renderer": "playwright",
+            "headless": True,
+            "ignore_https_errors": False,
+            "search_terms": ["최태원", "SK"],
+            "filter_terms": [],
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 2,
+                    "loop_limit": 20,
+                }
+            ],
+        }
+        generic_config = {
+            "name": "기후에너지부_보도자료",
+            "start_url": "https://example.com?pagerOffset={search_term}",
+            "output_dir": "outputs/mcee",
+            "timeout_ms": 30000,
+            "renderer": "playwright",
+            "headless": False,
+            "ignore_https_errors": False,
+            "search_terms": ["0", "10"],
+            "filter_terms": ["전력"],
+            "steps": [{"name": "open_detail", "xpath": "//a[1]", "action": "click"}],
+        }
+
+        def fake_get_config(name: str):
+            return daum_config if name == "다음" else generic_config
+
+        with TestClient(web.app) as client, patch.object(web, "get_config", side_effect=fake_get_config):
+            daum_response = client.get("/configs/%EB%8B%A4%EC%9D%8C")
+            generic_response = client.get("/configs/%EA%B8%B0%ED%9B%84%EC%97%90%EB%84%88%EC%A7%80%EB%B6%80_%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C")
+
+        self.assertEqual(daum_response.status_code, 200)
+        self.assertEqual(generic_response.status_code, 200)
+        self.assertIn("Daum News API", daum_response.text)
+        self.assertIn("data-daum-count", daum_response.text)
+        self.assertIn("검색어당 가져올 뉴스 개수", daum_response.text)
+        self.assertNotIn("Naver News API", daum_response.text)
+        self.assertNotIn("실행 단계", daum_response.text)
+        self.assertNotIn("Daum News API", generic_response.text)
+        self.assertIn("실행 단계", generic_response.text)
 
     def test_editor_does_not_render_naver_credentials(self) -> None:
         naver_config = web.default_config("네이버")
@@ -234,6 +310,29 @@ class WebLoggingTests(unittest.TestCase):
         self.assertNotIn('name="naver_client_id"', response.text)
         self.assertNotIn('name="naver_client_secret"', response.text)
         self.assertNotIn("Secret configured", response.text)
+
+    def test_preview_strips_provider_credentials_before_rerender(self) -> None:
+        payload = {
+            "name": "네이버뉴스",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+            "output_dir": "outputs/naver-news",
+            "search_terms": ["최태원"],
+            "naver_client_id": "real-client-id",
+            "naver_client_secret": "real-client-secret",
+            "kakao_rest_api_key": "real-kakao-key",
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver", "page_limit": 1, "loop_limit": 10}],
+        }
+
+        with TestClient(web.app) as client:
+            response = client.post(
+                "/configs/%EB%84%A4%EC%9D%B4%EB%B2%84%EB%89%B4%EC%8A%A4/preview",
+                data={"payload": json.dumps(payload, ensure_ascii=False)},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("real-client-id", response.text)
+        self.assertNotIn("real-client-secret", response.text)
+        self.assertNotIn("real-kakao-key", response.text)
 
     def test_save_naver_config_uses_single_news_count(self) -> None:
         payload = {
@@ -274,13 +373,98 @@ class WebLoggingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(len(saved_configs), 1)
         saved_step = saved_configs[0]["steps"][0]
-        self.assertIn("display=5", saved_configs[0]["start_url"])
-        self.assertEqual(saved_step["display"], 5)
+        self.assertIn("display=100", saved_configs[0]["start_url"])
+        self.assertEqual(saved_step["display"], 100)
+        self.assertEqual(saved_step["page_limit"], 1)
         self.assertEqual(saved_step["loop_limit"], 5)
         self.assertNotIn("naver_client_id", saved_configs[0])
         self.assertNotIn("naver_client_secret", saved_configs[0])
         self.assertNotIn("fetch_detail", saved_step)
         self.assertNotIn("allowed_detail_domains", saved_step)
+
+    def test_save_naver_config_preserves_similarity_sort(self) -> None:
+        payload = {
+            "name": "네이버",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=sim",
+            "output_dir": "outputs/naver",
+            "search_terms": ["최태원"],
+            "steps": [
+                {
+                    "name": "naver_news_api",
+                    "action": "parser",
+                    "attr": "naver",
+                    "sort": "sim",
+                    "display": 100,
+                    "page_limit": 1,
+                    "loop_limit": 5,
+                }
+            ],
+        }
+        saved_configs: list[dict[str, Any]] = []
+
+        def fake_save_config_as(config: dict[str, Any], _name: str) -> Path:
+            saved_configs.append(config)
+            return Path("configs/네이버.json")
+
+        with patch.object(web, "save_config_as", side_effect=fake_save_config_as):
+            with TestClient(web.app) as client:
+                response = client.post(
+                    "/configs",
+                    data={
+                        "payload": json.dumps(payload, ensure_ascii=False),
+                        "original_id": "네이버",
+                    },
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("sort=sim", saved_configs[0]["start_url"])
+        self.assertEqual(saved_configs[0]["steps"][0]["sort"], "sim")
+
+    def test_save_daum_config_strips_credentials_and_uses_single_news_count(self) -> None:
+        payload = {
+            "name": "다음",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "search_terms": ["최태원", "SK"],
+            "kakao_rest_api_key": "stale-key",
+            "steps": [
+                {
+                    "name": "daum_news_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "sort": "recency",
+                    "page_limit": 2,
+                    "loop_limit": 75,
+                }
+            ],
+        }
+        saved_configs: list[dict[str, Any]] = []
+
+        def fake_save_config_as(config: dict[str, Any], _name: str) -> Path:
+            saved_configs.append(config)
+            return Path("configs/다음.json")
+
+        with patch.object(web, "save_config_as", side_effect=fake_save_config_as):
+            with TestClient(web.app) as client:
+                response = client.post(
+                    "/configs",
+                    data={
+                        "payload": json.dumps(payload, ensure_ascii=False),
+                        "original_id": "다음",
+                    },
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(len(saved_configs), 1)
+        saved_step = saved_configs[0]["steps"][0]
+        self.assertEqual(saved_step["attr"], "daum")
+        self.assertEqual(saved_step["loop_limit"], 75)
+        self.assertEqual(saved_step["page_limit"], 2)
+        self.assertIn("size=50", saved_configs[0]["start_url"])
+        self.assertIn("page=1", saved_configs[0]["start_url"])
+        self.assertNotIn("kakao_rest_api_key", saved_configs[0])
 
     def test_naver_run_safety_blocks_missing_loop_limit(self) -> None:
         config = {
@@ -291,6 +475,46 @@ class WebLoggingTests(unittest.TestCase):
         }
 
         self.assertEqual(web._run_safety_error(config), "Naver UI runs require loop_limit between 1 and 100.")
+
+    def test_naver_run_safety_blocks_non_fixed_page_limit(self) -> None:
+        config = {
+            "name": "네이버뉴스",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+            "output_dir": "outputs/naver_news",
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver", "page_limit": 2, "loop_limit": 10}],
+        }
+
+        self.assertEqual(web._run_safety_error(config), "Naver UI runs require page_limit=1.")
+
+    def test_daum_run_safety_blocks_missing_loop_limit(self) -> None:
+        config = {
+            "name": "다음",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "steps": [{"name": "daum_news_api", "action": "parser", "attr": "daum"}],
+        }
+
+        self.assertEqual(web._run_safety_error(config), "Daum UI runs require loop_limit between 1 and 100.")
+
+    def test_daum_run_safety_blocks_non_fixed_page_limit(self) -> None:
+        config = {
+            "name": "다음",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "steps": [{"name": "daum_news_api", "action": "parser", "attr": "daum", "page_limit": 1, "loop_limit": 10}],
+        }
+
+        self.assertEqual(web._run_safety_error(config), "Daum UI runs require page_limit=2.")
+
+    def test_web_run_safety_blocks_output_dir_outside_project(self) -> None:
+        config = {
+            "name": "다음",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
+            "output_dir": str(Path(tempfile.gettempdir()) / "crawler-outside-project"),
+            "steps": [{"name": "daum_news_api", "action": "parser", "attr": "daum", "page_limit": 2, "loop_limit": 10}],
+        }
+
+        self.assertEqual(web._run_safety_error(config), "UI runs require output_dir under the crawler project folder.")
 
     def test_web_run_writes_orchestrator_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

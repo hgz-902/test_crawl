@@ -22,7 +22,14 @@ from crawler_app.config_store import (
     save_config_as,
 )
 from crawler_app.logging_utils import configure_logger, log_result
-from crawler_app.workflow import preview_workflow_config
+from crawler_app.workflow import (
+    DAUM_NEWS_API_FIXED_PAGE_LIMIT,
+    DAUM_NEWS_API_MAX_LOOP_LIMIT,
+    NAVER_NEWS_API_FIXED_PAGE_LIMIT,
+    NAVER_NEWS_API_MAX_LOOP_LIMIT,
+    normalize_workflow_config,
+    preview_workflow_config,
+)
 from crawlers.configurable_crawler import ConfigurableCrawler
 
 
@@ -49,7 +56,14 @@ async def new_config(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "editor.html",
-        {"mode": "new", "config": default_config(), "config_id": "", "error": None, "show_naver_api_panel": False},
+        {
+            "mode": "new",
+            "config": default_config(),
+            "config_id": "",
+            "error": None,
+            "show_naver_api_panel": False,
+            "show_daum_api_panel": False,
+        },
     )
 
 
@@ -70,6 +84,7 @@ async def edit_config(request: Request, name: str) -> HTMLResponse:
             "config_id": name,
             "error": error,
             "show_naver_api_panel": _show_naver_api_panel(name, config),
+            "show_daum_api_panel": _show_daum_api_panel(name, config),
         },
     )
 
@@ -82,7 +97,9 @@ async def save_config_route(
 ) -> HTMLResponse:
     try:
         config = json.loads(payload)
-        _strip_naver_credential_fields(config)
+        _strip_provider_credential_fields(config)
+        if isinstance(config, dict):
+            config = normalize_workflow_config(config)
         if original_id:
             path = save_config_as(config, original_id)
         else:
@@ -90,7 +107,7 @@ async def save_config_route(
         return RedirectResponse(url=f"/?focus={quote_plus(path.stem)}", status_code=303)
     except Exception as exc:
         config = _safe_json(payload) or default_config()
-        _strip_naver_credential_fields(config)
+        _strip_provider_credential_fields(config)
         return templates.TemplateResponse(
             request,
             "editor.html",
@@ -100,6 +117,7 @@ async def save_config_route(
                 "config_id": original_id,
                 "error": str(exc),
                 "show_naver_api_panel": _show_naver_api_panel(original_id, config),
+                "show_daum_api_panel": _show_daum_api_panel(original_id, config),
             },
             status_code=400,
         )
@@ -122,6 +140,7 @@ async def delete_config_route(request: Request, name: str) -> Response:
 @app.post("/configs/{name}/preview", response_class=HTMLResponse)
 async def preview_config_route(request: Request, name: str, payload: str = Form(...)) -> HTMLResponse:
     config = _safe_json(payload) or default_config(name)
+    _strip_provider_credential_fields(config)
     error: str | None = None
     try:
         preview = preview_workflow_config(config)
@@ -139,6 +158,7 @@ async def preview_config_route(request: Request, name: str, payload: str = Form(
             "error": error,
             "preview": preview,
             "show_naver_api_panel": _show_naver_api_panel(name, config),
+            "show_daum_api_panel": _show_daum_api_panel(name, config),
         },
         status_code=400 if error else 200,
     )
@@ -241,28 +261,87 @@ def _read_config_for_safety(config_path: Path) -> dict[str, Any]:
 
 
 def _run_safety_error(config: dict[str, Any]) -> str | None:
+    output_error = _output_dir_safety_error(config)
+    if output_error:
+        return output_error
+
     steps = config.get("steps") or []
     first_step = steps[0] if steps and isinstance(steps[0], dict) else {}
-    if str(first_step.get("attr") or "").strip().lower() == "naver":
+    parser_attr = str(first_step.get("attr") or "").strip().lower()
+    if parser_attr == "naver":
         try:
-            page_limit = int(first_step.get("page_limit") or 1)
+            page_limit = int(first_step.get("page_limit") or NAVER_NEWS_API_FIXED_PAGE_LIMIT)
             loop_limit = int(first_step.get("loop_limit") or 0)
         except (TypeError, ValueError):
             return "Naver UI runs require numeric page_limit and loop_limit."
-        if page_limit > 10:
-            return "Naver UI runs are limited to page_limit<=10."
-        if loop_limit <= 0 or loop_limit > 100:
-            return "Naver UI runs require loop_limit between 1 and 100."
+        if page_limit != NAVER_NEWS_API_FIXED_PAGE_LIMIT:
+            return f"Naver UI runs require page_limit={NAVER_NEWS_API_FIXED_PAGE_LIMIT}."
+        if loop_limit <= 0 or loop_limit > NAVER_NEWS_API_MAX_LOOP_LIMIT:
+            return f"Naver UI runs require loop_limit between 1 and {NAVER_NEWS_API_MAX_LOOP_LIMIT}."
+    if parser_attr == "daum":
+        try:
+            page_limit = int(first_step.get("page_limit") or DAUM_NEWS_API_FIXED_PAGE_LIMIT)
+            loop_limit = int(first_step.get("loop_limit") or 0)
+        except (TypeError, ValueError):
+            return "Daum UI runs require numeric page_limit and loop_limit."
+        if page_limit != DAUM_NEWS_API_FIXED_PAGE_LIMIT:
+            return f"Daum UI runs require page_limit={DAUM_NEWS_API_FIXED_PAGE_LIMIT}."
+        if loop_limit <= 0 or loop_limit > DAUM_NEWS_API_MAX_LOOP_LIMIT:
+            return f"Daum UI runs require loop_limit between 1 and {DAUM_NEWS_API_MAX_LOOP_LIMIT}."
     return None
 
 
+def _output_dir_safety_error(config: dict[str, Any]) -> str | None:
+    raw_output_dir = str(config.get("output_dir") or "").strip()
+    if not raw_output_dir:
+        return None
+    output_path = Path(raw_output_dir)
+    if not output_path.is_absolute():
+        output_path = BASE_DIR / output_path
+    try:
+        resolved_output = output_path.resolve()
+        resolved_base = BASE_DIR.resolve()
+    except OSError:
+        return "UI runs require a valid output_dir path."
+    if resolved_output == resolved_base or resolved_base in resolved_output.parents:
+        return None
+    return "UI runs require output_dir under the crawler project folder."
+
+
 def _show_naver_api_panel(config_id: str, config: dict[str, Any]) -> bool:
-    return (config_id or str(config.get("name") or "")).strip() == "네이버"
+    config_name = (config_id or str(config.get("name") or "")).strip()
+    if config_name == "네이버":
+        return True
+    if "openapi.naver.com/v1/search/news" in str(config.get("start_url") or "").lower():
+        return True
+    steps = config.get("steps") or []
+    return any(
+        isinstance(step, dict)
+        and str(step.get("action") or "").strip().lower() == "parser"
+        and str(step.get("attr") or "").strip().lower() == "naver"
+        for step in steps
+    )
 
 
-def _strip_naver_credential_fields(config: dict[str, Any]) -> None:
+def _show_daum_api_panel(config_id: str, config: dict[str, Any]) -> bool:
+    config_name = (config_id or str(config.get("name") or "")).strip()
+    if config_name == "다음":
+        return True
+    if "dapi.kakao.com/v2/search/web" in str(config.get("start_url") or "").lower():
+        return True
+    steps = config.get("steps") or []
+    return any(
+        isinstance(step, dict)
+        and str(step.get("action") or "").strip().lower() == "parser"
+        and str(step.get("attr") or "").strip().lower() == "daum"
+        for step in steps
+    )
+
+
+def _strip_provider_credential_fields(config: dict[str, Any]) -> None:
     config.pop("naver_client_id", None)
     config.pop("naver_client_secret", None)
+    config.pop("kakao_rest_api_key", None)
 
 
 def _compact_record_for_ui(record: Any) -> Any:

@@ -317,20 +317,172 @@
 ## Git Push Setup Checkpoint
 - date: 2026-05-14
 - status: completed.
-- current goal: configure the crawler product folder so the user's second VS Code terminal can push to GitHub.
+- current goal: configure the crawler product folder so the user can review Git state and run any push/merge command manually from VS Code.
 - completed:
   - initialized Git repository in `C:\AI_JOB\firstproject\crawler_project\crawlService-main`.
   - set branch to `main`.
-  - added remote `origin` as `https://github.com/hgz-902/test_crawl`.
+  - added remote `origin` initially as `https://github.com/hgz-902/test_crawl`; later corrected `origin` to `https://github.com/K-Ternag/crawlService`.
   - hardened `.gitignore` for `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, and Office temporary `~$*` files.
   - created initial local commit `Initial crawler project`.
   - verified GitHub CLI auth is active for account `hgz-902`.
 - validation:
   - `git status --short --branch`: clean on `main` before this checkpoint update.
-  - `git ls-remote https://github.com/hgz-902/test_crawl`: no refs returned, indicating an empty remote.
+  - actual remote `https://github.com/K-Ternag/crawlService` is not empty and is not history-compatible with local `main`.
   - `git ls-files` check found no `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, or Office temp files tracked.
   - secret scan found no real Naver key values in tracked source; only `.env.example` placeholders mention `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET`.
-- next user command:
-  - `git push -u origin main`
+- next user action:
+  - review the local/remote divergence and choose a branch/merge strategy; Codex should not directly run `git push` in the crawler-site delivery loop.
 - ruling:
-  - pass. Push is configured but not executed by Codex in this step.
+  - pass. Git is configured for manual user operation; direct push is intentionally outside the Codex process flow.
+
+## Origin Main Comparison Server Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: run the user's origin-main copy at `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main` on port 3001 for direct visual comparison.
+- completed:
+  - started the origin-main copy with the existing crawler virtualenv on `http://127.0.0.1:3001/`.
+  - patched only the origin copy's `crawler_app\web.py` template-response call style for compatibility with the currently installed FastAPI/Starlette version.
+  - updated process memory so Codex does not directly run `git push`; the user owns push/merge execution.
+- not done:
+  - no origin-main repository merge, rebase, force push, or product behavior change was performed.
+- next one action:
+  - user opens `http://127.0.0.1:3001/` and compares the origin UI with the current local crawler UI.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\MEMORY.md`
+  - `C:\AI_JOB\firstproject\memory\2026-05-14.md`
+- validation result or blocker:
+  - `GET /` returned 200 with title `설정 목록`.
+  - `GET /configs/네이버` returned 200 with title `Workflow 설정`.
+  - screenshot proof saved under `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\origin-main-3001-20260514`.
+  - local `main` and `origin/main` still have no merge base; Git push remains manual-user territory.
+
+## Test Naver Config Removal Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: remove the temporary `네이버뉴스_최태원_2페이지` crawler config before starting the next crawler target.
+- completed:
+  - deleted `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`.
+- not done:
+  - no runtime code, UI logic, Naver production config, or Git push was changed.
+- next one action:
+  - proceed to the next target-site crawler slice after the user chooses the target.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`
+- validation result or blocker:
+  - file no longer exists.
+  - `GET http://127.0.0.1:3000/` returned 200 and did not contain `네이버뉴스_최태원_2페이지`.
+
+## Daum News Slice Checkpoint
+- date: 2026-05-14
+- status: in_progress.
+- current goal: implement and verify a bounded Daum news collection target for search terms `최태원` and `SK`.
+- completed:
+  - confirmed direct Daum news search HTML request redirects to CAPTCHA, so direct search-result scraping is not a stable primary path.
+  - confirmed official Kakao Daum Search public docs list Web, Video, Image, Blog, Book, and Cafe APIs, not a news-specific endpoint.
+  - selected implementation path: Kakao Daum Web Search API filtered to Daum news hosts, with `KAKAO_REST_API_KEY` read from environment.
+  - spawned Alpha developer worker for implementation.
+- not done:
+  - implementation handoff, reviewer/QA/auditor judgment, tests, browser proof, and live API validation.
+- next one action:
+  - integrate developer worker output and run focused tests.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main`
+  - expected new runtime module: `crawler_app\daum_news_api.py`
+  - expected config: `configs\다음.json`
+- validation result or blocker:
+  - current external blocker for live API smoke: `KAKAO_REST_API_KEY` has not yet been confirmed in the environment.
+
+## Daum News Slice Final Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: deliver a Daum news collection target that works from the UI with search terms `최태원` and `SK`.
+- completed:
+  - saved the user-provided Kakao REST API key into ignored local `.env`.
+  - implemented Daum parser support using Kakao Daum Web Search API, with query hint `site:v.daum.net` and explicit filtering to `news.daum.net` / `v.daum.net`.
+  - added `configs\다음.json` with search terms `최태원` and `SK`, `sort=recency`, and one count field mapped to `loop_limit=20`.
+  - added Daum-only editor UI panel and JavaScript config generation.
+  - kept Daum credentials out of UI/configs/logged headers; root and nested stale credential fields are stripped during normalization/save.
+  - hardened Daum API calls with no redirect following and post-response URL validation.
+  - disabled Daum API preview fetches to avoid accidental quota use.
+  - changed Daum per-term manifests to store relative item file paths.
+- not done:
+  - no git push was run; user owns push/merge execution.
+  - no article body scraping was added.
+- next one action:
+  - user can inspect `http://127.0.0.1:3000/configs/다음` and run the Daum crawler from the UI.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\다음.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\daum-news-ui-20260514`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 106 tests pass.
+  - live UI run `POST /configs/다음/run`: success, 40 items total (`최태원`: 20, `SK`: 20).
+  - latest live run HTML saved to `qa-artifacts\daum-news-ui-20260514\daum-run-live-final.html`.
+  - tracked-source secret scan found no provided Kakao key outside ignored `.env`.
+  - Alpha developer, reviewer, QA, and auditor worker flow completed; final reviewer/QA/audit passed after rework.
+
+## API Count Semantics Rework Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: make Naver/Daum news count behavior unambiguous from the UI by exposing one count field and using fixed provider fetch parameters internally.
+- completed:
+  - Naver fixed fetch parameters: `display=100`, `start=1`, `page_limit=1`; user-facing count maps only to `loop_limit`.
+  - Daum fixed fetch parameters: `size=50`, `page=1`, `page_limit=2`; user-facing count maps only to `loop_limit`.
+  - fixed Daum runtime so `loop_limit <= 50` no longer shrinks the fixed two-page fetch down to one page.
+  - fixed Naver sort persistence by saving `sort` in the parser step as well as the URL.
+  - made the Naver editor panel detect Naver API URL/step configs, including renamed or stale configs such as `네이버뉴스`.
+  - updated `configs\네이버뉴스.json` with fixed `display=100`, `page_limit=1`, and bounded `loop_limit=30`.
+  - changed Naver and Daum preview behavior to skip external API calls.
+  - stripped provider credentials from preview rerender payloads.
+  - changed Naver manifest `item_files` to relative `items\item_####.json` paths.
+- not done:
+  - no git push was run; user owns push/merge execution.
+- next one action:
+  - user can inspect `http://127.0.0.1:3000/configs/네이버`, `http://127.0.0.1:3000/configs/네이버뉴스`, and `http://127.0.0.1:3000/configs/다음`.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\api-count-fixed-20260514`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 112 tests pass.
+  - browser UI proof: Naver and Daum editors each show exactly one provider count field and no cross-provider panel pollution.
+  - bounded live Naver smoke: success, 3 saved records, runtime URL `display=100&start=1&sort=sim`, preview skipped external API.
+  - bounded live Daum smoke: success, 3 saved records, runtime URL `page=1&size=50`, final URL `page=2&size=50`, preview skipped external API.
+  - tracked-source/QA-artifact secret scan found no provided real API keys outside ignored `.env`.
+
+## Naver/Daum Cumulative Output Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: prevent Naver/Daum API result JSON files from being reset or overwritten on repeated runs.
+- completed:
+  - changed Naver provider saves to write each run under `<term_dir>\items\YYYYMMDD_n`.
+  - changed Daum provider saves to write each run under `<term_dir>\items\YYYYMMDD_n`.
+  - changed workflow-level API manifests to write under `<output_dir>\runs\YYYYMMDD_n\workflow_records.json`.
+  - for Naver/Daum API parser runs, kept reported output paths under the root `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n` shape instead of `filter\<term>`.
+  - added UI run safety that blocks `output_dir` paths resolving outside the crawler project folder.
+- not done:
+  - no retention/quota cleanup policy was added; accumulated runs are intentionally preserved.
+  - no git push was run; user owns push/merge execution.
+- next one action:
+  - user can run Naver/Daum again from the UI and inspect the new dated run folder under the matching search-term directory.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\cumulative-output-20260514-after-review`
+- validation result or blocker:
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 116 tests pass.
+  - proof script confirmed:
+    - `qa-artifacts\cumulative-output-20260514-after-review\naver\002_SK\items\20260514_3\naver_news_api.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\daum\002_SK\items\20260514_3\daum_news_api.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\naver\runs\20260514_3\workflow_records.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\daum\runs\20260514_3\workflow_records.json`
+  - tracked-source secret scan found no provided real API keys outside ignored `.env`.

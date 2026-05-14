@@ -121,3 +121,35 @@ Make the Naver News API crawler configurable from the existing editor UI instead
 - reviewer: find structural regressions, brittle UI/config coupling, and maintainability issues.
 - QA: verify multi-search-term config, latest count limits, saved JSON payload, UI rendering, and body cleanup edge cases.
 - auditor: verify secret isolation, overbroad crawl safety, data retention/logging, and hostile HTML risks.
+
+## Active Slice: Daum News API-Oriented Collection
+
+### User Goal
+Make Daum news collection work well for the crawler product. Initial example search terms are `최태원` and `SK`.
+
+### Discovery Result
+- Direct Daum news search HTML access redirected to `captcha.search.daum.net`, so broad HTML scraping is not a stable collection path.
+- Official Kakao Developers Daum Search documentation lists Web, Video, Image, Blog, Book, and Cafe APIs, but no news-specific public API.
+- The implementation path is therefore Kakao Daum Web Search API (`https://dapi.kakao.com/v2/search/web`) filtered to Daum news hosts, with the REST API key read from environment only.
+
+### Constraints
+- Do not scrape Daum search-result HTML as the primary path.
+- Do not fetch article bodies or publisher pages in this slice.
+- Do not expose Kakao REST API keys in the UI, configs, logs, or final reports.
+- Keep one user-facing news count field only.
+- Bound API paging and record count to avoid broad crawls.
+- If `KAKAO_REST_API_KEY` is missing, implementation and offline tests may pass, but live Daum API validation must be reported as blocked.
+
+### Expected Deliverables For This Slice
+- Daum provider parser/runtime module.
+- `다음` config with search terms `최태원` and `SK`.
+- Daum-only editor panel shown only for config `다음`.
+- Workflow and UI safety validation for Daum limits.
+- Unit/web tests covering parsing, paging, env key use, config save, and UI scoping.
+- Local UI/browser proof that the Daum editor is visible and other configs are not polluted.
+
+### Role-Specific Small Goals
+- developer: implement the Daum provider path, config, UI, and focused tests without touching Git push.
+- reviewer: find structural regressions, duplicated provider logic, hidden UI/config coupling, and maintainability issues.
+- QA: verify count semantics, multiple search terms, missing-key behavior, UI scoping, parser validation, and regression against Naver/generic editor flows.
+- auditor: verify credential isolation, external request bounds, captcha/scraping risk, logs/artifacts, and user-owned Git push boundary.

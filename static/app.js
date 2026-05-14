@@ -115,22 +115,21 @@ function parseNaverStateFromConfig(config) {
   const startUrl = String(config.start_url || "");
   const isNaverUrl = startUrl.includes("openapi.naver.com/v1/search/news");
   const url = isNaverUrl ? new URL(startUrl, window.location.origin) : null;
-  const configuredCount = Number(parserStep?.loop_limit || parserStep?.display || url?.searchParams.get("display") || 20);
+  const configuredCount = Number(parserStep?.loop_limit || 20);
   return {
     enabled: Boolean(parserStep) || isNaverUrl,
     sort: (url?.searchParams.get("sort") || "date").toLowerCase() === "sim" ? "sim" : "date",
-    pageLimit: Number(parserStep?.page_limit || 1),
+    pageLimit: 1,
     count: Math.min(100, Math.max(1, configuredCount || 20)),
   };
 }
 
 function readNaverPanel(form) {
-  const enabled = form.querySelector("[data-naver-enabled]")?.checked;
-  if (!enabled) return null;
+  if (!form.querySelector("[data-naver-enabled]")) return null;
   const count = Math.min(100, Math.max(1, Number(form.querySelector("[data-naver-count]")?.value || 20)));
   return {
     sort: form.querySelector("[data-naver-sort]")?.value === "sim" ? "sim" : "date",
-    display: count,
+    display: 100,
     pageLimit: 1,
     loopLimit: count,
   };
@@ -144,9 +143,54 @@ function applyNaverPanelToConfig(config, naver) {
       name: "naver_news_api",
       action: "parser",
       attr: "naver",
+      sort: naver.sort,
       display: naver.display,
       page_limit: naver.pageLimit,
       loop_limit: naver.loopLimit,
+    }),
+  ];
+  return config;
+}
+
+function parseDaumStateFromConfig(config) {
+  const steps = Array.isArray(config.steps) ? config.steps : [];
+  const parserStep = steps.find(
+    (step) => step && String(step.action || "").toLowerCase() === "parser" && String(step.attr || "").toLowerCase() === "daum",
+  );
+  const startUrl = String(config.start_url || "");
+  const isDaumUrl = startUrl.includes("dapi.kakao.com/v2/search/web");
+  const url = isDaumUrl ? new URL(startUrl, window.location.origin) : null;
+  const configuredCount = Number(parserStep?.loop_limit || 20);
+  return {
+    enabled: Boolean(parserStep) || isDaumUrl,
+    sort: (parserStep?.sort || url?.searchParams.get("sort") || "recency").toLowerCase() === "accuracy" ? "accuracy" : "recency",
+    pageLimit: 2,
+    count: Math.min(100, Math.max(1, configuredCount || 20)),
+  };
+}
+
+function readDaumPanel(form) {
+  if (!form.querySelector("[data-daum-enabled]")) return null;
+  const count = Math.min(100, Math.max(1, Number(form.querySelector("[data-daum-count]")?.value || 20)));
+  return {
+    sort: form.querySelector("[data-daum-sort]")?.value === "accuracy" ? "accuracy" : "recency",
+    size: 50,
+    pageLimit: 2,
+    loopLimit: count,
+  };
+}
+
+function applyDaumPanelToConfig(config, daum) {
+  if (!daum) return config;
+  config.start_url = `https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=${daum.sort}&page=1&size=${daum.size}`;
+  config.steps = [
+    cleanStep({
+      name: "daum_news_api",
+      action: "parser",
+      attr: "daum",
+      sort: daum.sort,
+      page_limit: daum.pageLimit,
+      loop_limit: daum.loopLimit,
     }),
   ];
   return config;
@@ -174,6 +218,19 @@ function initNaverPanel() {
   form.querySelector("[data-naver-sort]").value = state.sort;
   form.querySelector("[data-naver-count]").value = String(state.count || 20);
   form.querySelector("[data-naver-page-limit]").value = String(state.pageLimit || 1);
+}
+
+function initDaumPanel() {
+  const form = document.getElementById("config-form");
+  if (!form) return;
+  const config = readInitialConfig() || buildPayload(form);
+  const state = parseDaumStateFromConfig(config);
+  const enabledInput = form.querySelector("[data-daum-enabled]");
+  if (!enabledInput) return;
+  enabledInput.checked = state.enabled;
+  form.querySelector("[data-daum-sort]").value = state.sort;
+  form.querySelector("[data-daum-count]").value = String(state.count || 20);
+  form.querySelector("[data-daum-page-limit]").value = String(state.pageLimit || 1);
 }
 
 const STEP_ACTION_RULES = {
@@ -227,6 +284,7 @@ const STEP_ACTION_RULES = {
     attr: [
       { value: "google", label: "google" },
       { value: "naver", label: "naver" },
+      { value: "daum", label: "daum" },
     ],
     supportsXPath: false,
     supportsLoop: false,
@@ -417,7 +475,9 @@ function buildPayload(form) {
   config.search_terms = readSearchTerms(form);
   config.filter_terms = readFilterTerms(form);
   config.steps = Array.from(form.querySelectorAll("[data-step-row]")).map(readStep);
-  return applyNaverPanelToConfig(config, readNaverPanel(form));
+  applyNaverPanelToConfig(config, readNaverPanel(form));
+  applyDaumPanelToConfig(config, readDaumPanel(form));
+  return config;
 }
 
 function createStepRow() {
@@ -570,6 +630,7 @@ document.addEventListener("submit", (event) => {
 
 renumberSteps();
 initNaverPanel();
+initDaumPanel();
 if (!focusConfigRowFromQuery()) {
   restoreScrollState();
 }

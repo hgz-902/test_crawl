@@ -127,6 +127,26 @@
 ### Future Slice
 - Article body collection may return later as a separate domain-policy slice with per-publisher parsers, explicit allowlists, retention/copyright policy, and separate QA.
 
+## Active Implementation Plan: Daum News API-Oriented Collection
+
+### Completion Criteria
+- `다음` appears in the crawler UI as a configurable Daum news collection target.
+- The Daum editor has a Daum-only settings panel and does not add Daum controls to unrelated configs.
+- A user can set multiple search terms and one count field; `1` means one item per term and `100` means up to 100 items per term.
+- Runtime uses `KAKAO_REST_API_KEY` from `.env` / process environment and does not expose the key in UI/config/logs.
+- Runtime uses Kakao Daum Web Search API and filters results to Daum news hosts because Daum news search HTML redirects to CAPTCHA and no public news-specific API was found.
+- Tests and browser proof pass; live API proof is either completed with a provided key or blocked with a precise missing-key reason.
+
+### Steps
+1. Add Daum provider module for Kakao Daum Web Search API parsing/paging/saving.
+2. Add workflow parser attr `daum`, validation, source URL inference, and output metadata.
+3. Add Daum-only editor panel and JavaScript config generation.
+4. Add `configs\다음.json` with search terms `최태원` and `SK`.
+5. Add focused parser/workflow/web tests.
+6. Run unit tests and local UI browser proof.
+7. Run live API smoke only if `KAKAO_REST_API_KEY` is available; otherwise mark validation as blocked by missing credential.
+8. Run reviewer, QA, and auditor roles before final ruling.
+
 ## Pause Checkpoint: Naver UI Credentials/Display And Runtime Regression
 
 ### Status

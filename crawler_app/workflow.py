@@ -16,6 +16,11 @@ import time
 from lxml import html as lxml_html
 import requests
 
+from crawler_app.daum_news_api import (
+    DAUM_NEWS_API_ATTR,
+    fetch_daum_news_api_items,
+    save_daum_news_api_items,
+)
 from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
@@ -28,7 +33,7 @@ SUPPORTED_ACTIONS = {"click", "goto", "download", "extract", "parser"}
 SUPPORTED_LOOP_MODES = {"items", "pagination"}
 SUPPORTED_PAGINATION_MODES = {"next_button", "page_number"}
 SUPPORTED_OPEN_MODES = {"auto", "same_tab", "popup"}
-SUPPORTED_PARSER_ATTRS = {GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR}
+SUPPORTED_PARSER_ATTRS = {GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}
 SUPPORTED_ATTRS = {"href", "src", "text", "html", *SUPPORTED_PARSER_ATTRS}
 STEP_ATTR_ALLOWED_VALUES = {
     "click": set(),
@@ -41,8 +46,12 @@ SUPPORTED_WAIT_STATES = {"attached", "visible", "hidden", "detached"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
-NAVER_NEWS_API_MAX_PAGE_LIMIT = 10
 NAVER_NEWS_API_MAX_LOOP_LIMIT = 100
+DAUM_NEWS_API_MAX_LOOP_LIMIT = 100
+NAVER_NEWS_API_FIXED_PAGE_LIMIT = 1
+NAVER_NEWS_API_FIXED_DISPLAY = 100
+DAUM_NEWS_API_FIXED_PAGE_LIMIT = 2
+DAUM_NEWS_API_FIXED_SIZE = 50
 BOARD_CONTAINER_CHILD_XPATHS = {
     "ol": ("./li",),
     "tbody": ("./tr",),
@@ -220,7 +229,7 @@ def load_workflow_config(path: str | Path) -> dict[str, Any]:
 
 def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(config)
-    for credential_field in ("naver_client_id", "naver_client_secret"):
+    for credential_field in ("naver_client_id", "naver_client_secret", "kakao_rest_api_key"):
         normalized.pop(credential_field, None)
     steps = normalized.get("steps")
     if not isinstance(steps, list):
@@ -229,6 +238,9 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
     for step in steps:
         if not isinstance(step, dict):
             continue
+
+        for credential_field in ("naver_client_id", "naver_client_secret", "kakao_rest_api_key"):
+            step.pop(credential_field, None)
 
         action = str(step.get("action") or "").strip().lower()
         if action:
@@ -279,7 +291,8 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
             step.pop("loop", None)
             if not str(step.get("attr") or "").strip():
                 step["attr"] = _infer_parser_attr_from_start_url(str(normalized.get("start_url") or "")) or GOOGLE_NEWS_RSS_ATTR
-            if str(step.get("attr") or "").strip().lower() == NAVER_NEWS_API_ATTR:
+            parser_attr = str(step.get("attr") or "").strip().lower()
+            if parser_attr == NAVER_NEWS_API_ATTR:
                 for deprecated_field in (
                     "fetch_detail",
                     "detail_timeout_seconds",
@@ -288,14 +301,49 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
                     "allowed_detail_domains",
                 ):
                     step.pop(deprecated_field, None)
-                naver_count = _positive_int_or_none(step.get("loop_limit"))
-                if naver_count is not None:
-                    step["display"] = naver_count
-                    normalized["start_url"] = _set_query_param(
-                        str(normalized.get("start_url") or ""),
-                        "display",
-                        str(naver_count),
-                    )
+                step["display"] = NAVER_NEWS_API_FIXED_DISPLAY
+                step["page_limit"] = NAVER_NEWS_API_FIXED_PAGE_LIMIT
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "display",
+                    str(NAVER_NEWS_API_FIXED_DISPLAY),
+                )
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "start",
+                    "1",
+                )
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "sort",
+                    "sim" if str(step.get("sort") or "").strip().lower() == "sim" else "date",
+                )
+            elif parser_attr == DAUM_NEWS_API_ATTR:
+                raw_sort = str(step.get("sort") or "").strip().lower()
+                if raw_sort not in {"accuracy", "recency"}:
+                    raw_sort = "recency"
+                    step["sort"] = raw_sort
+                step["page_limit"] = DAUM_NEWS_API_FIXED_PAGE_LIMIT
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "query",
+                    "{search_term}+site%3Av.daum.net",
+                )
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "sort",
+                    raw_sort,
+                )
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "page",
+                    "1",
+                )
+                normalized["start_url"] = _set_query_param(
+                    str(normalized.get("start_url") or ""),
+                    "size",
+                    str(DAUM_NEWS_API_FIXED_SIZE),
+                )
 
     return normalized
 
@@ -419,6 +467,8 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                     raise WorkflowConfigError(f"steps[{index}].loop_limit must be a non-negative integer.")
             if attr == NAVER_NEWS_API_ATTR:
                 _validate_naver_parser_step(step, index)
+            if attr == DAUM_NEWS_API_ATTR:
+                _validate_daum_parser_step(step, index)
             continue
         if not step.get("xpath"):
             raise WorkflowConfigError(f"steps[{index}].xpath is required.")
@@ -1045,9 +1095,12 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
     raw_records = list(execution.records)
+    raw_extracted_files = list(execution.extracted_files)
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
     filter_enabled = bool(filter_terms)
-    matched_root = _result_category_root(execution.output_dir, "filter")
+    parser_name = _config_parser_name(config)
+    use_direct_api_output = parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}
+    matched_root = execution.output_dir if use_direct_api_output else _result_category_root(execution.output_dir, "filter")
     nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
 
     execution.diagnostics["filter_terms"] = filter_terms
@@ -1063,17 +1116,21 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
     execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
 
-    parser_name = _config_parser_name(config)
     if parser_name is not None:
-        _save_filtered_parser_outputs(
-            execution=execution,
-            config=config,
-            matched_records=matched_records,
-            nonfilter_records=nonfilter_records,
-            filter_terms=filter_terms,
-            matched_root=matched_root,
-            nonfilter_root=nonfilter_root,
-        )
+        if use_direct_api_output:
+            execution.extracted_files = raw_extracted_files
+            execution.diagnostics["matched_output_files"] = raw_extracted_files
+            execution.diagnostics["nonfilter_output_files"] = []
+        else:
+            _save_filtered_parser_outputs(
+                execution=execution,
+                config=config,
+                matched_records=matched_records,
+                nonfilter_records=nonfilter_records,
+                filter_terms=filter_terms,
+                matched_root=matched_root,
+                nonfilter_root=nonfilter_root,
+            )
     else:
         if filter_enabled:
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
@@ -1098,8 +1155,9 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
 
     _cleanup_empty_dirs(execution.output_dir, protected_roots=[matched_root, *([nonfilter_root] if nonfilter_root is not None else [])])
 
+    snapshot_root = _next_daily_workflow_run_dir(execution.output_dir) if use_direct_api_output else matched_root
     matched_path = _save_workflow_record_snapshot(
-        matched_root,
+        snapshot_root,
         config,
         matched_records,
         filter_terms=filter_terms,
@@ -1200,6 +1258,14 @@ def _fetch_parser_items(
             page_limit=_positive_int(step.get("page_limit"), default=1),
             item_limit=_positive_int_or_none(step.get("loop_limit")),
         )
+    if parser_name == DAUM_NEWS_API_ATTR:
+        step = parser_step or {}
+        return fetch_daum_news_api_items(
+            source_url,
+            timeout=timeout,
+            page_limit=_positive_int(step.get("page_limit"), default=1),
+            item_limit=_positive_int_or_none(step.get("loop_limit")),
+        )
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
 
 
@@ -1224,6 +1290,15 @@ def _save_parser_items(
         )
     if parser_name == NAVER_NEWS_API_ATTR:
         return save_naver_news_api_items(
+            output_dir,
+            search_term=search_term,
+            api_url=source_url,
+            final_url=final_url,
+            items=items,
+            filter_terms=filter_terms,
+        )
+    if parser_name == DAUM_NEWS_API_ATTR:
+        return save_daum_news_api_items(
             output_dir,
             search_term=search_term,
             api_url=source_url,
@@ -1407,7 +1482,7 @@ def _run_parser_workflow(
                 "item_count": len(items),
                 "empty": len(items) == 0,
                 "rss_url": source_url,
-                "api_url": source_url if parser_name == NAVER_NEWS_API_ATTR else "",
+                "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
                 "final_url": final_url,
                 "output_file": str(output_path),
             }
@@ -1504,6 +1579,50 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
     parser_step = next((step for step in steps if isinstance(step, dict)), {})
     item_limit = _step_loop_limit(parser_step)
 
+    if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}:
+        skip_reason = (
+            "Daum API preview is disabled to avoid external API calls and quota use."
+            if parser_name == DAUM_NEWS_API_ATTR
+            else "Naver API preview is disabled to avoid external API calls and quota use."
+        )
+        for search_term_index, search_term in enumerate(effective_terms):
+            source_url = _render_template_value(start_url, search_term, url_encode=True)
+            search_term_runs.append(
+                {
+                    "search_term_index": search_term_index,
+                    "search_term": search_term,
+                    "item_count": 0,
+                    "empty": True,
+                    "rss_url": source_url,
+                    "api_url": source_url,
+                    "final_url": source_url,
+                    "preview_skipped": True,
+                    "skip_reason": skip_reason,
+                }
+            )
+        first_step = (config.get("steps") or [{}])[0]
+        return {
+            "start_url": start_url,
+            "search_terms": search_terms,
+            "search_term_count": len(effective_terms),
+            "parser_name": parser_name,
+            "parser_enabled": True,
+            "parser_item_count": 0,
+            "preview_skipped": True,
+            "search_term_runs": search_term_runs,
+            "step_counts": [
+                {
+                    "name": first_step.get("name") or "parser",
+                    "xpath": "",
+                    "action": "parser",
+                    "wait_state": "auto",
+                    "loop_limit": item_limit,
+                    "count": 0,
+                    "error": skip_reason,
+                }
+            ],
+        }
+
     for search_term_index, search_term in enumerate(effective_terms):
         source_url = _render_template_value(start_url, search_term, url_encode=True)
         items, final_url = _fetch_parser_items(
@@ -1522,7 +1641,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
                 "item_count": len(items),
                 "empty": len(items) == 0,
                 "rss_url": source_url,
-                "api_url": source_url if parser_name == NAVER_NEWS_API_ATTR else "",
+                "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
                 "final_url": final_url,
             }
         )
@@ -2401,6 +2520,8 @@ def _infer_parser_attr_from_start_url(start_url: str) -> str | None:
     lowered = start_url.strip().lower()
     if "openapi.naver.com/v1/search/news" in lowered:
         return NAVER_NEWS_API_ATTR
+    if "dapi.kakao.com/v2/search/web" in lowered:
+        return DAUM_NEWS_API_ATTR
     if "news.google.com/rss/search" in lowered:
         return GOOGLE_NEWS_RSS_ATTR
     return None
@@ -2432,16 +2553,34 @@ def _set_query_param(url: str, key: str, value: str) -> str:
 
 def _validate_naver_parser_step(step: dict[str, Any], index: int) -> None:
     page_limit = _validate_optional_positive_int(step, index, "page_limit") or 1
-    if page_limit > NAVER_NEWS_API_MAX_PAGE_LIMIT:
+    if page_limit != NAVER_NEWS_API_FIXED_PAGE_LIMIT:
         raise WorkflowConfigError(
-            f"steps[{index}].page_limit must be <= {NAVER_NEWS_API_MAX_PAGE_LIMIT} for Naver News API."
+            f"steps[{index}].page_limit must be {NAVER_NEWS_API_FIXED_PAGE_LIMIT} for Naver News API."
         )
 
-    loop_limit = _validate_required_positive_int(step, index, "loop_limit")
+    loop_limit = _validate_required_positive_int(step, index, "loop_limit", provider_name="Naver News API")
     if loop_limit > NAVER_NEWS_API_MAX_LOOP_LIMIT:
         raise WorkflowConfigError(
             f"steps[{index}].loop_limit must be between 1 and {NAVER_NEWS_API_MAX_LOOP_LIMIT} for Naver News API."
         )
+
+
+def _validate_daum_parser_step(step: dict[str, Any], index: int) -> None:
+    page_limit = _validate_optional_positive_int(step, index, "page_limit") or 1
+    if page_limit != DAUM_NEWS_API_FIXED_PAGE_LIMIT:
+        raise WorkflowConfigError(
+            f"steps[{index}].page_limit must be {DAUM_NEWS_API_FIXED_PAGE_LIMIT} for Daum News API."
+        )
+
+    loop_limit = _validate_required_positive_int(step, index, "loop_limit", provider_name="Daum News API")
+    if loop_limit > DAUM_NEWS_API_MAX_LOOP_LIMIT:
+        raise WorkflowConfigError(
+            f"steps[{index}].loop_limit must be between 1 and {DAUM_NEWS_API_MAX_LOOP_LIMIT} for Daum News API."
+        )
+
+    raw_sort = str(step.get("sort") or "").strip().lower()
+    if raw_sort and raw_sort not in {"accuracy", "recency"}:
+        raise WorkflowConfigError(f"steps[{index}].sort must be one of ['accuracy', 'recency'] for Daum News API.")
 
 
 def _validate_optional_positive_int(step: dict[str, Any], index: int, field: str) -> int | None:
@@ -2457,10 +2596,18 @@ def _validate_optional_positive_int(step: dict[str, Any], index: int, field: str
     return parsed
 
 
-def _validate_required_positive_int(step: dict[str, Any], index: int, field: str) -> int:
+def _validate_required_positive_int(
+    step: dict[str, Any],
+    index: int,
+    field: str,
+    *,
+    provider_name: str | None = None,
+) -> int:
     value = step.get(field)
     if value in (None, ""):
-        raise WorkflowConfigError(f"steps[{index}].{field} is required for Naver News API.")
+        if provider_name:
+            raise WorkflowConfigError(f"steps[{index}].{field} is required for {provider_name}.")
+        raise WorkflowConfigError(f"steps[{index}].{field} is required.")
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
@@ -2554,6 +2701,19 @@ def _search_term_output_dir(
 ) -> Path:
     label = safe_name(search_term or "default")
     return base_output_dir / f"{search_term_index + 1:03d}_{label}"
+
+
+def _next_daily_workflow_run_dir(output_dir: Path) -> Path:
+    today = date.today().strftime("%Y%m%d")
+    runs_dir = output_dir / "runs"
+    for index in range(1, 10000):
+        candidate = runs_dir / f"{today}_{index}"
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"Could not allocate daily workflow run directory under {runs_dir}.")
 
 
 def _config_board_repeat_spec(config: dict[str, Any]) -> BoardRepeatSpec | None:

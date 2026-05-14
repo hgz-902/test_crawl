@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -160,10 +161,31 @@ class NaverNewsApiTests(unittest.TestCase):
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(payload["item_count"], 2)
             self.assertEqual(len(payload["item_files"]), 2)
+            self.assertEqual(manifest.parent.parent.name, "items")
+            self.assertEqual(manifest.parent.name, f"{date.today():%Y%m%d}_1")
             for file_path in payload["item_files"]:
-                loaded = json.loads(Path(file_path).read_text(encoding="utf-8"))
+                self.assertTrue(str(file_path).startswith("item_"))
+                loaded = json.loads((manifest.parent / file_path).read_text(encoding="utf-8"))
                 self.assertIn("post_id", loaded)
                 self.assertNotIn("detail_body", loaded)
+
+    def test_save_naver_news_api_items_allocates_next_daily_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "naver" / "002_SK"
+            today = date.today().strftime("%Y%m%d")
+            (output_dir / "items" / f"{today}_1").mkdir(parents=True)
+            (output_dir / "items" / f"{today}_2").mkdir(parents=True)
+
+            manifest = save_naver_news_api_items(
+                output_dir,
+                search_term="SK",
+                api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                final_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                items=[{"post_id": "1", "title": "A"}],
+            )
+
+            self.assertEqual(manifest.parent, output_dir / "items" / f"{today}_3")
+            self.assertTrue((manifest.parent / "item_0001.json").exists())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import date, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
@@ -120,14 +120,14 @@ def save_naver_news_api_items(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     items_dir = output_dir / "items"
-    items_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _next_daily_run_dir(items_dir)
 
     item_files: list[str] = []
     for index, item in enumerate(items, start=1):
         item_name = f"item_{index:04d}.json"
-        item_path = items_dir / item_name
+        item_path = run_dir / item_name
         item_path.write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
-        item_files.append(str(item_path))
+        item_files.append(item_name)
 
     payload = {
         "search_term": search_term,
@@ -137,9 +137,21 @@ def save_naver_news_api_items(
         "filter_terms": filter_terms or [],
         "item_files": item_files,
     }
-    output_path = output_dir / file_name
+    output_path = run_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _next_daily_run_dir(items_dir: Path) -> Path:
+    today = date.today().strftime("%Y%m%d")
+    for index in range(1, 10000):
+        candidate = items_dir / f"{today}_{index}"
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"Could not allocate daily Naver output directory under {items_dir}.")
 
 
 
