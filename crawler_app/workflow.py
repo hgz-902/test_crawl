@@ -21,7 +21,12 @@ from crawler_app.daum_news_api import (
     fetch_daum_news_api_items,
     save_daum_news_api_items,
 )
-from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
+from crawler_app.google_news_rss import (
+    GOOGLE_NEWS_RSS_ATTR,
+    fetch_google_news_rss_items,
+    save_google_news_rss_items,
+    validate_google_news_rss_url,
+)
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
     fetch_naver_news_api_items,
@@ -62,6 +67,7 @@ BOARD_ITEM_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)\[(?P<index>\d+)\]$")
 BOARD_PATH_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)(?:\[(?P<index>\d+)\])?$")
 BOARD_TRAILING_NUMBER_SEGMENT_RE = re.compile(r"^(?P<prefix>.*?)(?P<index>\d+)(?P<suffix>[^0-9]*)$")
 ITEM_NUMBER_PLACEHOLDER = "{item_number}"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @dataclass(slots=True)
@@ -356,6 +362,8 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
     if config.get("renderer", "playwright") != "playwright":
         raise WorkflowConfigError("Only renderer='playwright' is supported.")
 
+    _resolve_output_dir(config["output_dir"])
+
     parse_pause_seconds = config.get("parse_pause_seconds")
     if parse_pause_seconds not in (None, ""):
         try:
@@ -469,6 +477,11 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                 _validate_naver_parser_step(step, index)
             if attr == DAUM_NEWS_API_ATTR:
                 _validate_daum_parser_step(step, index)
+            if attr == GOOGLE_NEWS_RSS_ATTR:
+                try:
+                    validate_google_news_rss_url(str(config.get("start_url") or ""))
+                except ValueError as exc:
+                    raise WorkflowConfigError(str(exc)) from exc
             continue
         if not step.get("xpath"):
             raise WorkflowConfigError(f"steps[{index}].xpath is required.")
@@ -674,7 +687,7 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
 
-    output_dir = Path(config["output_dir"])
+    output_dir = _resolve_output_dir(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     execution = WorkflowExecution(config_name=str(config["name"]), output_dir=output_dir)
     search_terms = _config_search_terms(config)
@@ -1099,7 +1112,9 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
     filter_enabled = bool(filter_terms)
     parser_name = _config_parser_name(config)
-    use_direct_api_output = parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}
+    use_direct_api_output = parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} or (
+        parser_name == GOOGLE_NEWS_RSS_ATTR and not filter_enabled
+    )
     matched_root = execution.output_dir if use_direct_api_output else _result_category_root(execution.output_dir, "filter")
     nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
 
@@ -3760,6 +3775,21 @@ def _headers() -> dict[str, str]:
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
         )
     }
+
+
+def _resolve_output_dir(value: Any) -> Path:
+    raw_path = Path(str(value or "").strip())
+    if not raw_path:
+        raise WorkflowConfigError("output_dir must not be empty.")
+
+    output_dir = raw_path if raw_path.is_absolute() else PROJECT_ROOT / raw_path
+    try:
+        resolved = output_dir.resolve(strict=False)
+        root = PROJECT_ROOT.resolve(strict=False)
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise WorkflowConfigError("output_dir must stay under the crawler project directory.") from exc
+    return resolved
 
 
 def safe_name(value: str) -> str:

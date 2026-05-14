@@ -44,8 +44,14 @@ from crawler_app.workflow import (
     normalize_workflow_config,
     validate_workflow_config,
 )
-from crawler_app.google_news_rss import parse_google_news_rss_items
+from crawler_app.google_news_rss import parse_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import fetch_naver_news_api_items, parse_naver_news_api_items
+
+
+def temporary_project_output_dir() -> tempfile.TemporaryDirectory[str]:
+    base_dir = Path(__file__).resolve().parent.parent / "outputs" / ".test"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=base_dir)
 
 
 class FakeResponse:
@@ -874,6 +880,36 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         validate_workflow_config(config)
 
+    def test_validate_workflow_config_rejects_google_rss_parser_non_google_url(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://example.com/rss/search?q={search_term}",
+            "output_dir": "outputs/google",
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+
+        with self.assertRaises(WorkflowConfigError):
+            validate_workflow_config(config)
+
+    def test_validate_workflow_config_rejects_output_dir_outside_project(self) -> None:
+        config = {
+            "name": "sample",
+            "start_url": "https://example.com",
+            "output_dir": "../outside",
+            "steps": [
+                {"name": "download", "xpath": "//a[1]", "action": "download"},
+            ],
+        }
+
+        with self.assertRaises(WorkflowConfigError):
+            validate_workflow_config(config)
+
     def test_validate_workflow_config_rejects_parser_xpath_fields(self) -> None:
         config = {
             "name": "google",
@@ -941,6 +977,29 @@ class WorkflowDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual([item["title"] for item in items], ["새 기사", "오래된 기사"])
+
+    def test_parse_google_news_rss_items_normalizes_description_html(self) -> None:
+        items = parse_google_news_rss_items(
+            """
+            <rss version="2.0">
+              <channel>
+                <item>
+                  <title>첫 기사</title>
+                  <link>https://example.com/article-1</link>
+                  <guid>guid-1</guid>
+                  <description><![CDATA[
+                    <ol><li><a href="https://news.example.com/article">첫 문장 &amp; 핵심</a>
+                    <font color="#6f6f6f">예시뉴스</font></li></ol>
+                  ]]></description>
+                </item>
+              </channel>
+            </rss>
+            """.encode("utf-8")
+        )
+
+        self.assertEqual(items[0]["description"], "첫 문장 & 핵심")
+        self.assertNotIn("<", items[0]["description"])
+        self.assertNotIn("&amp;", items[0]["description"])
 
     def test_parse_naver_news_api_items_extracts_expected_fields(self) -> None:
         items = parse_naver_news_api_items(
@@ -1215,7 +1274,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "naver-news")
             with patch.dict(
                 os.environ,
@@ -1271,7 +1330,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             {"post_id": "2", "title": "다른 뉴스", "detail_url": "https://n.news.naver.com/2", "link": "https://n.news.naver.com/2"},
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "naver-news")
             with patch(
                 "crawler_app.workflow.fetch_naver_news_api_items",
@@ -1319,7 +1378,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "daum-news")
             with patch(
                 "crawler_app.workflow.fetch_daum_news_api_items",
@@ -1437,7 +1496,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1453,8 +1512,11 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "둘째 기사")
             self.assertEqual(len(execution.extracted_files), 1)
-            self.assertTrue(Path(execution.extracted_files[0]).exists())
-            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            saved_path = Path(execution.extracted_files[0])
+            self.assertTrue(saved_path.exists())
+            self.assertEqual(saved_path.parent.parent.name, "items")
+            self.assertEqual(saved_path.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertNotIn("filter", saved_path.parts)
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1484,7 +1546,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1494,9 +1556,14 @@ class WorkflowDownloadTests(unittest.TestCase):
 
             self.assertTrue(execution.success)
             saved_path = Path(execution.extracted_files[0])
-            self.assertIn("filter", saved_path.parts)
+            self.assertNotIn("filter", saved_path.parts)
+            self.assertEqual(saved_path.parent.parent.name, "items")
             self.assertIn("001_default", saved_path.parts)
             self.assertEqual(saved_path.name, "google_news_rss.json")
+            self.assertEqual(saved_path.parent.name, f"{date.today():%Y%m%d}_1")
+            saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved_payload["item_files"], ["item_0001.json"])
+            self.assertTrue((saved_path.parent / "item_0001.json").exists())
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
 
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
@@ -1540,7 +1607,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1556,8 +1623,31 @@ class WorkflowDownloadTests(unittest.TestCase):
             saved_path = Path(execution.extracted_files[0])
             saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_payload["item_count"], 1)
-            self.assertEqual(saved_payload["items"][0]["title"], "둘째 기사")
-            self.assertIn("filter", saved_path.parts)
+            self.assertEqual(saved_payload["item_files"], ["item_0001.json"])
+            self.assertTrue((saved_path.parent / "item_0001.json").exists())
+            saved_item = json.loads((saved_path.parent / "item_0001.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_item["title"], "둘째 기사")
+            self.assertNotIn("filter", saved_path.parts)
+
+    def test_save_google_news_rss_items_allocates_next_daily_run_directory(self) -> None:
+        with temporary_project_output_dir() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google" / "002_SK"
+            today = date.today().strftime("%Y%m%d")
+            (output_dir / "items" / f"{today}_1").mkdir(parents=True)
+            (output_dir / "items" / f"{today}_2").mkdir(parents=True)
+
+            manifest = save_google_news_rss_items(
+                output_dir,
+                search_term="SK",
+                rss_url="https://news.google.com/rss/search?q=SK",
+                final_url="https://news.google.com/rss/search?q=SK",
+                items=[{"post_id": "1", "title": "A"}],
+            )
+
+            self.assertEqual(manifest.parent, output_dir / "items" / f"{today}_3")
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_files"], ["item_0001.json"])
+            self.assertTrue((manifest.parent / "item_0001.json").exists())
 
     def test_run_workflow_config_filters_google_news_rss_items(self) -> None:
         config = {
@@ -1600,7 +1690,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with temporary_project_output_dir() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1621,11 +1711,11 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
 
-            matched_payload = matched_path.read_text(encoding="utf-8")
-            nonfilter_payload = nonfilter_path.read_text(encoding="utf-8")
-            self.assertIn("SK이노베이션, 1분기 실적 발표", matched_payload)
-            self.assertNotIn("정유 업황 점검", matched_payload)
-            self.assertIn("정유 업황 점검", nonfilter_payload)
+            matched_manifest = json.loads(matched_path.read_text(encoding="utf-8"))
+            matched_item = json.loads((matched_path.parent / matched_manifest["item_files"][0]).read_text(encoding="utf-8"))
+            nonfilter_payload = json.loads(nonfilter_path.read_text(encoding="utf-8"))
+            self.assertEqual(matched_item["title"], "SK이노베이션, 1분기 실적 발표")
+            self.assertEqual(nonfilter_payload["records"][0]["extracts"]["title"], "정유 업황 점검")
 
     def test_preview_workflow_config_reports_parser_item_count(self) -> None:
         config = {

@@ -194,3 +194,45 @@
   - direct crawler and live UI run both succeed with 40 records.
 - remaining follow-up:
   - design a later publisher-parser body collection slice with explicit allowlists, retention policy, and copyright posture.
+
+## Active Implementation Plan: Google News RSS Collection
+
+### Status
+- 2026-05-14: completed, pending user-owned git push.
+
+### Completion Criteria
+- `구글` config uses Google News RSS with `action=parser`, `attr=google`.
+- Search terms are `Chey Tae-won` and `SK`.
+- No API key is required or stored for Google RSS.
+- `loop_limit` controls the per-term saved item count.
+- Outputs accumulate under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+- Google parser accepts only `https://news.google.com` RSS URLs.
+- Workflow output paths stay under the crawler project directory.
+
+### Completed
+- Updated `configs\구글.json` for English/US Google News RSS search terms `Chey Tae-won` and `SK`.
+- Added Google RSS per-item JSON saves and dated run manifest directories.
+- Kept Google no-filter output in the same root term path shape used by API providers, while preserving filtered-flow compatibility.
+- Added Google RSS host validation and disabled RSS redirects.
+- Added workflow-level `output_dir` containment.
+- Added regression tests for Google URL rejection, output directory rejection, dated run allocation, loop limits, direct output path, and filtered path compatibility.
+
+### Validation
+- `node --check static\app.js`: pass.
+- `.venv\Scripts\python.exe -m unittest tests.test_workflow -v`: 80 tests pass.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 119 tests pass.
+- Earlier live Google RSS proof with config `loop_limit=20`: success, 40 total records, 20 for `Chey Tae-won` and 20 for `SK`.
+- Follow-up live proof with the current saved config `loop_limit=5`: success, 10 total records, 5 for `Chey Tae-won` and 5 for `SK`; description fields had 0 HTML tag hits, 0 HTML entity hits, and 0 source-name suffix hits.
+- Proof files:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\002_SK\items\20260514_1\google_news_rss.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\runs\20260514_1\workflow_records.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\002_SK\items\20260514_1\google_news_rss.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\runs\20260514_1\workflow_records.json`
+
+### Remaining Follow-Up
+- No article body collection is included; publisher body parsing would be a separate per-domain policy slice.
+- RSS `description` is cleaned to plain text only; Google RSS usually provides headline/snippet/source-style text, not full publisher article bodies.
+- Retention/cleanup for accumulated RSS outputs remains a future operations slice.
+- User will run git push manually.

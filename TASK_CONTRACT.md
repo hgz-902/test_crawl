@@ -153,3 +153,36 @@ Make Daum news collection work well for the crawler product. Initial example sea
 - reviewer: find structural regressions, duplicated provider logic, hidden UI/config coupling, and maintainability issues.
 - QA: verify count semantics, multiple search terms, missing-key behavior, UI scoping, parser validation, and regression against Naver/generic editor flows.
 - auditor: verify credential isolation, external request bounds, captcha/scraping risk, logs/artifacts, and user-owned Git push boundary.
+
+## Active Slice: Google News RSS Collection
+
+### User Goal
+Make Google News search collection work in the existing crawler product before the user performs git push. Initial verification terms are `Chey Tae-won` and `SK`.
+
+### Existing Developer Note To Preserve
+- Google News RSS is the intended source.
+- Runtime path is `action=parser`, `attr=google`.
+- Google News RSS does not require an API key for this slice.
+
+### Constraints
+- Do not introduce a Google API credential requirement unless the RSS path stops satisfying the product need.
+- Do not scrape Google search result HTML.
+- Do not fetch article bodies or publisher pages in this slice; store RSS item fields only.
+- Keep one bounded per-term item count through parser `loop_limit`.
+- Keep outputs cumulative under dated run directories and avoid overwriting prior runs.
+- Block non-Google RSS URLs and output paths outside the crawler project.
+- Do not run git push; the user owns push execution.
+
+### Expected Deliverables For This Slice
+- `configs\구글.json` configured for Google News RSS with `Chey Tae-won` and `SK`.
+- Google RSS parser output under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+- Per-item JSON files plus a run manifest for each search term.
+- Workflow-level manifest under `<output_dir>\runs\YYYYMMDD_n\workflow_records.json`.
+- Tests for URL allowlisting, output containment, run directory rotation, loop limits, and filtered compatibility.
+- Live RSS proof with the current saved config value for `loop_limit`.
+
+### Role-Specific Small Goals
+- developer: implement the Google RSS config/output slice without changing Git push ownership.
+- reviewer: check parser routing, config shape, cumulative output, no-secret behavior, and filtered-flow compatibility.
+- QA: verify tests, live RSS proof, search terms, item counts, and output paths.
+- auditor: verify external URL bounds, output path containment, retention/artifact risks, and unrelated dirty files.

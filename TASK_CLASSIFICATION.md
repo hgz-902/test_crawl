@@ -47,3 +47,11 @@
 - Alpha wave required: yes
 - waiver: none
 - next action: Alpha developer worker implements the UI/body-cleanup slice; reviewer, QA, and auditor inspect before final ruling.
+
+## 2026-05-14 Reclassification: Google News RSS Slice
+- classification: non-trivial
+- workload level: Level 2
+- reason: this slice changes a provider config, Google RSS parser storage behavior, workflow output safety, external URL validation, live RSS proof, and regression tests.
+- Alpha wave required: yes
+- waiver: none
+- next action: keep Google on `action=parser`, `attr=google`, verify `Chey Tae-won` and `SK` through Google News RSS, and stop before user-owned git push.

@@ -486,3 +486,44 @@
     - `qa-artifacts\cumulative-output-20260514-after-review\naver\runs\20260514_3\workflow_records.json`
     - `qa-artifacts\cumulative-output-20260514-after-review\daum\runs\20260514_3\workflow_records.json`
   - tracked-source secret scan found no provided real API keys outside ignored `.env`.
+
+## Google News RSS Slice Checkpoint
+- date: 2026-05-14
+- status: completed, pending user-owned git push.
+- current goal: implement Google News RSS collection for terms `Chey Tae-won` and `SK` using the original developer's `action=parser`, `attr=google` path.
+- completed:
+  - kept Google on RSS instead of adding an API key dependency.
+  - updated `configs\구글.json` to use Google News RSS with `q={search_term}`, English/US feed parameters, and search terms `Chey Tae-won` and `SK`.
+  - changed Google RSS saves to create per-item JSON files and a manifest under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+  - changed no-filter Google RSS workflow output to stay under the root term path, while keeping filtered Google compatibility.
+  - added Google RSS URL validation so `attr=google` only fetches `https://news.google.com` and does not follow redirects.
+  - added workflow `output_dir` containment so config-driven runs cannot write outside the crawler project directory.
+  - added regression tests for Google host validation, output-dir containment, dated run allocation, loop limits, and filtered/no-filter output behavior.
+- not done:
+  - no article-body or publisher-page crawling was added.
+  - no retention/cleanup policy was added for accumulated RSS outputs.
+  - no git push was run; user owns push execution.
+- next one action:
+  - user can review and push only the Google slice files, excluding unrelated `configs\산업부_보도자료.json`.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\구글.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\google_news_rss.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest tests.test_workflow -v`: 80 tests pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 119 tests pass.
+  - earlier live Google RSS proof with config `loop_limit=20`: success, 40 total records.
+  - follow-up live Google RSS proof with current saved config `loop_limit=5`: success, 10 total records; description cleanup scan found 0 HTML tag hits, 0 HTML entity hits, and 0 source-name suffix hits.
+  - proof paths:
+    - `qa-artifacts\google-news-rss-20260514-full\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-news-rss-20260514-full\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-news-rss-20260514-full\google\runs\20260514_1\workflow_records.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\runs\20260514_1\workflow_records.json`
+  - Alpha developer, reviewer, QA, and auditor flow completed; auditor findings on URL/output containment were fixed and retested.
+  - Google RSS description cleanup follow-up completed; parser strips HTML tags/entities and Google RSS `<font>` source labels from `description` while keeping `source` separately.

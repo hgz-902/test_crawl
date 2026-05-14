@@ -380,11 +380,49 @@
   - Alpha auditor identified broader `output_dir` arbitrary-write and retention risks; UI output path containment was added, retention remains a known operational risk.
 - remaining risk:
   - accumulated runs intentionally grow over time; a future retention/cleanup policy is still needed.
-  - direct non-UI runtime calls can still use arbitrary `output_dir` values; current containment is enforced for UI runs.
+  - earlier UI-only output containment has now been strengthened in workflow validation; config-driven UI and CLI/orchestrator runs should keep `output_dir` under the crawler project directory.
   - older outputs from before this change may still exist in legacy flat layouts and should be treated as legacy artifacts.
   - no git push was run; user owns push/merge execution.
   - latest-news count is mapped to both Naver API `display` and parser `loop_limit`; UI panel fixes `page_limit=1`.
   - accidental QA-created `configs\new_site.json` was removed.
+
+## Google News RSS Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: Google provider config, parser output shape, workflow output safety, external URL validation, live RSS proof, and regression tests were changed.
+  - Alpha wave required: yes
+  - waiver: none.
+- completed:
+  - preserved the original developer note that Google News uses RSS with `action=parser`, `attr=google`.
+  - configured `configs\구글.json` for `Chey Tae-won` and `SK` with no API key requirement.
+  - Google RSS now saves per-item JSON plus `google_news_rss.json` under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+  - workflow manifests now accumulate under `<output_dir>\runs\YYYYMMDD_n\workflow_records.json` for the verified Google run.
+  - Google parser accepts only `https://news.google.com` RSS URLs and does not follow redirects.
+  - config-driven workflow output paths are resolved under the crawler project directory.
+- validation:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest tests.test_workflow -v`: 80 tests pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 119 tests pass.
+  - earlier live Google News RSS run with config `loop_limit=20`: success, 40 records total, 20 per search term.
+  - follow-up live Google News RSS run with current saved config `loop_limit=5`: success, 10 records total, 5 per search term.
+  - latest description cleanup proof found 0 HTML tag hits, 0 HTML entity hits, and 0 source-name suffix hits in checked descriptions.
+  - proof:
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full\google\runs\20260514_1\workflow_records.json`
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\runs\20260514_1\workflow_records.json`
+  - reviewer: initial hold on config/proof mismatch was resolved by recording current config `loop_limit=5` proof separately from the earlier `loop_limit=20` proof.
+  - QA: pass; earlier note that the first live proof used `loop_limit=3` was resolved with a second live proof using `loop_limit=20`.
+  - auditor: URL allowlist and output containment findings were fixed; retention and artifact-sharing risks remain operational follow-ups.
+- remaining risk:
+  - Google RSS provides feed item fields and headline/snippet/source-style text, not full publisher article bodies. Current `description` is cleaned plain text, not a full body extraction claim.
+  - accumulated RSS outputs intentionally grow over time; retention/cleanup is still a future operations slice.
+  - `configs\산업부_보도자료.json` is currently an unrelated dirty file and must not be included in the Google commit unless the user intentionally stages it.
+  - no git push was run; user owns push/merge execution.
 - Body cleanup and guardrails:
   - obvious navigation/menu/social/footer boilerplate is filtered.
   - user-provided inline menu-noise example is covered by test.

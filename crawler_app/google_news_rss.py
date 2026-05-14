@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import date, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
 import json
 import re
@@ -13,6 +14,7 @@ import requests
 
 
 GOOGLE_NEWS_RSS_ATTR = "google"
+GOOGLE_NEWS_RSS_ALLOWED_HOST = "news.google.com"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
@@ -20,13 +22,23 @@ USER_AGENT = (
 
 
 def fetch_google_news_rss_items(rss_url: str, timeout: float = 30.0) -> tuple[list[dict[str, Any]], str]:
+    validate_google_news_rss_url(rss_url)
     session = requests.Session()
     session.trust_env = False
     session.headers.update(_headers())
-    response = session.get(rss_url, timeout=timeout)
+    response = session.get(rss_url, timeout=timeout, allow_redirects=False)
+    if response.is_redirect:
+        raise ValueError("Google News RSS redirects are not followed.")
     response.raise_for_status()
     items = parse_google_news_rss_items(response.content, base_url=response.url)
     return items, response.url
+
+
+def validate_google_news_rss_url(rss_url: str) -> None:
+    parsed = urlparse(str(rss_url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme.lower() != "https" or host != GOOGLE_NEWS_RSS_ALLOWED_HOST:
+        raise ValueError("Google News RSS parser only supports https://news.google.com RSS URLs.")
 
 
 def parse_google_news_rss_items(xml_bytes: bytes, *, base_url: str = "") -> list[dict[str, Any]]:
@@ -41,7 +53,7 @@ def parse_google_news_rss_items(xml_bytes: bytes, *, base_url: str = "") -> list
         link = _child_text(item, "link")
         guid = _child_text(item, "guid")
         pub_date = _child_text(item, "pubDate")
-        description = _child_text(item, "description")
+        description = _child_html_text(item, "description")
         source = _child_text(item, "source")
         source_url = _child_attr(item, "source", "url")
 
@@ -76,17 +88,40 @@ def save_google_news_rss_items(
     filter_terms: list[str] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    items_dir = output_dir / "items"
+    run_dir = _next_daily_run_dir(items_dir)
+
+    item_files: list[str] = []
+    for index, item in enumerate(items, start=1):
+        item_name = f"item_{index:04d}.json"
+        item_path = run_dir / item_name
+        item_path.write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
+        item_files.append(item_name)
+
     payload = {
         "search_term": search_term,
         "rss_url": rss_url,
         "final_url": final_url,
         "item_count": len(items),
         "filter_terms": filter_terms or [],
+        "item_files": item_files,
         "items": items,
     }
-    output_path = output_dir / file_name
+    output_path = run_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _next_daily_run_dir(items_dir: Path) -> Path:
+    today = date.today().strftime("%Y%m%d")
+    for index in range(1, 10000):
+        candidate = items_dir / f"{today}_{index}"
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"Could not allocate daily Google News output directory under {items_dir}.")
 
 
 def _headers() -> dict[str, str]:
@@ -110,6 +145,13 @@ def _child_text(element: ET.Element, local_name: str) -> str:
     if child is None:
         return ""
     return _clean_text("".join(child.itertext()))
+
+
+def _child_html_text(element: ET.Element, local_name: str) -> str:
+    child = _find_child(element, local_name)
+    if child is None:
+        return ""
+    return _clean_html_text("".join(child.itertext()))
 
 
 def _child_attr(element: ET.Element, local_name: str, attr_name: str) -> str:
@@ -136,6 +178,13 @@ def _local_name(tag: Any) -> str:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _clean_html_text(value: str) -> str:
+    decoded = unescape(value)
+    without_source_label = re.sub(r"<font\b[^>]*>.*?</font>", " ", decoded, flags=re.IGNORECASE | re.DOTALL)
+    without_tags = re.sub(r"<[^>]+>", " ", without_source_label)
+    return _clean_text(unescape(without_tags))
 
 
 def _google_news_rss_item_sort_key(item: dict[str, Any]) -> float:
