@@ -1,0 +1,25 @@
+{
+  "name": "네이버뉴스_최태원_2페이지",
+  "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=10&start=1&sort=date",
+  "output_dir": "outputs/naver_news_choi_tae_won_2pages",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "Naver 공식 Search News API 결과를 2페이지(기본 start=1, display=10) 범위로 수집하고 API 기본 응답을 항목별 저장한다. 기사 본문 상세 수집은 추후 별도 파서 정책으로 추가 예정이다. 환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET 필요.",
+  "search_terms": [
+    "최태원"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "naver_news_api",
+      "action": "parser",
+      "attr": "naver",
+      "page_limit": 2,
+      "loop_limit": 20
+    }
+  ],
+  "created_at": "2026-05-14T00:00:00+09:00",
+  "updated_at": "2026-05-14T00:00:00+09:00"
+}

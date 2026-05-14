@@ -1,0 +1,263 @@
+# Decision Ruling
+
+## Current Ruling
+- status: conditional pass
+- reason: Naver-only display UI, API-only Naver output, env-only secret handling, `display`/`loop_limit` separation, stale article-body option stripping, tests, and live UI run all pass. Remaining conditions are Git repository setup and future JOB/scheduler/email slices. Article body extraction is explicitly deferred.
+
+## Active Hold - 2026-05-14
+- trigger: user requested pause after UI credential/display work and before completing runtime bug fix.
+- completed since prior ruling:
+  - superseded: Client ID and Client Secret fields were temporarily added to the existing `네이버` editor only, then removed again so credentials stay in `.env` / process environment.
+  - API `display` is user-configurable and separate from `loop_limit`.
+  - Naver panel remains absent from `기후에너지부_보도자료`.
+  - Secret value is not rendered in editor HTML.
+  - Fixed Naver panel initialization so opening/saving the editor preserves Naver API options from the initial config.
+  - Full unit test suite passes 97 tests.
+- blocker evidence:
+  - `POST http://127.0.0.1:3000/configs/%EB%84%A4%EC%9D%B4%EB%B2%84/run` returned a failed result.
+  - Direct `ConfigurableCrawler(config_path='configs/네이버.json').crawl()` reproduced:
+    - success: `False`
+    - items: `0`
+    - error: `'NoneType' object has no attribute 'get'`
+  - diagnostics include `parser_name=naver`, two search terms, and `parser_item_count=0`.
+- required resume action:
+  - capture focused traceback around `_run_parser_workflow` / `_fetch_parser_items`, fix the `NoneType.get` source, add regression coverage, then rerun full tests and live UI crawl.
+
+## Resume Ruling - 2026-05-14
+- status: conditional pass
+- resolved blocker:
+  - focused traceback showed the live failure was in `crawler_app\naver_news_api.py` during HTML cleanup: some BeautifulSoup nodes had `attrs=None`, so `node.get("id")` raised `AttributeError`.
+  - fixed by routing identity extraction through `_node_identity_tokens()`, which tolerates `attrs=None`.
+  - added regression test `test_node_identity_tokens_tolerates_missing_attrs`.
+- additional regression coverage:
+  - added regression coverage to lock `display != loop_limit` and Naver API field preservation through the save route.
+- validation:
+  - `node --check static\app.js` passed.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\naver_news_api.py crawler_app\web.py tests\test_naver_news_api.py tests\test_web.py` passed.
+  - `.venv\Scripts\python.exe -m unittest tests.test_naver_news_api tests.test_web -v` passed 25 tests.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests` passed 99 tests.
+  - direct `ConfigurableCrawler(config_path='configs/네이버.json').crawl()` succeeded with 40 items.
+  - live UI run `POST /configs/네이버/run` returned HTTP 200 and rendered success with 40 items.
+- GUI/browser QA evidence:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\naver-run-result.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\naver-editor-credentials-display.png`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\naver-index.png`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\result-summary.json`
+- output inspection:
+  - workflow records: 40
+  - item JSON files: 40
+  - former article-body extraction evidence superseded by API-only decision.
+  - secret present in editor HTML: false
+  - secret hit outside `.env`: false
+- Alpha worker ruling:
+  - reviewer: no blockers; noted residual exact-name coupling to `네이버` and raw `.env` value writing.
+  - QA: no current product blocker; noted previous gaps, then `display != loop_limit` save coverage was added.
+  - auditor: no blockers; conditional approval with article-body retention and runtime artifact-sharing risks.
+
+## Naver API-Only Ruling - 2026-05-14
+- status: conditional pass
+- user decision:
+  - remove active article body extraction from production code.
+  - keep article body extraction only as a future feature candidate.
+- evidence:
+  - Naver editor no longer exposes article-body fetch controls.
+  - `configs\네이버.json` and `configs\네이버뉴스_최태원_2페이지.json` no longer contain publisher-page body extraction settings.
+  - workflow normalization strips deprecated Naver article-body fields from stale payloads.
+  - stale generated outputs/logs/QA artifacts were sanitized; broad scan no longer finds historical article-body keys.
+  - live UI Naver run succeeded with 40 item JSON files.
+  - latest output inspection found no article-body fields.
+  - broad legacy `네이버뉴스` run remains intentionally blocked by the UI guard until `loop_limit` is bounded.
+- validation:
+  - `node --check static\app.js` passed.
+  - modified Python compile check passed.
+  - `.venv\Scripts\python.exe -m unittest tests.test_naver_news_api tests.test_workflow tests.test_web -v` passed 85 tests.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests` passed 90 tests.
+- proof:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\result-summary.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\naver-run-result.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\naver-editor-api-only.png`
+
+## Evidence
+- Alpha pre-edit gate:
+  - classification: `non-trivial`
+  - Alpha wave required: `yes`
+  - waiver: `none`
+- Official source confirmed:
+  - Naver Search News API endpoint `https://openapi.naver.com/v1/search/news.json`
+  - source: `https://developers.naver.com/docs/serviceapi/search/news/news.md`
+- Implemented bounded config:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`
+  - search term: `최태원`
+  - `page_limit`: `2`
+  - `loop_limit`: `20`
+  - publisher-page body collection: deferred
+- Live CLI verification:
+  - command: `.venv\Scripts\python.exe main.py --crawler configurable --config "configs\네이버뉴스_최태원_2페이지.json"`
+  - run_id: `20260514T012241Z`
+  - result: success
+  - item count: `20`
+  - item JSON files: `20`
+  - files with extracted body: `20`
+  - article-body extraction errors: superseded by API-only decision.
+  - manifest: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\outputs\naver_news_choi_tae_won_2pages\filter\001_최태원\naver_news_api.json`
+- Validation:
+  - `.venv\Scripts\python.exe -m py_compile main.py crawler_app\naver_news_api.py crawler_app\workflow.py crawler_app\web.py crawler_app\logging_utils.py tests\test_naver_news_api.py`
+  - `.venv\Scripts\python.exe -m unittest tests.test_naver_news_api -v` passed 8 tests
+  - `.venv\Scripts\python.exe -m unittest tests.test_workflow -v` passed 68 tests
+  - `.venv\Scripts\python.exe -m unittest discover -s tests` passed 87 tests
+- Security/logging checks:
+  - real credential values found only in local `.env`
+  - Naver API credential headers are only attached to `openapi.naver.com` API session
+  - third-party article requests from the superseded implementation used a separate non-secret session.
+  - latest runtime log does not contain raw article body text.
+  - old runtime log rows were sanitized to remove full body text
+- GUI proof:
+  - server URL: `http://127.0.0.1:3000/`
+
+## Naver API-Only Final Cleanup Ruling
+- date: 2026-05-14
+- ruling: conditional pass pending final worker confirmation.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: stale QA artifacts and state docs contradicted the final API-only implementation.
+  - Alpha wave required: yes
+  - waiver: none
+- completed:
+  - removed stale Naver body-collection options from old QA artifacts.
+  - corrected active docs to state that Naver currently stores official API fields only.
+  - documented publisher-page body collection as a separate future slice.
+- validation:
+  - pending rerun after cleanup.
+- remaining risks:
+  - the app still has a generic URL alias field for existing non-Naver crawler schemas; this is not article body extraction.
+  - full body collection remains deferred and requires explicit publisher-parser, allowlist, retention, and copyright-policy design.
+
+## Naver CLI Safety Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: UI and CLI/orchestrator paths had inconsistent Naver broad-run protection.
+  - Alpha wave required: yes
+  - waiver: none
+- completed:
+  - Naver parser validation now requires explicit `loop_limit`.
+  - Naver parser validation now enforces `page_limit<=10` and `loop_limit<=100`.
+  - README no longer points CLI users at the broad legacy `configs\네이버뉴스.json` example without bounds.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check for changed Naver/workflow/web/test files: pass.
+  - focused workflow/web/Naver tests: 88 tests pass.
+  - full test suite: 93 tests pass.
+  - broad legacy `configs\네이버뉴스.json` CLI run: blocked before crawl with `steps[1].loop_limit is required for Naver News API.`
+- remaining risks:
+  - `configs\네이버뉴스.json` remains as a legacy broad config but is now blocked by both UI and CLI until bounded.
+  - this folder still is not a Git repository.
+- final auditor result:
+  - pass. Prior blockers on CLI broad-run safety, stale artifacts/docs, secret leakage, and publisher-page fetching were rechecked.
+
+## Naver Credential UI Removal Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: Naver credential handling touches editor UI, save route, tests, and security posture.
+  - Alpha wave required: yes
+  - waiver: none
+- completed:
+  - Naver Client ID and Client Secret are no longer configurable from the UI.
+  - web route no longer writes `.env` or mirrors credential values into template context.
+  - stale `naver_client_id` / `naver_client_secret` payload keys are stripped at the web save boundary and workflow normalization layer.
+  - Naver API runtime still reads credentials from `.env` / process environment and attaches them only to Naver API requests.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check for changed web/test files: pass.
+  - focused web/Naver/workflow tests: 87 tests pass.
+  - full test suite: 92 tests pass.
+  - live editor HTML check confirms credential inputs absent and API display/latest-count controls present.
+  - direct crafted POST with stale credential keys returned 303 and saved config contained neither key.
+- final worker result:
+  - reviewer: pass after stale-payload credential scrubbing.
+  - QA: pass.
+  - auditor: pass.
+- remaining risks:
+  - `.env` remains a local secret file and must stay ignored/unshared.
+  - users must edit `.env` directly or restart/reload the process if they change credentials outside the running environment.
+
+## Naver Single Count UI Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: Naver count controls affect user-facing crawl count and generated API URL/runtime limits.
+  - Alpha wave required: yes
+  - waiver: none
+- completed:
+  - Naver editor now has one news-count field only: `검색어당 가져올 뉴스 개수`.
+  - the generic workflow `실행 단계` section is hidden for the Naver editor so no parser `limit` field appears as a second count control.
+  - the single count writes both Naver API `display` and parser `loop_limit`.
+  - stale mismatched payloads are normalized so `display` follows `loop_limit`.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check with bytecode disabled: pass.
+  - focused web/workflow/Naver tests: 87 tests pass.
+  - full test suite: 92 tests pass.
+  - live editor HTML and JS payload probes confirm 1->1 and 100->100, with no generic parser `loop_limit` input rendered on the Naver editor.
+- final worker result:
+  - reviewer: pass after generic parser limit field was hidden for Naver.
+  - QA: pass.
+  - auditor: pass.
+
+## Git Push Setup Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: Git initialization and first commit affect delivery, repository safety, and secret/artifact exposure.
+  - Alpha wave required: no
+  - waiver: orchestration/setup-only; no product runtime behavior change.
+- completed:
+  - initialized Git repository and connected `origin` to `https://github.com/hgz-902/test_crawl`.
+  - created first local commit `Initial crawler project`.
+  - excluded local secrets, virtualenv, logs, outputs, QA artifacts, and temporary files.
+- validation:
+  - remote exists and appears empty.
+  - GitHub CLI auth is active for `hgz-902`.
+  - tracked files exclude `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, and Office temp files.
+  - tracked source scan found no real Naver key values.
+- remaining risk:
+  - first push still needs to be executed from the user's VS Code terminal: `git push -u origin main`.
+- remaining risks:
+  - Naver official API caps `display` at 100, so the UI count is intentionally limited to 1-100 per search term.
+  - home screenshot: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-news-ui-20260514\home.png`
+  - config screenshot: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-news-ui-20260514\config.png`
+  - Naver editor screenshot: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-editor-scope-20260514\naver.png`
+  - non-Naver reference editor screenshot: `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-editor-scope-20260514\mcee.png`
+  - VS Code opened on the product folder
+- Naver editor UI correction:
+  - Naver News API panel is rendered only for existing config `네이버`.
+  - `기후에너지부_보도자료` editor remains the generic workflow editor and does not show the Naver panel.
+  - `configs\네이버.json` now follows the existing `{search_term}` pattern used by other configs and stores multiple search terms in `search_terms`.
+  - latest-news count is mapped to both Naver API `display` and parser `loop_limit`; UI panel fixes `page_limit=1`.
+  - accidental QA-created `configs\new_site.json` was removed.
+- Body cleanup and guardrails:
+  - obvious navigation/menu/social/footer boilerplate is filtered.
+  - user-provided inline menu-noise example is covered by test.
+  - article sentences containing words like comment/share/subscription are preserved by test.
+  - overly broad publisher domains such as `com` are rejected/ignored in the superseded implementation.
+  - publisher HTML responses above `2,000,000` bytes are rejected before parsing in the superseded implementation.
+  - index-page run buttons now show confirmation before execution.
+- Alpha worker evidence:
+  - developer worker implemented the first Naver slice
+  - reviewer worker found parser-option validation gap; fixed with strict Naver option validation and tests
+  - QA worker found no blocker after pagination, allowlist, limit, UI guard, and per-item JSON checks
+  - auditor worker confirmed previous P0 secret-header leakage is resolved
+  - later reviewer/QA/auditor rechecks confirmed the Naver panel scoping correction and latest guardrails
+- Legacy OpenClaw fallback:
+  - not used
+
+## Remaining Risks
+- Article bodies are no longer collected or persisted by the current Naver API-only path. If body collection returns later, it needs a separate publisher parser, allowlist, and retention/copyright policy.
+- UI run safety guard checks Naver parser shape and enforces bounded Naver runs, but broader JOB orchestration, cancel button, scheduler, and email flows are future slices.
+- Publisher HTML size was capped after download and before parsing in the superseded implementation; a future slice should use a streaming cap.
+- No Git repository exists yet, so VS Code can show/edit code but `git commit` cannot be proven until repository initialization or repo placement is decided.

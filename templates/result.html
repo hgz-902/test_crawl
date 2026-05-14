@@ -1,0 +1,157 @@
+{% extends "layout.html" %}
+{% block title %}실행 결과{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>실행 결과</h1>
+    <p>{{ name }} 설정으로 실행한 결과입니다.</p>
+  </div>
+  <a class="button" href="/">목록</a>
+</section>
+
+<section class="panel">
+  <h2>요약</h2>
+  <dl class="summary">
+    <dt>성공</dt><dd>{{ result.success }}</dd>
+    <dt>수집 건수</dt><dd>{{ result.items_count }}</dd>
+    <dt>메시지</dt><dd>{{ result.message }}</dd>
+    <dt>오류</dt><dd>{{ result.error or "" }}</dd>
+    <dt>검색어</dt><dd>{{ result.metadata.search_terms | join(", ") if result.metadata.search_terms else "" }}</dd>
+    <dt>필터</dt><dd>{{ result.metadata.filter_terms | join(", ") if result.metadata.filter_terms else "" }}</dd>
+    <dt>파서</dt><dd>{{ result.metadata.parser_name or "" }}</dd>
+    <dt>출력 경로</dt><dd>{{ result.metadata.output_dir }}</dd>
+    <dt>필터 출력</dt><dd>{{ result.metadata.diagnostics.get("filter_output_dir") if result.metadata.diagnostics else "" }}</dd>
+    <dt>비필터 출력</dt><dd>{{ result.metadata.diagnostics.get("nonfilter_output_dir") if result.metadata.diagnostics else "" }}</dd>
+    <dt>설정 파일</dt><dd>{{ result.metadata.config_path }}</dd>
+    <dt>매니페스트</dt><dd>{{ result.metadata.manifest_file or result.metadata.matched_records_file or "" }}</dd>
+    <dt>다운로드</dt><dd>{{ result.metadata.downloaded_files | length if result.metadata.downloaded_files else 0 }}</dd>
+    <dt>매칭/비매칭</dt><dd>{{ result.metadata.matched_record_count or result.items_count }}/{{ result.metadata.nonfilter_record_count or 0 }}</dd>
+  </dl>
+</section>
+
+{% if result.metadata.diagnostics %}
+<section class="panel">
+  <h2>진단 정보</h2>
+  <pre>{{ result.metadata.diagnostics | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+
+{% if result.metadata.downloaded_files %}
+<section class="panel">
+  <h2>다운로드 파일</h2>
+  <pre>{{ result.metadata.downloaded_files | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+
+{% if result.metadata.extracted_files %}
+<section class="panel">
+  <h2>추출 파일</h2>
+  <pre>{{ result.metadata.extracted_files | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+
+{% if result.metadata.nonfilter_output_files or result.metadata.nonfilter_records_file %}
+<section class="panel">
+  <h2>비매칭 파일</h2>
+  {% if result.metadata.nonfilter_output_files %}
+  <pre>{{ result.metadata.nonfilter_output_files | tojson(indent=2) }}</pre>
+  {% endif %}
+  {% if result.metadata.nonfilter_records_file %}
+  <pre>{{ result.metadata.nonfilter_records_file }}</pre>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>최근 레코드</h2>
+  {% if recent_data %}
+  <pre>{{ recent_data | tojson(indent=2) }}</pre>
+  {% else %}
+  <div class="empty">표시할 레코드가 없습니다.</div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>단계별 실행 로그</h2>
+  {% if recent_data %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>검색어</th>
+          <th>Item</th>
+          <th>Record</th>
+          <th>Step</th>
+          <th>Action</th>
+          <th>Open</th>
+          <th>Attr</th>
+          <th>Wait</th>
+          <th>매칭</th>
+          <th>대기(ms)</th>
+          <th>소요(s)</th>
+          <th>성공</th>
+          <th>값</th>
+          <th>Output File</th>
+          <th>다운로드 파일</th>
+          <th>추출 파일</th>
+          <th>XPath</th>
+          <th>오류</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for record in recent_data %}
+        {% for step in record.steps %}
+        <tr>
+          <td>{{ record.search_term or "" }}</td>
+          <td>{{ record.item_index }}</td>
+          <td>{{ record.record_key or "" }}</td>
+          <td>{{ step.index }}: {{ step.name }}</td>
+          <td>{{ step.action }}</td>
+          <td>{{ step.open_mode or "" }}</td>
+          <td>{{ step.attr }}</td>
+          <td>{{ step.wait_state }}</td>
+          <td>{{ step.matched_count }}</td>
+          <td>{{ step.wait_timeout_ms }}</td>
+          <td>{{ step.duration_seconds }}</td>
+          <td>{{ step.success }}</td>
+          <td class="url">{{ step.value or "" }}</td>
+          <td class="url">
+            {% if record.output_file %}
+            {{ record.output_file }}
+            {% elif step.output_file %}
+            {{ step.output_file }}
+            {% else %}
+            {{ "" }}
+            {% endif %}
+          </td>
+          <td class="url">
+            {% if step.downloaded_files %}
+            {{ step.downloaded_files | join(", ") }}
+            {% elif step.downloaded_file %}
+            {{ step.downloaded_file }}
+            {% else %}
+            {{ "" }}
+            {% endif %}
+          </td>
+          <td class="url">
+            {% if step.extracted_files %}
+            {{ step.extracted_files | join(", ") }}
+            {% elif step.extracted_file %}
+            {{ step.extracted_file }}
+            {% else %}
+            {{ "" }}
+            {% endif %}
+          </td>
+          <td class="url">{{ step.xpath }}</td>
+          <td class="url">{{ step.error or "" }}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">표시할 단계 로그가 없습니다.</div>
+  {% endif %}
+</section>
+{% endblock %}

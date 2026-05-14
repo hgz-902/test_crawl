@@ -1,0 +1,324 @@
+{% extends "layout.html" %}
+{% block title %}Workflow 설정{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Workflow 설정</h1>
+    <p>시작 URL에서 XPath 단계를 순서대로 실행하고 필요한 단계에서 파일을 다운로드합니다.</p>
+  </div>
+  <a class="button" href="/">목록</a>
+</section>
+
+{% if error %}
+<div class="notice error">{{ error }}</div>
+{% endif %}
+
+{% if preview is defined %}
+<div class="notice">
+  <strong>미리보기</strong>
+  <div>시작 URL: {{ preview.start_url or config.start_url }}</div>
+  {% if preview.list_count %}
+  <div>반복 항목 매칭 수: {{ preview.list_count }}</div>
+  {% endif %}
+  {% if preview.step_counts %}
+  <table>
+    <thead>
+      <tr>
+        <th>단계</th>
+        <th>Action</th>
+        <th>Wait</th>
+        <th>XPath 매칭</th>
+        <th>오류</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for step in preview.step_counts %}
+      <tr>
+        <td>{{ step.name }}</td>
+        <td>{{ step.action }}</td>
+        <td>{{ step.wait_state }}</td>
+        <td>{{ step.count }}</td>
+        <td>{{ step.error or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
+<form id="config-form" method="post" action="/configs">
+  <input type="hidden" name="payload" id="payload">
+  <input type="hidden" name="original_id" value="{{ config_id }}">
+  <script type="application/json" id="initial-config-json">{{ config | tojson }}</script>
+
+  <section class="panel">
+    <h2>기본정보</h2>
+    <div class="grid">
+      <label>이름<input data-path="name" value="{{ config.name }}"></label>
+      <label>시작 URL<input data-path="start_url" value="{{ config.start_url }}"></label>
+      <label>출력 경로<input data-path="output_dir" value="{{ config.output_dir }}"></label>
+      <label>페이지 타임아웃(ms)<input type="number" min="1" data-path="timeout_ms" value="{{ config.timeout_ms or 30000 }}"></label>
+      <label class="renderer-field">렌더러
+        <select data-path="renderer">
+          <option value="playwright" selected>Playwright</option>
+        </select>
+      </label>
+      <div class="checks-row runtime-toggles">
+        <label class="check"><input type="checkbox" data-path="headless" {% if config.headless is not sameas false %}checked{% endif %}> Headless 실행</label>
+        <label class="check"><input type="checkbox" data-path="ignore_https_errors" {% if config.ignore_https_errors %}checked{% endif %}> HTTPS 오류 무시</label>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <details class="collapsible-panel">
+      <summary>
+        <h2>검색어 목록</h2>
+        <span class="collapsible-toggle" aria-hidden="true">
+          <span class="collapsible-hint">접기/펼치기</span>
+          <span class="collapsible-icon">▾</span>
+        </span>
+      </summary>
+      <div class="collapsible-body">
+        <label class="wide">
+          한 줄에 하나씩 입력
+          <textarea data-search-terms rows="4" placeholder="검색어를 한 줄에 하나씩 입력하세요">{% if config.search_terms %}{{ config.search_terms | join('\n') }}{% endif %}</textarea>
+        </label>
+        <p>비워 두면 한 번만 실행합니다. `search_terms`는 시작 URL의 `{search_term}` 치환에만 사용합니다.</p>
+      </div>
+    </details>
+  </section>
+
+  {% if show_naver_api_panel %}
+  <section class="panel">
+    <details class="collapsible-panel" open>
+      <summary>
+        <h2>Naver News API</h2>
+        <span class="collapsible-toggle" aria-hidden="true">
+          <span class="collapsible-hint">접기/펼치기</span>
+          <span class="collapsible-icon">▾</span>
+        </span>
+      </summary>
+      <div class="collapsible-body">
+        <label class="check">
+          <input type="checkbox" data-naver-enabled>
+          Naver API 패널 사용
+        </label>
+        <div class="grid naver-grid">
+          <label>정렬
+            <select data-naver-sort>
+              <option value="date">date (최신순)</option>
+              <option value="sim">sim (정확도순)</option>
+            </select>
+          </label>
+          <label>검색어당 가져올 뉴스 개수
+            <input type="number" min="1" max="100" data-naver-count value="20">
+          </label>
+          <input type="hidden" data-naver-page-limit value="1">
+        </div>
+      </div>
+    </details>
+  </section>
+  {% endif %}
+
+  {% if not show_naver_api_panel %}
+  <section class="panel">
+    <div class="section-row">
+      <h2>실행 단계</h2>
+      <button type="button" data-add-step>단계 추가</button>
+    </div>
+    <div class="workflow-head">
+      <span>순서</span>
+      <span>이름</span>
+        <span class="head-label">
+          <span>XPath</span>
+          <button
+            type="button"
+            class="help-tip"
+            title="loop를 켠 step은 items 또는 pagination 모드를 선택합니다.&#10;items는 XPath 1과 XPath 2를 넣고, pagination은 XPath 1만 넣어 다음 버튼 또는 page_number 템플릿을 클릭합니다."
+            aria-label="XPath 반복 안내"
+          >?</button>
+        </span>
+      <span class="head-label">
+        <span>Action</span>
+        <button
+          type="button"
+          class="help-tip"
+          title="XPath 또는 parser step에 대해 수행할 동작을 정합니다.&#10;click: 요소를 눌러 다음 동작을 실행합니다.&#10;goto: 요소에서 읽은 주소로 바로 이동합니다.&#10;download: 파일을 내려받습니다.&#10;extract: 화면이나 속성값을 읽어옵니다.&#10;parser: RSS 같은 구조화 응답을 파싱합니다."
+          aria-label="Action 설명"
+        >?</button>
+      </span>
+      <span class="head-label">
+        <span>Open</span>
+        <button
+          type="button"
+          class="help-tip"
+          title="click 동작에서만 새 탭/현재 탭 방식을 정합니다.&#10;auto: 기본 자동 판별.&#10;same_tab: 같은 탭에서 클릭.&#10;popup: 새 탭/팝업을 기다림."
+          aria-label="Open 설명"
+        >?</button>
+      </span>
+      <span class="head-label">
+        <span>Attr</span>
+        <button
+          type="button"
+          class="help-tip"
+          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver.&#10;click: 사용하지 않습니다."
+          aria-label="Attr 설명"
+        >?</button>
+      </span>
+      <span class="head-label">
+        <span>Wait</span>
+        <button
+          type="button"
+          class="help-tip"
+          title="XPath 요소가 어떤 상태가 될 때까지 기다릴지 정합니다.&#10;attached: DOM에 붙은 상태.&#10;visible: 화면에 보이는 상태.&#10;hidden: 숨겨진 상태.&#10;detached: DOM에서 제거된 상태.&#10;auto: 기본 대기."
+          aria-label="Wait 설명"
+        >?</button>
+      </span>
+      <span>작업</span>
+    </div>
+    <div id="workflow-steps" class="workflow-steps">
+      {% for step in config.steps %}
+      <div class="workflow-step" data-step-row>
+        <span class="step-order">{{ loop.index }}</span>
+        <input data-step-prop="name" value="{{ step.name or '' }}">
+        <div class="step-xpath-cell {% if step.loop %}is-loop-enabled{% endif %}" data-step-xpath-cell>
+          <div class="step-xpath-main">
+            <input data-step-prop="xpath" value="{{ step.xpath or '' }}" placeholder="XPath 1" {% if step.action == "parser" %}disabled{% endif %}>
+          </div>
+          <div class="step-xpath-advanced" data-step-loop-items {% if not step.loop or step.loop_mode == "pagination" %}hidden{% endif %}>
+            <input data-step-prop="xpath_2" value="{{ step.xpath_2 or '' }}" placeholder="XPath 2" {% if step.action == "parser" %}disabled{% endif %}>
+            <div class="step-loop-exclude">
+              <div class="step-loop-exclude-field">
+                <input
+                  data-step-prop="exclude_xpath"
+                  value="{{ step.exclude_xpath or '' }}"
+                  placeholder="제외 XPath"
+                  {% if step.action == "parser" %}disabled{% endif %}
+                >
+                <span class="step-loop-exclude-icon" title="제외 XPath">ex</span>
+              </div>
+            </div>
+          </div>
+          <div class="step-loop-row">
+            <label class="step-loop-toggle" {% if step.action == "parser" %}hidden{% endif %}>
+              <input type="checkbox" data-step-prop="loop" {% if step.loop %}checked{% endif %} {% if step.action == "parser" %}disabled{% endif %}>
+              <span>loop</span>
+            </label>
+            <div class="step-loop-config" {% if not step.loop and step.action != "parser" %}hidden{% endif %}>
+              <label class="step-loop-mode" {% if step.action == "parser" %}hidden{% endif %}>
+                <span>mode</span>
+                <select data-step-prop="loop_mode" {% if step.action == "parser" %}disabled{% endif %}>
+                  <option value="items" {% if not step.loop_mode or step.loop_mode == "items" %}selected{% endif %}>items</option>
+                  {% if loop.index == 1 %}
+                  <option value="pagination" {% if step.loop_mode == "pagination" %}selected{% endif %}>pagination</option>
+                  {% endif %}
+                  {% if step.loop_mode and step.loop_mode not in ["items", "pagination"] and loop.index == 1 %}
+                  <option value="{{ step.loop_mode }}" selected>{{ step.loop_mode }}</option>
+                  {% endif %}
+                </select>
+              </label>
+              <label class="step-loop-limit">
+                <span>limit</span>
+                <input type="number" min="0" data-step-prop="loop_limit" value="{{ step.loop_limit or '' }}" placeholder="max">
+              </label>
+            </div>
+          </div>
+          <div class="step-pagination-advanced" data-step-loop-pagination {% if not step.loop or step.loop_mode != "pagination" %}hidden{% endif %}>
+            <label class="step-pagination-mode">
+              <span>page</span>
+              <select data-step-prop="pagination_mode" {% if step.action == "parser" %}disabled{% endif %}>
+                <option value="next_button" {% if not step.pagination_mode or step.pagination_mode == "next_button" %}selected{% endif %}>next_button</option>
+                <option value="page_number" {% if step.pagination_mode == "page_number" %}selected{% endif %}>page_number</option>
+                {% if step.pagination_mode and step.pagination_mode not in ["next_button", "page_number"] %}
+                <option value="{{ step.pagination_mode }}" selected>{{ step.pagination_mode }}</option>
+                {% endif %}
+              </select>
+              <button
+                type="button"
+                class="help-tip"
+                title="page pagination은 첫 페이지를 건너뛰고 2페이지부터 이동합니다.&#10;next_button은 다음 버튼을 반복 클릭하고, page_number는 XPath에 {page_number}를 넣어 페이지 번호로 바꿉니다.&#10;예: 1페이지는 현재 상태 유지, 2페이지부터 클릭합니다."
+                aria-label="page pagination 설명"
+              >?</button>
+            </label>
+          </div>
+        </div>
+        <select data-step-prop="action">
+          <option value="click" {% if step.action == "click" %}selected{% endif %}>click</option>
+          <option value="goto" {% if step.action == "goto" %}selected{% endif %}>goto</option>
+          <option value="download" {% if step.action == "download" %}selected{% endif %}>download</option>
+          <option value="extract" {% if step.action == "extract" %}selected{% endif %}>extract</option>
+          <option value="parser" {% if step.action == "parser" %}selected{% endif %}>parser</option>
+        </select>
+        <select data-step-prop="open_mode" {% if step.action != "click" %}disabled{% endif %}>
+          <option value="" {% if not step.open_mode %}selected{% endif %}>auto</option>
+          <option value="same_tab" {% if step.open_mode == "same_tab" %}selected{% endif %}>same_tab</option>
+          <option value="popup" {% if step.open_mode == "popup" %}selected{% endif %}>popup</option>
+          {% if step.open_mode and step.open_mode not in ["same_tab", "popup"] %}
+          <option value="{{ step.open_mode }}" selected>{{ step.open_mode }}</option>
+          {% endif %}
+        </select>
+        <select data-step-prop="attr">
+          <option value="" {% if not step.attr %}selected{% endif %}>auto</option>
+          <option value="href" {% if step.attr == "href" %}selected{% endif %}>href</option>
+          <option value="src" {% if step.attr == "src" %}selected{% endif %}>src</option>
+          <option value="text" {% if step.attr == "text" %}selected{% endif %}>text</option>
+          <option value="html" {% if step.attr == "html" %}selected{% endif %}>html</option>
+          <option value="google" {% if step.attr == "google" %}selected{% endif %}>google</option>
+          <option value="naver" {% if step.attr == "naver" %}selected{% endif %}>naver</option>
+          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver"] %}
+          <option value="{{ step.attr }}" selected>{{ step.attr }}</option>
+          {% endif %}
+        </select>
+        <select data-step-prop="wait_state" class="step-wait-select" {% if step.action == "parser" %}disabled{% endif %}>
+          <option value="" {% if not step.wait_state %}selected{% endif %}>auto</option>
+          <option value="attached" {% if step.wait_state == "attached" %}selected{% endif %}>attached</option>
+          <option value="visible" {% if step.wait_state == "visible" %}selected{% endif %}>visible</option>
+          <option value="hidden" {% if step.wait_state == "hidden" %}selected{% endif %}>hidden</option>
+          <option value="detached" {% if step.wait_state == "detached" %}selected{% endif %}>detached</option>
+        </select>
+        <div class="step-actions">
+          <button type="button" data-step-up>위</button>
+          <button type="button" data-step-down>아래</button>
+          <button class="danger" type="button" data-remove-step>삭제</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <details class="collapsible-panel">
+      <summary>
+        <h2>필터 목록</h2>
+        <span class="collapsible-toggle" aria-hidden="true">
+          <span class="collapsible-hint">접기/펼치기</span>
+          <span class="collapsible-icon">▾</span>
+        </span>
+      </summary>
+      <div class="collapsible-body">
+        <label class="wide">
+          한 줄에 하나씩 입력
+          <textarea data-filter-terms rows="4" placeholder="수집 결과에서 걸러낼 키워드를 한 줄에 하나씩 입력하세요">{% if config.filter_terms %}{{ config.filter_terms | join('\n') }}{% endif %}</textarea>
+        </label>
+        <p>실행이 끝난 뒤 결과 레코드 전체를 한 번만 검사합니다. 하나라도 포함되면 통과합니다.</p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2>특이사항</h2>
+    <label class="wide">
+      이 크롤러의 예외 동작, 주의점, 구조 특이사항을 적어두세요.
+      <textarea data-path="notes" rows="4" placeholder="예: 목록과 상세 xpath가 동일하지만 상세는 #report를 사용">{{ config.notes or '' }}</textarea>
+    </label>
+  </section>
+
+  <div class="sticky-actions">
+    <button class="primary" type="submit">저장</button>
+    <button type="submit" formaction="/configs/{{ config_id or config.name }}/preview">미리보기</button>
+  </div>
+</form>
+{% endblock %}
