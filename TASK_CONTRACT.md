@@ -40,6 +40,8 @@ Reuse the existing config-driven crawler architecture while preparing a staged A
 - Keep site-specific behavior in `configs/*.json` where possible.
 - Keep common crawler source free of site-specific hardcoding.
 - Prefer durable docs and proof artifacts over long chat memory.
+- Follow `SOURCE_CHANGE_GUARDRAIL.md` before any crawler source, UI, storage, parser/provider, or schema behavior change.
+- When original behavior is needed, compare against `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`, not against memory or the edited working tree.
 
 ## Preferred Context Package
 - Root Alpha hot docs already read.
@@ -52,6 +54,15 @@ Reuse the existing config-driven crawler architecture while preparing a staged A
   - `crawlers/`
   - representative `configs/*.json`
   - `tests/`
+  - `SOURCE_CHANGE_GUARDRAIL.md`
+
+## Source Change Guardrail
+- Default for new crawler sites is config/XPath-only onboarding.
+- News-style sites use original Yonhap behavior as the baseline.
+- Government/attachment-style sites use `산업부_보도자료` as the baseline.
+- Naver and Daum are API-backed exceptions.
+- Shared source changes require a recorded reason, origin comparison, tradeoff notes, expected blast radius, and validation plan before editing.
+- Every push that includes source-code changes must use `$git-push-change-log`.
 
 ## Active Risk References
 - external-site blocking and rate limits
@@ -186,3 +197,47 @@ Make Google News search collection work in the existing crawler product before t
 - reviewer: check parser routing, config shape, cumulative output, no-secret behavior, and filtered-flow compatibility.
 - QA: verify tests, live RSS proof, search terms, item counts, and output paths.
 - auditor: verify external URL bounds, output path containment, retention/artifact risks, and unrelated dirty files.
+
+## Superseded Slice: TheBell Uniform HTML Collection
+
+### User Goal
+Make TheBell collection work in the existing crawler product before the user performs git push. Initial verification terms are `최태원` and `SK`. The crawler should collect all article links from the configured number of TheBell search result pages, then visit each article URL and save title/body JSON item files.
+
+### Discovery Result
+- TheBell integrated search uses `https://www.thebell.co.kr/search/search.asp`.
+- The search form supports GET parameters including `keyword`, `page`, `ord=NEWSDATE`, `section=ALL`, `kind_cd=GAAP1`, and `year_cd=Y`.
+- Search results are in `div.searchResult div.newsList`, with article links shaped like `/front/newsview.asp?code=00&key=...`.
+- Article details expose title metadata in `div.viewHead` and article body in `div.viewSection`; some articles include login/paywall prompts that must not be stored as article body.
+
+### Constraints
+- Do not use an API key for TheBell unless later evidence shows an official API is required.
+- Do not collect by article count in this slice; user-facing limit is page count per search term.
+- Keep search URL variables visible with `{search_term}`.
+- Do not mix right-rail/ranking/recommended links into search result collection.
+- Remove login/paywall/navigation/script/share boilerplate from extracted article text.
+- If full body is blocked, save accessible text and explicit status metadata instead of pretending the body is complete.
+- Preserve cumulative output directories under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+- Do not run git push; the user owns push execution.
+
+### Expected Deliverables For This Slice
+- TheBell provider parser module and workflow attr `thebell`.
+- `configs\더벨.json` with search terms `최태원` and `SK`.
+- TheBell-only editor panel shown only for TheBell configs.
+- One UI setting: `검색어당 가져올 페이지 수`.
+- Per-item JSON files plus a run manifest for each search term.
+- Unit tests for search-page link extraction, article body cleanup, page URL generation, workflow parser routing, preview skip, and UI scoping.
+- Live proof using the local saved config, with artifact paths recorded.
+
+### Completion Note
+- 2026-05-14: superseded by the generic execution-step TheBell path and the origin Yonhap storage restore.
+- Proof paths:
+  - `qa-artifacts\thebell-live-20260514`
+  - `qa-artifacts\thebell-ui-20260514\thebell-editor-3002.png`
+  - `qa-artifacts\thebell-ui-20260514\generic-editor-3002.png`
+- Remaining governance items are operational: retention, crawl delay/backoff, robots/terms review, and careful staging around unrelated dirty files.
+
+### Role-Specific Small Goals
+- developer: implement provider parser, config, UI, and tests without changing Git push ownership.
+- reviewer: check parser scoping, duplicate/right-rail link exclusion, output path shape, and provider coupling.
+- QA: verify page-count semantics, two search terms, JSON item contents, UI panel behavior, and regression tests.
+- auditor: verify external request bounds, paywall/login text handling, retention/artifact risks, and user-owned Git push boundary.

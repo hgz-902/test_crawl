@@ -55,3 +55,19 @@
 - Alpha wave required: yes
 - waiver: none
 - next action: keep Google on `action=parser`, `attr=google`, verify `Chey Tae-won` and `SK` through Google News RSS, and stop before user-owned git push.
+
+## 2026-05-14 Reclassification: TheBell Uniform HTML Slice (Superseded)
+- classification: non-trivial
+- workload level: Level 2
+- reason: this slice first explored a provider parser, search-result pagination semantics, article-detail HTML extraction, editor UI scoping, config behavior, live proof, and regression tests; it was later superseded by the generic execution-step TheBell config.
+- Alpha wave required: yes
+- waiver: bounded main-implementation fallback permitted after the developer worker stalled; reviewer, QA, and auditor worker review remained required.
+- next action: keep TheBell on generic execution steps, match Yonhap-style generic-news storage, and stop before user-owned git push.
+
+## 2026-05-14 Reclassification: Source Change Guardrail
+- classification: trivial
+- workload level: Level 1
+- reason: documentation-only guardrail to prevent unnecessary crawler source-code churn.
+- Alpha wave required: no
+- waiver: documentation-only.
+- next action: require origin comparison, config/XPath-first evaluation, and `$git-push-change-log` notes before any future source-code change.

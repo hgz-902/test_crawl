@@ -299,6 +299,60 @@ class WebLoggingTests(unittest.TestCase):
         self.assertNotIn("Daum News API", generic_response.text)
         self.assertIn("실행 단계", generic_response.text)
 
+    def test_editor_shows_workflow_steps_for_thebell_config(self) -> None:
+        thebell_config = {
+            "name": "더벨",
+            "start_url": "https://www.thebell.co.kr/search/search.asp?keyword={search_term}&page=1&ord=NEWSDATE",
+            "output_dir": "outputs/thebell",
+            "timeout_ms": 60000,
+            "renderer": "playwright",
+            "headless": True,
+            "ignore_https_errors": False,
+            "search_terms": ["최태원", "SK"],
+            "filter_terms": [],
+            "steps": [
+                {
+                    "name": "open_detail",
+                    "xpath": "//div[contains(@class, 'newsList')]/ul/li[1]/dl/dt/a",
+                    "xpath_2": "//div[contains(@class, 'newsList')]/ul/li[2]/dl/dt/a",
+                    "loop": True,
+                    "loop_mode": "items",
+                    "action": "click",
+                    "open_mode": "same_tab",
+                }
+            ],
+        }
+        generic_config = {
+            "name": "기후에너지부_보도자료",
+            "start_url": "https://example.com?pagerOffset={search_term}",
+            "output_dir": "outputs/mcee",
+            "timeout_ms": 30000,
+            "renderer": "playwright",
+            "headless": False,
+            "ignore_https_errors": False,
+            "search_terms": ["0", "10"],
+            "filter_terms": ["전력"],
+            "steps": [{"name": "open_detail", "xpath": "//a[1]", "action": "click"}],
+        }
+
+        def fake_get_config(name: str):
+            return thebell_config if name == "더벨" else generic_config
+
+        with TestClient(web.app) as client, patch.object(web, "get_config", side_effect=fake_get_config):
+            thebell_response = client.get("/configs/%EB%8D%94%EB%B2%A8")
+            generic_response = client.get("/configs/%EA%B8%B0%ED%9B%84%EC%97%90%EB%84%88%EC%A7%80%EB%B6%80_%EB%B3%B4%EB%8F%84%EC%9E%90%EB%A3%8C")
+
+        self.assertEqual(thebell_response.status_code, 200)
+        self.assertEqual(generic_response.status_code, 200)
+        self.assertIn("실행 단계", thebell_response.text)
+        self.assertIn("open_detail", thebell_response.text)
+        self.assertIn("loop", thebell_response.text)
+        self.assertNotIn("Naver News API", thebell_response.text)
+        self.assertNotIn("Daum News API", thebell_response.text)
+        self.assertNotIn("data-thebell-page-limit", thebell_response.text)
+        self.assertNotIn("TheBell", generic_response.text)
+        self.assertIn("실행 단계", generic_response.text)
+
     def test_editor_does_not_render_naver_credentials(self) -> None:
         naver_config = web.default_config("네이버")
 
@@ -465,6 +519,51 @@ class WebLoggingTests(unittest.TestCase):
         self.assertIn("size=50", saved_configs[0]["start_url"])
         self.assertIn("page=1", saved_configs[0]["start_url"])
         self.assertNotIn("kakao_rest_api_key", saved_configs[0])
+
+    def test_save_thebell_config_preserves_workflow_steps(self) -> None:
+        payload = {
+            "name": "더벨",
+            "start_url": "https://www.thebell.co.kr/search/search.asp?keyword={search_term}&page=9&ord=NEWSDATE",
+            "output_dir": "outputs/thebell",
+            "search_terms": ["최태원", "SK"],
+            "steps": [
+                {
+                    "name": "open_detail",
+                    "xpath": "//div[contains(@class, 'newsList')]/ul/li[1]/dl/dt/a",
+                    "xpath_2": "//div[contains(@class, 'newsList')]/ul/li[2]/dl/dt/a",
+                    "loop": True,
+                    "loop_mode": "items",
+                    "action": "click",
+                    "open_mode": "same_tab",
+                }
+            ],
+        }
+        saved_configs: list[dict[str, Any]] = []
+
+        def fake_save_config_as(config: dict[str, Any], _name: str) -> Path:
+            saved_configs.append(config)
+            return Path("configs/더벨.json")
+
+        with patch.object(web, "save_config_as", side_effect=fake_save_config_as):
+            with TestClient(web.app) as client:
+                response = client.post(
+                    "/configs",
+                    data={
+                        "payload": json.dumps(payload, ensure_ascii=False),
+                        "original_id": "더벨",
+                    },
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(len(saved_configs), 1)
+        saved_step = saved_configs[0]["steps"][0]
+        self.assertEqual(saved_step["name"], "open_detail")
+        self.assertEqual(saved_step["action"], "click")
+        self.assertEqual(saved_step["loop_mode"], "items")
+        self.assertIn("xpath_2", saved_step)
+        self.assertNotEqual(saved_step.get("attr"), "thebell")
+        self.assertIn("page=9", saved_configs[0]["start_url"])
 
     def test_naver_run_safety_blocks_missing_loop_limit(self) -> None:
         config = {

@@ -30,8 +30,10 @@ from crawler_app.workflow import (
     _resolve_board_loop_item_numbers,
     _resolve_step_xpath,
     _render_template_value,
+    _relocate_path,
     _save_extract_outputs,
     _select_board_item_scope,
+    _step_value,
     _build_board_loop_spec,
     _attach_dialog_handler,
     _run_nested_click_loops,
@@ -2527,6 +2529,41 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(len(paths), 1)
             self.assertEqual(paths[0].name, "record_single_parse.txt")
 
+    def test_relocate_path_keeps_existing_target_root_and_avoids_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source_root = root / "source"
+            target_root = root / "target"
+            source_file = source_root / "001_SK" / "texts" / f"{date.today():%Y%m%d}" / "body.txt"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("new", encoding="utf-8")
+            target_file = target_root / source_file.relative_to(source_root)
+            target_file.parent.mkdir(parents=True)
+            target_file.write_text("old", encoding="utf-8")
+
+            relocated = Path(_relocate_path(str(source_file), source_root, target_root))
+
+            self.assertTrue(relocated.exists())
+            self.assertEqual(relocated.read_text(encoding="utf-8"), "new")
+            self.assertEqual(target_file.read_text(encoding="utf-8"), "old")
+            self.assertNotEqual(relocated, target_file)
+            self.assertEqual(_relocate_path(str(relocated), source_root, target_root), str(relocated))
+
+    def test_step_value_removes_excluded_descendants_for_text_extract(self) -> None:
+        locator = FakeLocator("")
+        locator.text = "기사 본문 <div class='newLoginBox'>로그인 해주세요</div> 남은 본문"
+        step = {
+            "name": "extract_body",
+            "action": "extract",
+            "attr": "text",
+            "exclude_xpath": ".//*[contains(@class, 'newLoginBox')]",
+        }
+
+        value = _step_value(locator, step)
+
+        self.assertIn("기사 본문", value)
+        self.assertIn("남은 본문", value)
+        self.assertNotIn("로그인 해주세요", value)
 
 if __name__ == "__main__":
     unittest.main()

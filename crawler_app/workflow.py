@@ -107,6 +107,12 @@ def _result_category_root(output_dir: Path, category: str) -> Path:
 def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     source_path = Path(path)
     try:
+        source_path.relative_to(target_root)
+        return str(source_path)
+    except ValueError:
+        pass
+
+    try:
         relative_path = source_path.relative_to(source_root)
     except ValueError:
         return str(source_path)
@@ -114,6 +120,8 @@ def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     target_path = target_root / relative_path
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if source_path.exists() and source_path.resolve() != target_path.resolve():
+        if target_path.exists():
+            target_path = _unique_path(target_path)
         source_path.replace(target_path)
     return str(target_path)
 
@@ -350,7 +358,6 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
                     "size",
                     str(DAUM_NEWS_API_FIXED_SIZE),
                 )
-
     return normalized
 
 
@@ -1498,6 +1505,7 @@ def _run_parser_workflow(
                 "empty": len(items) == 0,
                 "rss_url": source_url,
                 "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
+                "search_url": "",
                 "final_url": final_url,
                 "output_file": str(output_path),
             }
@@ -1609,7 +1617,8 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
                     "item_count": 0,
                     "empty": True,
                     "rss_url": source_url,
-                    "api_url": source_url,
+                    "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
+                    "search_url": "",
                     "final_url": source_url,
                     "preview_skipped": True,
                     "skip_reason": skip_reason,
@@ -1657,6 +1666,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
                 "empty": len(items) == 0,
                 "rss_url": source_url,
                 "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
+                "search_url": "",
                 "final_url": final_url,
             }
         )
@@ -2224,7 +2234,7 @@ def _run_step(
                         locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
                     except Exception:
                         pass
-                locators = _filtered_locators(locator_group, exclude_xpath)
+                locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
                 if not locators:
                     raise RuntimeError("No elements matched after applying exclude_xpath.")
                 locator = locators[0]
@@ -2300,14 +2310,14 @@ def _run_step(
                 locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
             except Exception:
                 pass
-        locators = _filtered_locators(locator_group, exclude_xpath)
+        locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
         if not locators:
             if wait_state not in {"hidden", "detached"}:
                 try:
                     locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
                 except Exception:
                     pass
-                locators = _filtered_locators(locator_group, exclude_xpath)
+                locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
         if not locators:
             raise RuntimeError("No elements matched after applying exclude_xpath.")
         locator = locators[0]
@@ -3340,10 +3350,46 @@ def _child_board_xpath(list_xpath: str, container_tag: str | None, child_tag: st
 def _step_value(locator: Any, step: dict[str, Any]) -> str:
     attr = str(step.get("attr") or "href")
     if attr == "text":
+        cleaned_html = _locator_inner_html_without_excluded_nodes(locator, step)
+        if cleaned_html is not None:
+            return _html_to_text(cleaned_html).strip()
         return locator.inner_text().strip()
     if attr == "html":
+        cleaned_html = _locator_inner_html_without_excluded_nodes(locator, step)
+        if cleaned_html is not None:
+            return cleaned_html.strip()
         return locator.inner_html().strip()
     return (locator.get_attribute(attr) or "").strip()
+
+
+def _locator_inner_html_without_excluded_nodes(locator: Any, step: dict[str, Any]) -> str | None:
+    exclude_xpath = str(step.get("exclude_xpath") or "").strip()
+    if not exclude_xpath:
+        return None
+
+    try:
+        raw_html = locator.inner_html()
+    except Exception:
+        return None
+
+    try:
+        root = lxml_html.fromstring(f"<div>{raw_html}</div>")
+    except Exception:
+        return raw_html
+
+    for node in list(root.xpath(exclude_xpath)):
+        parent = node.getparent()
+        if parent is None:
+            continue
+        tail = node.tail or ""
+        previous = node.getprevious()
+        if tail:
+            if previous is not None:
+                previous.tail = (previous.tail or "") + tail
+            else:
+                parent.text = (parent.text or "") + tail
+        parent.remove(node)
+    return lxml_html.tostring(root, encoding="unicode", method="html")
 
 
 def _render_template_value(template: str, search_term: str | None, *, url_encode: bool = False) -> str:

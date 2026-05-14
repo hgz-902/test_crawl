@@ -527,3 +527,184 @@
     - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\runs\20260514_1\workflow_records.json`
   - Alpha developer, reviewer, QA, and auditor flow completed; auditor findings on URL/output containment were fixed and retested.
   - Google RSS description cleanup follow-up completed; parser strips HTML tags/entities and Google RSS `<font>` source labels from `description` while keeping `source` separately.
+
+## TheBell Developer Worker Pre-Edit Gate
+- date: 2026-05-14
+- role: Alpha developer worker.
+- classification: non-trivial.
+- reason: adds a new parser provider, config, workflow dispatch, editor UI panel, and regression tests across runtime/output/UI paths.
+- Alpha wave required: yes; this session is the developer implementation worker evidence, not final ruling.
+- waiver: none.
+- next action: implement `attr=thebell` following existing Naver/Daum/Google parser patterns without reverting unrelated dirty files.
+
+## TheBell Uniform HTML Slice Checkpoint
+- date: 2026-05-14
+- status: superseded historical checkpoint. The later execution-step correction removed the TheBell parser-provider path from the active implementation.
+- run_id: `thebell-uniform-html-20260514`
+- alpha_session_key: `alpha-thebell-20260514`
+- budget guardrail:
+  - keep startup and discovery reads narrow to TheBell search/detail structure and existing parser/UI files.
+  - live proof should use a small page count first.
+- expensive-step warning:
+  - TheBell `SK` has many search results; page count directly multiplies article-detail requests.
+  - do not use article-count semantics for this slice.
+- hold threshold:
+  - hold if TheBell blocks article detail pages, if page URL semantics change, or if login/paywall text cannot be reliably separated from article body.
+- current goal:
+  - add TheBell collection for `최태원` and `SK` using page-count settings and per-article JSON output.
+- completed:
+  - confirmed search endpoint `search/search.asp` and result links under `div.searchResult div.newsList`.
+  - confirmed detail title/body candidates in `viewHead` and `viewSection`.
+  - confirmed visible body extraction must remove `newLoginBox`/login/paywall prompts.
+  - recorded contract, plan, classification, and hold ruling.
+- completed after implementation:
+  - added `crawler_app\thebell_news.py`.
+  - added workflow parser attr `thebell`.
+  - added TheBell-only editor panel and page-count config generation.
+  - added `configs\더벨.json`.
+  - added parser/workflow/web tests.
+  - live proof saved 10 records with `page_limit=1`.
+  - Alpha developer worker was attempted but stalled; main session completed the bounded implementation as an explicit fallback, then sent the result to reviewer, QA, and auditor workers.
+  - reviewer, QA, and auditor workers returned conditional pass.
+- not done:
+  - no git push was run; user owns push execution.
+  - no retention/robots/terms policy was implemented.
+- next one action:
+  - use the later TheBell execution-step and Generic News Storage Restore checkpoints as the current implementation contract.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\thebell_news.py crawler_app\workflow.py crawler_app\web.py tests\test_thebell_news.py tests\test_workflow.py tests\test_web.py`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 136 tests pass.
+  - live proof: `qa-artifacts\thebell-live-20260514`, 10 records total, 5 for `최태원`, 5 for `SK`, no login/paywall/script phrase hits in saved body fields.
+  - UI proof: `qa-artifacts\thebell-ui-20260514\thebell-editor-3002.png` and `generic-editor-3002.png`.
+- superseded by:
+  - active TheBell UI/config now uses generic execution steps: `open_detail`, `extract_title`, `extract_body`.
+  - active TheBell output now follows Yonhap-style generic-news storage: `filter\<NNN_search_term>\texts\YYYYMMDD`.
+
+## TheBell Execution Step Correction Checkpoint
+- date: 2026-05-14
+- status: completed; supersedes the earlier TheBell-specific parser panel as the active UI/config path.
+- current goal:
+  - keep TheBell as a generic execution-step site and remove `download_file` from the TheBell workflow because TheBell has news articles, not attached press-release files.
+- completed:
+  - converted `configs\더벨.json` to `open_detail`, `extract_title`, and `extract_body`.
+  - removed TheBell-specific editor panel wiring and the `thebell` parser attr choice from the editor UI.
+  - kept general extract body cleanup via `exclude_xpath` for descendant removal.
+  - verified the visible TheBell editor rows contain no `download_file`.
+- not done:
+  - no git push was run; user owns push execution.
+- cleanup:
+  - removed the superseded `crawler_app\thebell_news.py` provider parser and `tests\test_thebell_news.py`.
+  - removed active workflow/web TheBell parser support so TheBell now routes through generic execution steps only.
+- next one action:
+  - continue future non-API/non-platform site work by cloning the 실행 단계 pattern from `산업부_보도자료` only where file-download steps truly apply.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\workflow.py crawler_app\web.py tests\test_workflow.py tests\test_web.py`: pass.
+  - focused TheBell editor/save and extract cleanup tests: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 123 tests pass after removing superseded TheBell parser tests.
+  - live proof: `qa-artifacts\thebell-workflow-steps-20260514`, 5 records for `최태원`, `downloaded 0`, `extracted 10`.
+  - UI proof: `qa-artifacts\thebell-workflow-ui-20260514\thebell-editor.png`; row inspection showed only `open_detail`, `extract_title`, `extract_body`.
+
+## TheBell Output Accumulation And Items Limit Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - verify TheBell `items` limit 10 on the user-confirmed NEWS page while preserving the existing 3-step UI shape; storage-path changes from this checkpoint were later superseded by the Yonhap restore checkpoint below.
+- completed:
+  - tested a per-search-term `items\YYYYMMDD_n` routing idea, then superseded it after comparing with origin Yonhap storage.
+  - kept the useful part: relocation avoids overwriting an existing target path and leaves already-final target-root files in place.
+  - generic workflow manifests were restored to origin-compatible `filter\workflow_records.json`.
+  - restored `configs\더벨.json` to the existing `open_detail`, `extract_title`, `extract_body` shape after user clarified no new execution step was requested.
+  - changed the start URL from broad `section=ALL` to minimal `section=NEWS`, which is what makes the page show 10 news items.
+  - clarified in config notes that `open_detail.loop_limit` is current-page article count.
+- design notes and tradeoffs:
+  - `items` mode means "repeat rows on the current page"; it cannot collect beyond the current result page by itself.
+  - The old one-step TheBell config used `items` on the ALL search page, which only exposed 5 news rows, so limit 10 appeared to be ignored.
+  - Moving only the start URL to the NEWS search view exposes 10 news rows per page while preserving the existing UI.
+  - Extra parameters from the user's inspected URL were tested; date/detail-search extras did not affect item count, so they were not added.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\thebell-items-only-20260514`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\thebell-output-items-ui-20260514`
+- validation result or blocker:
+  - URL comparison proof: provided URL, no-date URL, minimal NEWS URL each produced 10 items; old ALL URL produced 5.
+  - `items` proof: success, 10 records, 0 downloads, 20 extracted title/body files.
+  - final storage proof is the later Yonhap-style proof under `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514`.
+  - UI proof: `qa-artifacts\thebell-output-items-ui-20260514\thebell-editor-items.png`; rows showed only `open_detail`, `extract_title`, `extract_body`.
+  - `node --check static\app.js`: pass.
+  - Python compile check: pass.
+  - focused output/pagination tests: pass.
+  - latest `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+
+## Generic News Storage Restore Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - align TheBell/news generic execution-step storage with the origin Yonhap path structure and reserve `산업부_보도자료` as the reference for government/attachment sites.
+- completed:
+  - checked origin Yonhap config and workflow in `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed origin Yonhap stores generic extracted text under `outputs\yna\filter\001_default\texts\YYYYMMDD\...txt` and manifest at `outputs\yna\filter\workflow_records.json`.
+  - restored current generic workflow term output dir from `filter\<term>\items\YYYYMMDD_n` back to `<output_dir>\<term>` during execution and `filter\<term>` after relocation.
+  - restored generic workflow manifest from `filter\runs\YYYYMMDD_n\workflow_records.json` back to `filter\workflow_records.json`.
+  - kept safer relocation behavior to avoid overwriting same-named target files.
+- design notes and tradeoffs:
+  - News sites should follow Yonhap-style generic text extraction paths to reduce surprise for the development team.
+  - Government/attachment sites should follow `산업부_보도자료` as the reference because they combine text extraction and `download_file`.
+  - The downside is generic `workflow_records.json` is not run-versioned; this matches origin behavior but the latest manifest overwrites the previous manifest.
+  - Repeated extracted text files can still accumulate because `_save_extract_outputs` and safer relocation produce unique file names when collisions happen.
+- validation result or blocker:
+  - TheBell live proof: 10 records, output at `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514\...txt`.
+  - manifest proof: `qa-artifacts\thebell-yonhap-path-20260514\filter\workflow_records.json`.
+  - focused tests: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+  - `node --check static\app.js`: pass.
+
+## Source Change Guardrail Checkpoint
+- date: 2026-05-14
+- status: active guardrail.
+- current goal:
+  - protect the crawler program from unnecessary source-code churn until all crawler site work is complete.
+- completed:
+  - added `SOURCE_CHANGE_GUARDRAIL.md`.
+  - recorded that original source/code behavior must be checked from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - recorded default config/XPath-only onboarding for new sites.
+  - recorded baseline split: news sites follow original Yonhap behavior; government/attachment sites follow `산업부_보도자료`; Naver/Daum remain API-backed exceptions.
+  - linked the guardrail from `TASK_CONTRACT.md`.
+- next one action:
+  - before the next crawler site implementation, classify the target site and check the closest origin baseline before proposing any source-code edit.
+- validation result or blocker:
+  - documentation-only guardrail; no runtime test needed.
+
+## Google RSS Source-Change Reassessment
+- date: 2026-05-14
+- status: assessed; no implementation change.
+- current goal:
+  - decide whether Google News RSS should remain a parser exception or be treated like a generic XPath-only news site.
+- completed:
+  - checked origin path `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed origin already contains `configs\구글.json`, `crawler_app\google_news_rss.py`, and `action=parser`, `attr=google`.
+  - tested a generic XPath preview against Google RSS with `//item[1]` / `//item[2]`; current generic preview failed before XPath matching because Google RSS XML with an encoding declaration is passed through the HTML parser path.
+  - confirmed generic execution steps save extracted text/html artifacts, while the RSS parser returns structured fields such as title, link, pubDate, source, description, and guid.
+- decision notes:
+  - Google RSS is not API-backed like Naver/Daum, but it is also not an HTML news page like Yonhap/TheBell.
+  - Treat Google as an origin-existing RSS/platform-backed exception.
+  - Future Google changes should prefer config changes such as search terms, locale URL parameters, and item limit; parser/source changes require a recorded RSS-specific reason.
+- validation result or blocker:
+  - generic XPath preview probe failed with XML/HTML parser mismatch; no source code was changed.

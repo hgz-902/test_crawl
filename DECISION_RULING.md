@@ -423,6 +423,134 @@
   - accumulated RSS outputs intentionally grow over time; retention/cleanup is still a future operations slice.
   - `configs\산업부_보도자료.json` is currently an unrelated dirty file and must not be included in the Google commit unless the user intentionally stages it.
   - no git push was run; user owns push/merge execution.
+
+## TheBell Uniform HTML Ruling
+- date: 2026-05-14
+- ruling: superseded conditional pass. The first parser-provider design was later replaced by the generic execution-step design.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: new provider parser, page-count collection semantics, article-detail HTML extraction, UI/config changes, live proof, and regression tests are required.
+  - Alpha wave required: yes
+  - waiver: bounded main-implementation fallback after the Alpha developer worker stalled; reviewer, QA, and auditor workers still judged the completed slice before final ruling.
+- current goal:
+  - implement TheBell collection for `최태원` and `SK`, using page count per search term and saving each article as JSON.
+- completed:
+  - confirmed TheBell search endpoint and result container shape.
+  - confirmed detail pages expose title in `viewHead` and body candidate text in `viewSection`.
+  - recorded active contract and implementation plan.
+  - added provider parser `crawler_app\thebell_news.py`.
+  - added workflow parser attr `thebell`, URL validation, page-limit validation, preview skip, and direct dated output path.
+  - added TheBell-only editor panel and page-count-only config generation.
+  - added `configs\더벨.json` with search terms `최태원` and `SK`.
+  - added focused parser/workflow/web tests.
+  - live proof with `page_limit=1` saved 10 records total, 5 for each search term.
+  - Alpha developer worker was attempted but did not complete; main session finished the bounded implementation and did not hide that fallback.
+  - reviewer, QA, and auditor workers returned conditional pass.
+- not done:
+  - no git push was run; user owns push execution.
+  - no retention/robots/terms policy was implemented.
+- next action:
+  - use the later TheBell Execution Step Correction and Generic News Storage Restore rulings as the current source of truth.
+- related files:
+  - `crawler_app\workflow.py`
+  - `crawler_app\web.py`
+  - `static\app.js`
+  - `templates\editor.html`
+  - `configs\더벨.json`
+  - `tests\`
+- validation or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\thebell_news.py crawler_app\workflow.py crawler_app\web.py tests\test_thebell_news.py tests\test_workflow.py tests\test_web.py`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 136 tests pass.
+  - live proof: `qa-artifacts\thebell-live-20260514`, saved outputs under `001_최태원\items\20260514_1` and `002_SK\items\20260514_1`, no login/paywall/script phrase hits in saved body fields.
+  - UI proof: `qa-artifacts\thebell-ui-20260514\thebell-editor-3002.png` and `generic-editor-3002.png`; stale earlier screenshots without `-3002` are not current proof.
+- superseded by:
+  - active TheBell UI/config now uses generic execution steps: `open_detail`, `extract_title`, `extract_body`.
+  - active TheBell output now follows Yonhap-style generic-news storage: `filter\<NNN_search_term>\texts\YYYYMMDD`.
+- remaining risk:
+  - TheBell article body access is often partial because login/paywall prompts appear after the visible preview text; outputs record `content_status=partial` and `blocked_reason=login_or_paid_content` when applicable.
+  - Page count is bounded to 20 pages, but per-run article cap, crawl delay/backoff, retention, and robots/terms review remain future operations slices.
+  - `configs\다음.json`, `configs\산업부_보도자료.json`, and `pr_body.md` are unrelated dirty/untracked files and should not be included in a TheBell-only commit unless intentionally selected.
+
+## TheBell Execution Step Correction Ruling
+- date: 2026-05-14
+- ruling: conditional pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: corrects TheBell runtime config, editor behavior, extraction cleanup, and validation artifacts after user clarified `download_file` is site-specific.
+  - Alpha wave required: yes
+  - waiver: bounded main implementation for a correction slice; no legacy OpenClaw fallback.
+- current goal:
+  - make TheBell use generic 실행 단계 without `download_file`.
+- completed:
+  - removed TheBell-specific editor panel behavior from the active UI path.
+  - removed `thebell` from parser attr UI choices.
+  - changed active TheBell config to `open_detail`, `extract_title`, `extract_body`.
+  - validated actual editor rows have zero `download_file` steps.
+- not done:
+  - no git push was run.
+- cleanup:
+  - removed the superseded TheBell parser module/tests and active TheBell parser dispatch; TheBell now uses generic execution steps only.
+- next action:
+  - use TheBell as the reference for future news-only HTML sites: execution steps, editable XPath, no file-download step unless attachments exist.
+- validation or blocker:
+  - `node --check static\app.js`: pass.
+  - Python compile check: pass.
+  - focused TheBell editor/save and extract cleanup tests: pass.
+  - full unittest discovery: 123 tests pass after removing superseded TheBell parser tests.
+  - live proof: success, 5 records, `downloaded 0`, `extracted 10`.
+  - GUI proof: `qa-artifacts\thebell-workflow-ui-20260514\thebell-editor.png`.
+- remaining risk:
+  - TheBell HTML may drift; XPath is now intentionally UI-editable.
+  - article body access may still be partial if TheBell changes paywall/login behavior.
+  - retention/backoff/robots policy remains a future operations slice.
+
+## TheBell Output Accumulation And Items Limit Ruling
+- date: 2026-05-14
+- ruling: conditional pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: changes generic workflow artifact routing plus TheBell start URL semantics and requires live output proof.
+  - Alpha wave required: yes
+  - waiver: bounded main implementation; no Codex worker spawn because this session did not receive an explicit subagent request and current tool policy requires explicit delegation permission.
+- current goal:
+  - verify that `items` mode collects 10 articles from the user-confirmed NEWS page without adding UI steps; the initial fresh-run-path idea was later superseded by the Yonhap storage restore ruling.
+- completed:
+  - tested per-search-term `items\YYYYMMDD_n` run paths, then replaced that storage decision after origin Yonhap comparison.
+  - generic workflow manifests are restored to origin-compatible `filter\workflow_records.json`.
+  - TheBell config was restored to the existing 3-step UI shape: `open_detail`, `extract_title`, `extract_body`.
+  - TheBell start URL now uses minimal `section=NEWS`, which exposes 10 items on the first page.
+- validation or blocker:
+  - URL comparison proof: provided/no-date/minimal NEWS URLs produced 10 items; old ALL URL produced 5.
+  - items live proof: 10 records.
+  - final storage proof is the later Yonhap-style proof under `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514`.
+  - latest full unit suite: 124 tests pass.
+  - GUI proof path: `qa-artifacts\thebell-output-items-ui-20260514\thebell-editor-items.png`.
+- remaining risk:
+  - `items` mode remains current-page only; collecting multiple result pages should be a separate approved UI/config change if needed.
+  - If TheBell changes the NEWS search layout, users must update `open_detail` XPath in the UI.
+  - backoff/retention/robots policy remains a separate future slice.
+
+## Generic News Storage Restore Ruling
+- date: 2026-05-14
+- ruling: conditional pass.
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: restores common workflow storage semantics after comparing against origin Yonhap and current TheBell.
+  - Alpha wave required: yes
+  - waiver: bounded main implementation; no legacy OpenClaw fallback.
+- current goal:
+  - make news crawlers follow original Yonhap storage shape and keep government/attachment crawlers aligned to `산업부_보도자료`.
+- completed:
+  - origin Yonhap path confirmed.
+  - generic execution-step outputs restored to `filter\<term>\texts\YYYYMMDD`.
+  - generic manifest restored to `filter\workflow_records.json`.
+  - safer relocation retained to avoid overwriting existing target files.
+- validation or blocker:
+  - TheBell live proof saved under `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514`.
+  - full unit suite: 124 tests pass.
+- remaining risk:
+  - generic manifest overwrite remains origin-compatible behavior; if run-versioned manifests are needed later, that must be a separately approved storage-contract change.
 - Body cleanup and guardrails:
   - obvious navigation/menu/social/footer boilerplate is filtered.
   - user-provided inline menu-noise example is covered by test.
@@ -444,3 +572,45 @@
 - UI run safety guard checks Naver parser shape and enforces bounded Naver runs, but broader JOB orchestration, cancel button, scheduler, and email flows are future slices.
 - Publisher HTML size was capped after download and before parsing in the superseded implementation; a future slice should use a streaming cap.
 - No Git repository exists yet, so VS Code can show/edit code but `git commit` cannot be proven until repository initialization or repo placement is decided.
+
+## Source Change Guardrail Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: documentation and memory guardrail only; no runtime source-code edit.
+  - Alpha wave required: no
+  - waiver: documentation-only update.
+- current goal:
+  - make source-code restraint an explicit crawler-program rule until all crawler work is complete.
+- completed:
+  - added `SOURCE_CHANGE_GUARDRAIL.md`.
+  - fixed the original-code reference path as `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - recorded default config/XPath-only onboarding.
+  - recorded news baseline as original Yonhap behavior and government/attachment baseline as `산업부_보도자료`.
+  - recorded Naver/Daum as API-backed exceptions.
+  - recorded that `$git-push-change-log` is required for pushes containing source-code changes.
+- validation or blocker:
+  - documentation-only; no runtime test required.
+- remaining risk:
+  - the guardrail depends on future sessions reading `TASK_CONTRACT.md` or `SOURCE_CHANGE_GUARDRAIL.md` before implementation.
+
+## Google RSS Source-Change Reassessment Ruling
+- date: 2026-05-14
+- ruling: conditional pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: documentation and architectural reassessment only; no runtime source-code edit.
+  - Alpha wave required: no
+  - waiver: documentation-only update.
+- current goal:
+  - determine whether Google RSS should be converted to XPath-only generic execution.
+- completed:
+  - origin copy checked.
+  - confirmed origin already treats Google as `action=parser`, `attr=google`.
+  - generic XPath preview probe failed on Google RSS XML before item extraction.
+  - recorded Google RSS as an origin-existing RSS/platform-backed exception in `SOURCE_CHANGE_GUARDRAIL.md`.
+- ruling:
+  - keep Google RSS on the parser path unless a future approved source-change slice intentionally adds RSS/XML support to generic execution.
+- remaining risk:
+  - Google RSS parser source changes after this point still need explicit source-change justification and `$git-push-change-log` notes.

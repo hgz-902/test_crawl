@@ -236,3 +236,123 @@
 - RSS `description` is cleaned to plain text only; Google RSS usually provides headline/snippet/source-style text, not full publisher article bodies.
 - Retention/cleanup for accumulated RSS outputs remains a future operations slice.
 - User will run git push manually.
+
+## Superseded Historical Plan: TheBell Uniform HTML Collection
+
+### Status
+- 2026-05-14: superseded. This was the first parser-provider approach and is no longer the active TheBell implementation plan.
+- Current TheBell follows the later generic execution-step plan and the Generic News Storage Restore plan below.
+
+### Completion Criteria
+- `더벨` config uses TheBell search with `action=parser`, `attr=thebell`.
+- Search terms are `최태원` and `SK`.
+- User-facing collection size is page count per search term, not article count.
+- Each configured search result page is fetched, search-result article links are deduplicated, and each article URL is visited.
+- Each saved item JSON contains title, article URL, visible body text, and status metadata when body access is limited.
+- The TheBell editor panel appears only for TheBell configs.
+- Tests, live proof, reviewer, QA, and auditor checks pass before final ruling.
+
+### Steps
+1. Completed: added TheBell provider module for search pagination, result-link extraction, article-detail parsing, and dated output saves.
+2. Completed: added workflow parser attr `thebell`, validation, preview skip, and record metadata.
+3. Completed: added TheBell-only editor panel and JavaScript config generation using `page_limit`.
+4. Completed: added `configs\더벨.json` with search terms `최태원` and `SK`.
+5. Completed: added focused parser/workflow/web tests.
+6. Completed: unit tests and local live proof with `page_limit=1`.
+7. Completed: reviewer, QA, and auditor workers returned conditional pass.
+8. Not done by design: git push; user owns push execution.
+
+### Validation
+- `node --check static\app.js`: pass.
+- `.venv\Scripts\python.exe -m py_compile crawler_app\thebell_news.py crawler_app\workflow.py crawler_app\web.py tests\test_thebell_news.py tests\test_workflow.py tests\test_web.py`: pass.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 136 tests pass.
+- live proof: `qa-artifacts\thebell-live-20260514`, 10 records total, 5 for `최태원`, 5 for `SK`, no login/paywall/script phrase hits in saved body fields.
+- UI proof: `qa-artifacts\thebell-ui-20260514\thebell-editor-3002.png` and `generic-editor-3002.png`; stale earlier screenshots without `-3002` should not be used as current proof.
+
+### Superseded By
+- Active TheBell UI/config now uses generic execution steps: `open_detail`, `extract_title`, `extract_body`.
+- Active TheBell output now follows Yonhap-style generic-news storage: `filter\<NNN_search_term>\texts\YYYYMMDD`.
+- `configs\다음.json`, `configs\산업부_보도자료.json`, and `pr_body.md` are unrelated dirty/untracked files and should not be staged as part of a TheBell-only commit unless the user intentionally includes them.
+
+## Active Implementation Plan Update: TheBell Execution Steps
+
+### Status
+- 2026-05-14: completed; this update supersedes the earlier active TheBell parser-panel plan for the user-facing config.
+
+### Completion Criteria
+- `더벨` editor shows generic 실행 단계.
+- TheBell workflow has no `download_file` step.
+- TheBell workflow uses editable XPath steps for detail click, title extraction, and body extraction.
+- UI does not expose a TheBell-specific parser panel or `thebell` parser attr option.
+- Live proof confirms downloaded file count is zero and title/body extracts are produced.
+
+### Completed
+- Rewrote `configs\더벨.json` to `open_detail`, `extract_title`, `extract_body`.
+- Removed TheBell special panel wiring from editor save/render code.
+- Removed `thebell` from the parser attr UI choices.
+- Added extract-step descendant cleanup support through `exclude_xpath`.
+- Updated focused web/workflow tests.
+
+### Validation
+- `node --check static\app.js`: pass.
+- `.venv\Scripts\python.exe -m py_compile crawler_app\workflow.py crawler_app\web.py tests\test_workflow.py tests\test_web.py`: pass.
+- focused TheBell editor/save and extract cleanup tests: pass.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 123 tests pass after removing superseded TheBell parser tests.
+- live proof: `qa-artifacts\thebell-workflow-steps-20260514`, 5 records for `최태원`, downloaded files `0`, extracted title/body files `10`.
+- UI proof: `qa-artifacts\thebell-workflow-ui-20260514\thebell-editor.png`; actual rows were `open_detail`, `extract_title`, `extract_body`.
+
+### Remaining Follow-Up
+- For future HTML news sites, start from execution steps and add `download_file` only for sites with real attachments.
+
+## Active Implementation Plan Update: TheBell Output Accumulation And Items Limit
+
+### Status
+- 2026-05-14: completed with conditional pass.
+
+### Completion Criteria
+- TheBell output follows the current storage contract after origin comparison.
+- Generic execution-step manifests follow the current storage contract after origin comparison.
+- `items` mode is proven to collect up to the configured item count on the current page.
+- TheBell UI remains the same 3-step shape as before the correction.
+
+### Completed
+- First tested per-search-term `items\YYYYMMDD_n` run directories, then superseded that approach after the user asked to match the origin Yonhap storage structure.
+- Kept artifact relocation collision-safe so repeated extracted text files are not overwritten inside the Yonhap-style target path.
+- Generic workflow manifests now remain at the origin-compatible `filter\workflow_records.json`.
+- Changed TheBell config to minimal NEWS search while keeping only `open_detail`, `extract_title`, and `extract_body`.
+- Added focused tests for safe relocation and text extraction.
+
+### Validation
+- URL comparison proof: provided/no-date/minimal NEWS URLs produced 10 items; old ALL URL produced 5.
+- `items` live proof: 10 records, 20 extracted title/body files.
+- final storage proof: TheBell writes extracted text under the Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` path.
+- UI proof: `qa-artifacts\thebell-output-items-ui-20260514\thebell-editor-items.png`.
+- `node --check static\app.js`: pass.
+- Python compile check: pass.
+- latest `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+
+### Remaining Follow-Up
+- `items` mode is current-page only; multi-page collection should be handled only after explicit approval for an added UI/config step.
+- Future site slices should document whether limit means current-page item count, page count, or API item count.
+
+## Active Implementation Plan Update: Generic News Storage Restore
+
+### Status
+- 2026-05-14: completed with conditional pass.
+
+### Completion Criteria
+- News-style generic execution-step crawlers match origin Yonhap storage structure.
+- TheBell no longer uses the temporary `items\YYYYMMDD_n` generic path.
+- Government/attachment crawlers keep `산업부_보도자료` as the reference pattern.
+
+### Completed
+- Checked origin Yonhap workflow/config.
+- Restored generic text extraction path to `filter\<NNN_search_term>\texts\YYYYMMDD`.
+- Restored generic manifest path to `filter\workflow_records.json`.
+- Kept no-overwrite relocation behavior for repeated runs.
+
+### Validation
+- TheBell live proof: 10 records saved under `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514`.
+- Manifest path: `qa-artifacts\thebell-yonhap-path-20260514\filter\workflow_records.json`.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+- `node --check static\app.js`: pass.
