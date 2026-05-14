@@ -680,3 +680,38 @@
   - InvestChosun HTML may drift; list/detail XPath should be updated from the UI if the site structure changes.
   - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
   - no git push was run; user owns push execution.
+
+## Signal News Config Ruling
+- date: 2026-05-14
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: new generic HTML news site config only; no shared source-code, UI source, storage contract, parser provider, or runtime schema edit.
+  - Alpha wave required: no.
+  - waiver: config-only site onboarding using origin Yonhap-style news baseline.
+- current goal:
+  - collect Signal search results through the existing generic execution-step workflow, using `최태원` and `SK` as the verified initial proof terms, up to pre-push verification.
+- completed:
+  - origin news baseline checked at `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - `configs\시그널.json` added.
+  - configured `start_url` as `https://signal.sedaily.com/search?word={search_term}&page=1`; pagination mode rewrites the `page` query parameter.
+  - configured only `open_detail`, `extract_title`, and `extract_body`.
+  - configured `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2`.
+  - configured `open_detail.exclude_xpath` to skip locked/member-only result items.
+  - configured `extract_body.exclude_xpath` to remove image blocks and paid preview blocks.
+- validation or blocker:
+  - live proof: `qa-artifacts\signal-live-20260514`, 33 accessible records, 66 extracted title/body files, 0 downloads, no workflow errors.
+  - per-term proof: `최태원` 14 records, `SK` 19 records.
+  - pagination proof: pages `[1, 2]`, first URL `word=최태원&page=1`, last URL `word=SK&page=2`.
+  - body cleanup proof: `회원 전용기사` hits `0`, `signal 이 기사는` hits `0`, `가장 많이 읽은` hits `0`.
+  - UI proof: `qa-artifacts\signal-ui-20260514\editor-3020.png` and `ui_result.json`; editor shows generic 3-step workflow and no Naver/Daum panels.
+  - user-run failure diagnosis: `items` mode failed when `start_url` used `{page_number}`; changed the config to concrete `page=1` so both `items` and `pagination` modes work.
+  - mode proof after fix: `qa-artifacts\signal-mode-check-20260514\summary.json`; `items` succeeded with 6 records and `pagination` succeeded with 33 records.
+  - config validation: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+- remaining risk:
+  - Signal HTML may drift; list/detail XPath should be updated from the UI if the site structure changes.
+  - Some Signal articles are member-only and intentionally excluded from this config.
+  - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
+  - no git push was run; user owns push execution.

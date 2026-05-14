@@ -776,3 +776,35 @@
   - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
   - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
   - `node --check static\app.js`: pass.
+
+## Signal News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add Signal collection using the existing generic news execution-step flow, with `최태원` and `SK` as the verified initial proof terms, then verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin news baseline from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - confirmed Signal search URL uses `word` for the search term and `page` for the page number; the saved config keeps concrete `page=1` so items mode also works.
+  - added `configs\시그널.json`.
+  - configured `open_detail`, `extract_title`, and `extract_body` only; no `download_file`, provider parser, UI panel, or shared source-code change.
+  - configured member-only search result exclusion through `open_detail.exclude_xpath`.
+  - configured body image/paid-preview exclusion through `extract_body.exclude_xpath`.
+- still not done:
+  - no git push was run.
+- next one action:
+  - if the user wants to push, use `$git-push-change-log` and stage only intended files for this site plus explicitly approved dirty files.
+- related files/paths:
+  - `configs\시그널.json`
+  - `qa-artifacts\signal-live-20260514\summary.json`
+  - `qa-artifacts\signal-ui-20260514\ui_result.json`
+  - `qa-artifacts\signal-ui-20260514\editor-3020.png`
+- validation result or blocker:
+  - live proof succeeded: 33 accessible records total, `최태원` 14 and `SK` 19, pages `[1, 2]`, 66 extracted title/body files, 0 downloads.
+  - body cleanup proof: `회원 전용기사`, `signal 이 기사는`, and `가장 많이 읽은` were absent from verified body extracts.
+  - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
+  - user-run failure diagnosis: saved config had `open_detail.loop_mode=items` while `start_url` still contained `{page_number}`, so items mode visited a nonconcrete page URL and found 0 board items.
+  - fix: changed `start_url` to `https://signal.sedaily.com/search?word={search_term}&page=1`; pagination mode still rewrites the `page` query parameter, while items mode now uses page 1.
+  - mode proof after fix: `qa-artifacts\signal-mode-check-20260514\summary.json`; `items` succeeded with 6 records, `pagination` succeeded with 33 records.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.

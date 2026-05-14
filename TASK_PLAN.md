@@ -245,7 +245,7 @@
 
 ### Completion Criteria
 - `더벨` config uses TheBell search with `action=parser`, `attr=thebell`.
-- Search terms are `최태원` and `SK`.
+- Initial proof terms are `최태원` and `SK`; the current saved config may include additional SK-family terms configured by the operator.
 - User-facing collection size is page count per search term, not article count.
 - Each configured search result page is fetched, search-result article links are deduplicated, and each article URL is visited.
 - Each saved item JSON contains title, article URL, visible body text, and status metadata when body access is limited.
@@ -425,5 +425,42 @@
 
 ### Remaining Follow-Up
 - InvestChosun HTML may drift; update config XPath from the UI if result/detail structures change.
+- Generic news output keeps Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` storage plus `filter\workflow_records.json`.
+- No git push was run; user owns push execution.
+
+## Active Implementation Plan Update: Signal News Config
+
+### Status
+- 2026-05-14: completed with pass, pending user-owned push.
+
+### Completion Criteria
+- `시그널` config is added as a generic HTML news execution-step site.
+- No shared source code or UI source is changed for this site slice.
+- Search terms are `최태원` and `SK`.
+- `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2` collect pages 1 and 2 per search term.
+- Member-only search result items are excluded so signup/paywall notices are not saved as article bodies.
+- Title/body text is extracted from accessible article detail pages.
+- UI editor shows generic 실행 단계 and no Naver/Daum provider panel.
+
+### Completed
+- Checked `SOURCE_CHANGE_GUARDRAIL.md` and origin `연합뉴스` baseline.
+- Confirmed Signal search URL: `https://signal.sedaily.com/search?word={search_term}&page=1`; pagination mode rewrites the `page` query parameter.
+- Added `configs\시그널.json`.
+- Used direct result XPath under `ul.news_list`.
+- Added `exclude_xpath` on `open_detail` to skip locked/member-only items.
+- Added `exclude_xpath` on `extract_body` to remove article image blocks and paid preview blocks.
+
+### Validation
+- live proof: `qa-artifacts\signal-live-20260514`, 33 accessible records total, 14 for `최태원`, 19 for `SK`, 66 title/body extracted files, 0 downloads, no workflow errors.
+- pagination proof: first URL `word=최태원&page=1`, last URL `word=SK&page=2`, recorded pages `[1, 2]`.
+- body cleanup proof: `회원 전용기사`, `signal 이 기사는`, and `가장 많이 읽은` hits were `0`.
+- UI proof: `qa-artifacts\signal-ui-20260514\editor-3020.png` and `ui_result.json`; editor has `open_detail`, `extract_title`, and `extract_body`; Naver/Daum panels absent.
+- mode proof after failure diagnosis: `qa-artifacts\signal-mode-check-20260514\summary.json`; `items` mode works on concrete page 1 with 6 records, and `pagination` mode works across pages 1 and 2 with 33 records.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+- `node --check static\app.js`: pass.
+
+### Remaining Follow-Up
+- Signal HTML may drift; update config XPath from the UI if result/detail structures change.
+- Some Signal articles are member-only and intentionally excluded by the current config.
 - Generic news output keeps Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` storage plus `filter\workflow_records.json`.
 - No git push was run; user owns push execution.

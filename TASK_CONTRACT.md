@@ -288,3 +288,50 @@ Add InvestChosun as a generic HTML news execution-step config for `최태원` an
 - config validation: `.venv\Scripts\python.exe` with `crawler_app.workflow.load_workflow_config`.
 - live proof: `crawler_app.workflow.run_workflow_config` with `output_dir` overridden to `qa-artifacts`.
 - UI proof: local server `http://127.0.0.1:3020/configs/인베스트조선`.
+
+## Active Slice: Signal Generic News Collection
+
+### Universal Shared Goal
+Finish the requested Signal crawler slice or identify a concrete blocker with evidence, without expanding source-code churn.
+
+### Project Shared Goal
+Add Signal as a generic HTML news execution-step config, verify `최태원` and `SK` as the initial proof terms, and confirm pagination, article detail title/body extraction, member-only exclusion, body-noise removal, and UI editability before user-owned push.
+
+### Expected Deliverables
+- `configs\시그널.json`.
+- Search URL with visible search variable and concrete first page: `word={search_term}&page=1`.
+- Generic editor steps only: `open_detail`, `extract_title`, `extract_body`.
+- Verification proof for two search terms and two pages.
+- UI proof that provider-specific Naver/Daum panels are absent.
+
+### Project Team Binding
+- Use Codex main as orchestrator/integrator/local verifier.
+- This slice is config-only and classified trivial; no Alpha worker wave is required.
+- Legacy OpenClaw fallback is not used.
+
+### Role-Specific Small Goals
+- developer: keep implementation config-only unless site evidence proves a shared workflow defect.
+- reviewer: check origin baseline, no unexpected source changes, no provider-panel drift, and XPath maintainability.
+- QA: verify two search terms, page count semantics, member-only exclusion, title/body outputs, body-noise removal, and UI editor view.
+- auditor: verify no API credentials are introduced, no download step is added, and push remains user-owned.
+
+### Connection Goals
+- Follow `SOURCE_CHANGE_GUARDRAIL.md`.
+- Use original news storage shape from origin Yonhap: `filter\<NNN_search_term>\texts\YYYYMMDD` plus `filter\workflow_records.json`.
+- Record any source-code reason for a later `$git-push-change-log`; none was needed for this slice.
+
+### Preferred Context Package
+- `SOURCE_CHANGE_GUARDRAIL.md`
+- origin `configs\연합뉴스.json`
+- current `configs\인베스트조선.json`
+- current `configs\시그널.json`
+
+### Active Risk References
+- XPath drift on Signal search/detail pages.
+- Some Signal results are member-only and are intentionally skipped.
+- Generic `filter\workflow_records.json` is origin-compatible but not run-versioned.
+
+### Preferred Command Or Entrypoint References
+- config validation: `.venv\Scripts\python.exe` with `crawler_app.workflow.load_workflow_config`.
+- live proof: `crawler_app.workflow.run_workflow_config` with `output_dir` overridden to `qa-artifacts`.
+- UI proof: local server `http://127.0.0.1:3020/configs/시그널`.
