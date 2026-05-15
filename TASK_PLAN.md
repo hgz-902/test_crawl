@@ -464,3 +464,36 @@
 - Some Signal articles are member-only and intentionally excluded by the current config.
 - Generic news output keeps Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` storage plus `filter\workflow_records.json`.
 - No git push was run; user owns push execution.
+
+## Active Implementation Plan Update: Yonhap Latest News Config
+
+### Status
+- 2026-05-15: completed with pass, pending user-owned push.
+
+### Completion Criteria
+- Existing `연합뉴스` config crawls latest-news pages without search terms.
+- No shared source code or UI source is changed for this site slice.
+- `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=20` collect pages 1 through 20.
+- `items` mode remains usable on concrete page 1.
+- Title/body text is extracted from article detail pages.
+- UI editor shows generic 실행 단계 and no Naver/Daum provider panel.
+
+### Completed
+- Checked `SOURCE_CHANGE_GUARDRAIL.md` and origin `연합뉴스` baseline.
+- Confirmed Yonhap latest URL accepts `page=1..20` through `https://www.yna.co.kr/news/1?site=navi_latest_depth01&page=1`.
+- Updated `configs\연합뉴스.json`.
+- Used `li[@data-cid][n]` in `open_detail` XPath so ad/non-article list rows do not stop item inference early.
+- Added `exclude_xpath` to `extract_body` to remove writer controls, asides, and copyright/reporting blocks without changing shared source code.
+
+### Validation
+- smoke proof: `qa-artifacts\yonhap-smoke-20260515-v3`, 25 records and 50 title/body extracted files.
+- full live proof: `qa-artifacts\yonhap-live-20260515`, 500 records across pages 1..20, 1,000 extracted title/body files, 0 downloads, no workflow errors.
+- items mode proof: `qa-artifacts\yonhap-items-mode-20260515`, 3 records and 6 extracted files from page 1.
+- UI proof: `qa-artifacts\yonhap-ui-20260515\editor-3020.png` and `ui_result.json`; editor has `open_detail`, `extract_title`, and `extract_body`, with `open_detail` set to `pagination/page_number/limit=20`.
+- `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+- `node --check static\app.js`: pass.
+
+### Remaining Follow-Up
+- Yonhap latest-news page count is currently 20; re-check if Yonhap changes retention/pagination behavior.
+- Generic news output keeps Yonhap-style `filter\<NNN_search_term>\texts\YYYYMMDD` storage plus `filter\workflow_records.json`.
+- No git push was run; user owns push execution.

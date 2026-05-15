@@ -335,3 +335,50 @@ Add Signal as a generic HTML news execution-step config, verify `최태원` and 
 - config validation: `.venv\Scripts\python.exe` with `crawler_app.workflow.load_workflow_config`.
 - live proof: `crawler_app.workflow.run_workflow_config` with `output_dir` overridden to `qa-artifacts`.
 - UI proof: local server `http://127.0.0.1:3020/configs/시그널`.
+
+## Active Slice: Yonhap Latest News Config
+
+### Universal Shared Goal
+Finish the requested Yonhap latest-news crawler slice or identify a concrete blocker with evidence, without expanding source-code churn.
+
+### Project Shared Goal
+Update the existing Yonhap config so it crawls the latest-news list without search terms from page 1 through the current last page, while keeping `items` and `pagination` mode settings usable from the UI.
+
+### Expected Deliverables
+- Updated `configs\연합뉴스.json`.
+- No search terms; crawl the latest-news listing directly.
+- Generic editor steps only: `open_detail`, `extract_title`, `extract_body`.
+- Default `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, `loop_limit=20`.
+- Verification proof for all pages 1..20 plus bounded `items` mode.
+- UI proof that provider-specific Naver/Daum panels are absent.
+
+### Project Team Binding
+- Use Codex main as orchestrator/integrator/local verifier.
+- This slice is config-only and classified trivial; no Alpha worker wave is required.
+- Legacy OpenClaw fallback is not used.
+
+### Role-Specific Small Goals
+- developer: keep implementation config-only unless live evidence proves a shared workflow defect.
+- reviewer: check origin baseline, no unexpected source changes, XPath stability around ad/non-article rows, and output shape.
+- QA: verify full pagination, bounded items mode, title/body outputs, and editor visibility.
+- auditor: verify no API credentials are introduced, no download step is added, and user-owned Git push boundary remains intact.
+
+### Connection Goals
+- Follow `SOURCE_CHANGE_GUARDRAIL.md`.
+- Use original news storage shape from origin Yonhap: `filter\<NNN_search_term>\texts\YYYYMMDD` plus `filter\workflow_records.json`.
+- Record source-change reason for `$git-push-change-log`; none was needed for this slice.
+
+### Preferred Context Package
+- `SOURCE_CHANGE_GUARDRAIL.md`
+- origin `configs\연합뉴스.json`
+- current `configs\연합뉴스.json`
+
+### Active Risk References
+- Yonhap latest-news last page may change if the site changes its retention window.
+- Yonhap HTML may drift; update config XPath from the UI if list/detail structures change.
+- Generic `filter\workflow_records.json` remains origin-compatible but not run-versioned.
+
+### Preferred Command Or Entrypoint References
+- config validation: `.venv\Scripts\python.exe` with `crawler_app.workflow.load_workflow_config`.
+- live proof: `crawler_app.workflow.run_workflow_config` with `output_dir` overridden to `qa-artifacts`.
+- UI proof: local server `http://127.0.0.1:3020/configs/연합뉴스`.

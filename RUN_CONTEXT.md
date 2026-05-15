@@ -808,3 +808,36 @@
   - mode proof after fix: `qa-artifacts\signal-mode-check-20260514\summary.json`; `items` succeeded with 6 records, `pagination` succeeded with 33 records.
   - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
   - `node --check static\app.js`: pass.
+
+## Yonhap Latest News Config Checkpoint
+- date: 2026-05-15
+- status: completed.
+- current goal:
+  - update existing Yonhap config to crawl the latest-news list without search terms from page 1 through the current last page, while keeping `items` and `pagination` modes usable.
+- completed:
+  - resumed after context compaction using the narrow reentry summary and Yonhap-specific files only.
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin news baseline from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - confirmed `https://www.yna.co.kr/news/1?site=navi_latest_depth01&page=1` works as a concrete first page and existing pagination rendering rewrites the `page` query parameter.
+  - confirmed current Yonhap latest-news pagination exposes a last page of 20 and page 21 has no latest-list items.
+  - updated `configs\연합뉴스.json`.
+  - configured `open_detail`, `extract_title`, and `extract_body` only; no provider parser, UI panel, credential, storage, or shared source-code change.
+  - changed article list XPath to `li[@data-cid][n]` because raw `li[n]` hits a non-article/ad row and stops loop inference after 5 records.
+  - configured body cleanup through `extract_body.exclude_xpath`.
+- still not done:
+  - no git push was run.
+- next one action:
+  - if the user wants to push, use `$git-push-change-log` and stage only intended files for this Yonhap slice plus explicitly approved existing dirty files.
+- related files/paths:
+  - `configs\연합뉴스.json`
+  - `qa-artifacts\yonhap-live-20260515\summary.json`
+  - `qa-artifacts\yonhap-items-mode-20260515\summary.json`
+  - `qa-artifacts\yonhap-ui-20260515\ui_result.json`
+  - `qa-artifacts\yonhap-ui-20260515\editor-3020.png`
+- validation result or blocker:
+  - full live proof succeeded: 500 records, pages 1..20, 500 title files, 500 body files, 0 downloads, no workflow errors.
+  - items mode proof succeeded: 3 records from page 1.
+  - body cleanup sample proof: `제보는 카카오톡`, `<저작권자`, `구독중`, and `댓글` hits were 0 in sampled body extracts.
+  - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.

@@ -1,28 +1,39 @@
 {
   "name": "연합뉴스",
-  "start_url": "https://www.yna.co.kr/news",
+  "start_url": "https://www.yna.co.kr/news/1?site=navi_latest_depth01&page=1",
   "output_dir": "outputs/yna",
-  "timeout_ms": 30000,
+  "timeout_ms": 60000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
-  "notes": "",
+  "notes": "연합뉴스는 검색어 없이 최신뉴스 목록을 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 최신뉴스는 20페이지까지 총 500개의 기사를 보여준다.",
   "search_terms": [],
   "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[1]/div/div/strong/a",
-      "xpath_2": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[2]/div/div/strong/a",
+      "xpath": "//section[contains(@class, 'box-latest01')]/div/ul/li[@data-cid][1]/div[contains(@class, 'item-box')]/div[contains(@class, 'news-con')]/strong[contains(@class, 'tit-wrap')]/a[contains(@class, 'tit-news')]",
+      "xpath_2": "//section[contains(@class, 'box-latest01')]/div/ul/li[@data-cid][2]/div[contains(@class, 'item-box')]/div[contains(@class, 'news-con')]/strong[contains(@class, 'tit-wrap')]/a[contains(@class, 'tit-news')]",
       "loop": true,
-      "loop_mode": "items",
-      "loop_limit": 3,
+      "loop_mode": "pagination",
+      "loop_limit": 20,
+      "pagination_mode": "page_number",
       "action": "click",
+      "open_mode": "same_tab",
       "wait_state": "attached"
     },
     {
-      "name": "download_text",
-      "xpath": "//*[@id=\"articleWrap\"]",
+      "name": "extract_title",
+      "xpath": "//header[contains(@class, 'title-article01')]/h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id='articleWrap']/div[contains(@class, 'story-news')]",
+      "exclude_xpath": "./div[contains(@class, 'writer-zone01')] | ./aside | .//p[contains(@class, 'txt-copyright')]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -30,5 +41,5 @@
     }
   ],
   "created_at": "2026-05-13T13:56:36+09:00",
-  "updated_at": "2026-05-13T13:57:44+09:00"
+  "updated_at": "2026-05-15T09:31:18+09:00"
 }

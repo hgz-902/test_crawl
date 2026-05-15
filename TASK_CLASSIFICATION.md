@@ -71,3 +71,11 @@
 - Alpha wave required: no
 - waiver: documentation-only.
 - next action: require origin comparison, config/XPath-first evaluation, and `$git-push-change-log` notes before any future source-code change.
+
+## 2026-05-15 Reclassification: Yonhap Latest News Config
+- classification: trivial
+- workload level: Level 1
+- reason: existing Yonhap config/XPath update only; no shared workflow source, UI source, parser provider, schema, storage contract, or credential behavior changed.
+- Alpha wave required: no
+- waiver: config-only update using origin Yonhap baseline.
+- next action: verify latest-news pagination through page 20, `items` mode compatibility, UI editor visibility, and regression tests before user-owned push.

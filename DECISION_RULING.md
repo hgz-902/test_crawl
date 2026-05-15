@@ -715,3 +715,34 @@
   - Some Signal articles are member-only and intentionally excluded from this config.
   - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
   - no git push was run; user owns push execution.
+
+## Yonhap Latest News Config Ruling
+- date: 2026-05-15
+- ruling: pass.
+- Alpha pre-edit gate:
+  - classification: trivial
+  - reason: existing Yonhap generic news config/XPath update only; no shared workflow source, UI source, parser provider, schema, storage contract, or credential behavior changed.
+  - Alpha wave required: no.
+  - waiver: config-only update using origin Yonhap baseline.
+- current goal:
+  - collect Yonhap latest-news pages without search terms through the existing generic execution-step workflow, up to pre-push verification.
+- completed:
+  - origin news baseline checked at `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - `configs\연합뉴스.json` updated.
+  - configured `start_url` as `https://www.yna.co.kr/news/1?site=navi_latest_depth01&page=1`; pagination mode rewrites the `page` query parameter.
+  - configured only `open_detail`, `extract_title`, and `extract_body`.
+  - configured `open_detail.loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=20`.
+  - used `li[@data-cid][n]` result XPath to avoid non-article/ad row gaps.
+  - configured `extract_body.exclude_xpath` to remove writer controls, asides, and copyright/reporting blocks.
+- validation or blocker:
+  - full live proof: `qa-artifacts\yonhap-live-20260515`, 500 records, pages 1..20, 1,000 extracted title/body files, 0 downloads, no workflow errors.
+  - items mode proof: `qa-artifacts\yonhap-items-mode-20260515`, 3 records and 6 extracted files from page 1.
+  - UI proof: `qa-artifacts\yonhap-ui-20260515\editor-3020.png` and `ui_result.json`; editor shows generic 3-step workflow and no Naver/Daum panels.
+  - config validation: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+- remaining risk:
+  - Yonhap latest-news page count is currently 20; re-check if Yonhap changes retention/pagination behavior.
+  - Yonhap HTML may drift; list/detail XPath should be updated from the UI if site structure changes.
+  - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
+  - no git push was run; user owns push execution.
