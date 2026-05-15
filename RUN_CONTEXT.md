@@ -1,0 +1,859 @@
+# Run Context
+
+## Run Identity
+- run_id: `crawler-alpha-20260513-env-ui`
+- alpha_session_key: `alpha-crawler-20260513`
+- alpha_topic_instance_key: `crawler-improvement-baseline-20260513`
+- alpha_worker_namespace: `crawler-alpha`
+
+## Budget Guardrail
+- Avoid broad markdown rereads.
+- Prefer current docs and targeted `rg`.
+- Do not run broad live crawls without a site policy slice.
+
+## Expensive-Step Warning
+- `pip install` and Playwright browser install can take time and network.
+- Live crawling may hit external websites and should wait for policy and explicit slice scope.
+
+## Hold Threshold
+- Hold if dependency installation fails.
+- Hold if no local port can be opened.
+- Hold if VS Code command is unavailable and no obvious local fallback exists.
+- Hold before initializing Git unless the user explicitly approves repository creation.
+
+## Local-Only Setup Waiver
+- why safe to keep local: this slice only creates planning artifacts, installs dependencies into local `.venv`, runs existing tests, starts the existing UI, and opens VS Code.
+- why developer worker is not needed: no product behavior, crawler code, config semantics, scheduler, email, or UI feature implementation is being changed.
+- waived risks: implementation-specific reviewer/QA/auditor findings are deferred until product code changes begin.
+- waiver record: this `RUN_CONTEXT.md`.
+- final ruling default if wrong: `rework`.
+
+## Checkpoint
+- current goal: make the crawler project inspectable and runnable locally.
+- completed: task docs created, `.venv` created, dependencies installed, tests passed, UI started, VS Code opened.
+- not done: Git repository initialization or commit workflow; product feature implementation; live target-site crawl verification.
+- next action: decide whether to initialize Git in this folder or attach it to another repository, then start Slice 1 implementation with Alpha worker flow.
+- related paths: `C:\AI_JOB\firstproject\crawler_project\crawlService-main`
+- validation: `python main.py --help` passes in `.venv`; `python -m unittest discover -s tests` passes 76 tests; UI returns HTTP 200 on `http://127.0.0.1:3000/`.
+
+## PreToolUse Guard
+- command: `python -m venv .venv; .venv\Scripts\python -m pip install -r requirements.txt`
+- status: `review`
+- reason: dependency installation can fetch packages from the network.
+- justification: the user explicitly requested local environment confirmation and remediation; dependencies will be installed into the project-local `.venv`, not global Python.
+- decision: proceed.
+- command: `.venv\Scripts\python -m playwright install chromium`
+- status: `review` expected due browser runtime download
+- justification: the crawler uses Playwright and representative site verification will require a browser runtime; install is local Playwright-managed runtime for this development machine.
+- decision: proceed.
+
+## Environment Result
+- Python: `3.12.10`
+- Virtual environment: `.venv`
+- Dependency fix applied:
+  - added `httpx>=0.28.0,<1` to `requirements.txt` because FastAPI/Starlette `TestClient` requires it.
+- Compatibility fix applied:
+  - updated `crawler_app/web.py` `TemplateResponse` calls to the current request-first signature required by installed FastAPI/Starlette.
+- Playwright dry-run shows Chromium runtime location:
+  - `C:\Users\ThinkBook\AppData\Local\ms-playwright\chromium-1217`
+- Git status:
+  - `C:\AI_JOB\firstproject` is not a Git repository.
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main` is not a Git repository.
+  - Git init/commit setup is held until explicit repository decision.
+- UI:
+  - running at `http://127.0.0.1:3000/`
+  - server pid: `26980`
+- VS Code:
+  - opened with `code C:\AI_JOB\firstproject\crawler_project\crawlService-main`.
+
+## Emergency Stop
+- date: 2026-05-13
+- reason: user started a UI crawl and observed unexpectedly broad crawling scope.
+- action: stopped the local uvicorn/crawler process tree rooted at pids `5752` and `26980`, including Playwright driver and Chromium child processes.
+- verification:
+  - no remaining `crawlService-main` or `crawler_app.web` process except VS Code and the checking shell.
+  - port `3000` is no longer listening.
+- note: VS Code was left open intentionally.
+
+## Superseded Slice: Naver News API Collection
+- date: 2026-05-14
+- run_id: `crawler-alpha-20260514-naver-api`
+- alpha_session_key: `alpha-crawler-20260514-naver`
+- alpha_topic_instance_key: `crawler-naver-news-api-20260514`
+- alpha_worker_namespace: `crawler-alpha-naver`
+
+## Alpha Pre-Edit Gate: Naver News API Collection
+- classification: non-trivial
+- reason: API credential loading, live Naver API pagination, JSON artifact generation, config changes, and tests are affected.
+- Alpha wave required: yes
+- waiver: none
+- next action: Alpha developer worker implements bounded slice; reviewer, QA, and auditor inspect findings before final ruling.
+
+## External Source Confirmation
+- Naver official Search News API docs confirmed:
+  - endpoint: `https://openapi.naver.com/v1/search/news.json`
+  - method: GET
+  - parameters: `query`, `display`, `start`, `sort`
+  - `display` max: 100
+  - `start` max: 1000
+  - headers: `X-Naver-Client-Id`, `X-Naver-Client-Secret`
+- Source: `https://developers.naver.com/docs/serviceapi/search/news/news.md`
+
+## Naver Slice Checkpoint
+- current goal: collect Naver News API results for `최태원` through page 2 and save each API item as a JSON file.
+- completed: local `.env` credential loading, bounded Naver config, two-page pagination, per-item JSON output, API host validation, UI safety guard, compact logging, strict Naver parser option validation, unit tests, live CLI verification, and Playwright UI screenshots.
+- not done: Git repository initialization, recurring JOB scheduler, automatic report email, cancel button, and long-term article-retention policy.
+- next action: decide Git repository strategy or start the next Alpha slice for batch JOB orchestration/rate policy.
+- related paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\logging_utils.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-news-ui-20260514`
+- validation:
+  - `python -m unittest discover -s tests` passed 87 tests.
+  - live CLI run `20260514T012241Z` returned 20 items and 20 per-item JSON files; its former article-body extraction evidence is superseded by the later API-only decision.
+  - Playwright UI screenshots captured home and config pages.
+- ruling: conditional pass, with remaining risks recorded in `DECISION_RULING.md`.
+
+## Naver Editor UI Rework Checkpoint
+- current goal: make Naver API settings appear only on the existing `네이버` editor and preserve all other site editors, using `기후에너지부_보도자료` as the reference generic editor.
+- completed:
+  - scoped `Naver News API` panel to config id/name `네이버`.
+  - confirmed `기후에너지부_보도자료` does not render the Naver panel.
+  - converted `configs\네이버.json` to official Naver Search News API config with `{search_term}`, multiple `search_terms`, `display=20`, and `loop_limit=20`.
+  - mapped UI latest-news count to both API `display` and parser `loop_limit`.
+  - removed accidental QA-created `configs\new_site.json`.
+  - added tests for panel scoping and Naver API field handling.
+  - added run confirmation on the index page.
+- not done:
+  - Git repository initialization.
+  - streaming response-size cap.
+  - full JOB/scheduler/email/cancel UI.
+- next action: decide Git strategy or proceed to JOB/rate policy slice.
+- validation:
+  - `python -m unittest discover -s tests` passed 94 tests.
+  - Playwright confirmed `/configs/네이버` has Naver panel and `/configs/기후에너지부_보도자료` does not.
+- ruling: conditional pass.
+
+## Pause Checkpoint: Naver UI Credentials/Display
+- date: 2026-05-14
+- status: paused on user request
+- current goal: allow users to configure Naver API display, search terms, and related Naver options from the existing `네이버` editor UI. Credential editing from the UI was later removed.
+- completed:
+  - superseded: Naver credential fields were temporarily shown only on `네이버`, then removed again so credentials stay in `.env` / process environment.
+  - API `display` is configurable separately from `loop_limit`.
+  - Secret value is not rendered in the editor HTML.
+  - Non-Naver reference editor `기후에너지부_보도자료` does not show the Naver panel.
+  - Fixed panel initialization so opening and saving the editor preserves Naver API fields.
+  - Restored `configs\네이버.json` to the intended bounded API-only config.
+- validation completed:
+  - `node --check static\app.js`
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\naver_news_api.py crawler_app\web.py tests\test_naver_news_api.py tests\test_web.py`
+  - `.venv\Scripts\python.exe -m unittest tests.test_naver_news_api tests.test_web -v`
+  - `.venv\Scripts\python.exe -m unittest discover -s tests` passed 97 tests.
+- blocker:
+  - live UI run `POST /configs/네이버/run` currently fails with `AttributeError: 'NoneType' object has no attribute 'get'`.
+  - direct `ConfigurableCrawler(config_path='configs/네이버.json').crawl()` reproduces the same failure.
+  - diagnostics show Naver parser path is selected, but no parser items are produced before the error is recorded.
+- next one action:
+  - on resume, capture the focused traceback around `_run_parser_workflow` / `_fetch_parser_items`, then fix the `NoneType.get` source and add a regression test.
+- related paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_web.py`
+- ruling: hold.
+
+## Resume Completion: Naver UI Credentials/Display
+- date: 2026-05-14
+- status: completed with conditional pass.
+- completed after resume:
+  - captured focused traceback for the live UI failure.
+  - fixed `BeautifulSoup` node `attrs=None` handling in Naver body cleanup.
+  - added regression coverage for missing node attrs.
+  - added regression coverage that `display` can differ from `loop_limit` through the save route.
+  - restarted the local UI server on `http://127.0.0.1:3000/`.
+  - reran direct crawler and live UI run.
+- validation:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\naver_news_api.py crawler_app\web.py tests\test_naver_news_api.py tests\test_web.py`: pass.
+  - `.venv\Scripts\python.exe -m unittest tests.test_naver_news_api tests.test_web -v`: 25 tests pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 99 tests pass.
+  - direct `ConfigurableCrawler(config_path='configs/네이버.json').crawl()`: success, 40 items.
+  - live UI `POST /configs/네이버/run`: HTTP 200, success true, 40 items.
+- proof:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\result-summary.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\naver-run-result.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-ui-credentials-display-20260514\naver-editor-credentials-display.png`
+- output inspection:
+  - total item JSON files: 40.
+  - secret was not present in editor HTML and was not found outside `.env` in local scan.
+- next one action:
+  - keep current Naver implementation API-only; schedule publisher-page body collection as a separate future slice only if explicitly approved.
+- ruling: conditional pass.
+
+## Naver API-Only Output Decision
+- date: 2026-05-14
+- status: completed with conditional pass.
+- user decision:
+  - remove current article-body extraction from production code.
+  - remember article body extraction as a future feature.
+- current goal:
+  - Naver runs should store official Naver News API fields and normalized local metadata only.
+- completed:
+  - removed active article-page fetch and HTML body extraction path from `crawler_app\naver_news_api.py`.
+  - removed article-body parameters from Naver workflow execution.
+  - removed Naver article-body controls from `templates\editor.html` and `static\app.js`.
+  - removed article-body settings from `configs\네이버.json` and `configs\네이버뉴스_최태원_2페이지.json`.
+  - added normalization stripping for stale Naver article-body fields.
+  - updated tests to API-only expectations.
+- validation:
+  - `node --check static\app.js`: pass.
+  - modified Python compile check: pass.
+  - focused Naver/workflow/web tests: 85 tests pass.
+  - full test suite: 90 tests pass.
+  - live UI Naver run: success true, 40 item JSON files.
+  - stale generated outputs/logs/QA artifacts sanitized to remove historical article-body fields.
+  - broad `네이버뉴스` UI run intentionally blocked with HTTP 400 until a bounded `loop_limit` is configured.
+- proof:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\result-summary.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\naver-run-result.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\naver-api-only-20260514\naver-editor-api-only.png`
+- output inspection:
+  - article-body field hits: 0.
+  - article body field hits: 0.
+  - empty `description` count in latest verified run: 0.
+  - editor article-body controls present: false.
+  - stale article-body scan across `outputs`, `logs`, and `qa-artifacts`: no hits.
+  - broad `네이버뉴스` blocked: true.
+
+## Naver API-Only Final Cleanup Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: resolve final reviewer/auditor blockers by removing stale Naver body-collection settings from old QA artifacts and correcting stale state docs.
+- completed:
+  - sanitized old Naver QA payload artifacts so they no longer carry deprecated body-collection options.
+  - corrected `TASK_CONTRACT.md`, `TASK_PLAN.md`, `RUN_CONTEXT.md`, `GUI_QA_RESULT.md`, and `DECISION_RULING.md` so the active Naver slice is API-only and publisher-page body collection is deferred.
+  - kept the legacy generic URL alias field untouched because it is shared by non-Naver crawler schemas and is only a URL alias, not body extraction.
+- next one action:
+  - rerun tests and final Alpha reviewer/QA/auditor checks.
+- validation:
+  - pending in this checkpoint.
+- ruling:
+  - pending final worker pass.
+
+## Naver CLI Safety Cleanup Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: make Naver API run bounds consistent across UI and CLI/orchestrator paths.
+- completed:
+  - added workflow validation requiring Naver `loop_limit` and enforcing `page_limit<=10`, `loop_limit<=100`.
+  - updated README Naver CLI example to use the bounded `configs\네이버.json` and document required bounds.
+  - added regression tests for missing and too-broad Naver CLI limits.
+- next one action:
+  - final report to user.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check for changed Naver/workflow/web/test files: pass.
+  - focused workflow/web/Naver tests: 88 tests pass.
+  - full test suite: 93 tests pass.
+  - broad legacy `configs\네이버뉴스.json` CLI run: blocked before crawl with `steps[1].loop_limit is required for Naver News API.`
+- ruling:
+  - pass. Final auditor confirmed the prior CLI broad-run blocker is resolved.
+- future slice:
+  - article body extraction should return only as a separate publisher-policy slice with per-domain parsers, explicit allowlists, and retention/copyright policy.
+- ruling: conditional pass.
+
+## Naver Credential UI Removal Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: remove Naver Client ID / Client Secret editing from the UI and rely on `.env` / process environment only.
+- completed:
+  - removed Client ID and Client Secret fields from the Naver editor panel.
+  - removed web-layer `.env` read/write helpers and save-route credential handling.
+  - added save-route and workflow-normalization scrubbing for stale `naver_client_id` / `naver_client_secret` payload keys.
+  - kept `crawler_app\naver_news_api.py` runtime credential loading from `os.environ`; app startup loads `.env` through `crawler_app\__init__.py`.
+  - updated tests to assert credentials are not rendered in the Naver editor.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check for changed web/test files: pass.
+  - focused web/Naver/workflow tests: 87 tests pass.
+  - full test suite: 92 tests pass.
+  - live editor HTML check on `http://127.0.0.1:3000/configs/네이버`: Naver panel present, credential fields absent, API display and per-search-term latest-news count present.
+  - direct crafted POST with stale credential keys: route returned 303 and saved config contained neither key.
+- API parameter note:
+  - Naver official docs define `display` as one-request result count, default 10 and max 100; this product also uses `loop_limit` as the saved item cap per search term.
+- ruling:
+  - pass. Reviewer, QA, and auditor returned PASS after stale-payload credential scrubbing.
+
+## Naver Single Count UI Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: remove confusing duplicate news-count controls so the user sets exactly one count per search term.
+- completed:
+  - removed separate `API display` and `검색어당 최신 뉴스 개수` fields from the Naver editor.
+  - added one `검색어당 가져올 뉴스 개수` field.
+  - updated `static\app.js` so the single count writes both URL `display` and parser `loop_limit`.
+  - hid the generic `실행 단계` section on the Naver editor so its parser `limit` input cannot appear as a second count field.
+  - updated workflow normalization so stale mismatched payloads sync URL `display` from `loop_limit`.
+  - updated tests for single-count UI and normalization behavior.
+- validation:
+  - `node --check static\app.js`: pass.
+  - Python compile check with bytecode disabled: pass.
+  - focused web/workflow/Naver tests: 87 tests pass.
+  - full test suite: 92 tests pass.
+  - live editor HTML check: Naver panel present, `검색어당 가져올 뉴스 개수` present, generic `실행 단계` and parser `loop_limit` input absent, `API display` and old separate latest-count field absent.
+  - JS payload probe: count `1` produced `display=1` and `loop_limit=1`; count `100` produced `display=100` and `loop_limit=100`.
+- ruling:
+  - pass. Reviewer, QA, and auditor returned PASS after hiding the generic parser limit on the Naver editor.
+
+## Git Push Setup Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: configure the crawler product folder so the user can review Git state and run any push/merge command manually from VS Code.
+- completed:
+  - initialized Git repository in `C:\AI_JOB\firstproject\crawler_project\crawlService-main`.
+  - set branch to `main`.
+  - added remote `origin` initially as `https://github.com/hgz-902/test_crawl`; later corrected `origin` to `https://github.com/K-Ternag/crawlService`.
+  - hardened `.gitignore` for `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, and Office temporary `~$*` files.
+  - created initial local commit `Initial crawler project`.
+  - verified GitHub CLI auth is active for account `hgz-902`.
+- validation:
+  - `git status --short --branch`: clean on `main` before this checkpoint update.
+  - actual remote `https://github.com/K-Ternag/crawlService` is not empty and is not history-compatible with local `main`.
+  - `git ls-files` check found no `.env`, `.venv`, logs, outputs, QA artifacts, `$outDir`, or Office temp files tracked.
+  - secret scan found no real Naver key values in tracked source; only `.env.example` placeholders mention `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET`.
+- next user action:
+  - review the local/remote divergence and choose a branch/merge strategy; Codex should not directly run `git push` in the crawler-site delivery loop.
+- ruling:
+  - pass. Git is configured for manual user operation; direct push is intentionally outside the Codex process flow.
+
+## Origin Main Comparison Server Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: run the user's origin-main copy at `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main` on port 3001 for direct visual comparison.
+- completed:
+  - started the origin-main copy with the existing crawler virtualenv on `http://127.0.0.1:3001/`.
+  - patched only the origin copy's `crawler_app\web.py` template-response call style for compatibility with the currently installed FastAPI/Starlette version.
+  - updated process memory so Codex does not directly run `git push`; the user owns push/merge execution.
+- not done:
+  - no origin-main repository merge, rebase, force push, or product behavior change was performed.
+- next one action:
+  - user opens `http://127.0.0.1:3001/` and compares the origin UI with the current local crawler UI.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\MEMORY.md`
+  - `C:\AI_JOB\firstproject\memory\2026-05-14.md`
+- validation result or blocker:
+  - `GET /` returned 200 with title `설정 목록`.
+  - `GET /configs/네이버` returned 200 with title `Workflow 설정`.
+  - screenshot proof saved under `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\origin-main-3001-20260514`.
+  - local `main` and `origin/main` still have no merge base; Git push remains manual-user territory.
+
+## Test Naver Config Removal Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: remove the temporary `네이버뉴스_최태원_2페이지` crawler config before starting the next crawler target.
+- completed:
+  - deleted `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`.
+- not done:
+  - no runtime code, UI logic, Naver production config, or Git push was changed.
+- next one action:
+  - proceed to the next target-site crawler slice after the user chooses the target.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\네이버뉴스_최태원_2페이지.json`
+- validation result or blocker:
+  - file no longer exists.
+  - `GET http://127.0.0.1:3000/` returned 200 and did not contain `네이버뉴스_최태원_2페이지`.
+
+## Daum News Slice Checkpoint
+- date: 2026-05-14
+- status: in_progress.
+- current goal: implement and verify a bounded Daum news collection target for search terms `최태원` and `SK`.
+- completed:
+  - confirmed direct Daum news search HTML request redirects to CAPTCHA, so direct search-result scraping is not a stable primary path.
+  - confirmed official Kakao Daum Search public docs list Web, Video, Image, Blog, Book, and Cafe APIs, not a news-specific endpoint.
+  - selected implementation path: Kakao Daum Web Search API filtered to Daum news hosts, with `KAKAO_REST_API_KEY` read from environment.
+  - spawned Alpha developer worker for implementation.
+- not done:
+  - implementation handoff, reviewer/QA/auditor judgment, tests, browser proof, and live API validation.
+- next one action:
+  - integrate developer worker output and run focused tests.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main`
+  - expected new runtime module: `crawler_app\daum_news_api.py`
+  - expected config: `configs\다음.json`
+- validation result or blocker:
+  - current external blocker for live API smoke: `KAKAO_REST_API_KEY` has not yet been confirmed in the environment.
+
+## Daum News Slice Final Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: deliver a Daum news collection target that works from the UI with search terms `최태원` and `SK`.
+- completed:
+  - saved the user-provided Kakao REST API key into ignored local `.env`.
+  - implemented Daum parser support using Kakao Daum Web Search API, with query hint `site:v.daum.net` and explicit filtering to `news.daum.net` / `v.daum.net`.
+  - added `configs\다음.json` with search terms `최태원` and `SK`, `sort=recency`, and one count field mapped to `loop_limit=20`.
+  - added Daum-only editor UI panel and JavaScript config generation.
+  - kept Daum credentials out of UI/configs/logged headers; root and nested stale credential fields are stripped during normalization/save.
+  - hardened Daum API calls with no redirect following and post-response URL validation.
+  - disabled Daum API preview fetches to avoid accidental quota use.
+  - changed Daum per-term manifests to store relative item file paths.
+- not done:
+  - no git push was run; user owns push/merge execution.
+  - no article body scraping was added.
+- next one action:
+  - user can inspect `http://127.0.0.1:3000/configs/다음` and run the Daum crawler from the UI.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\다음.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\daum-news-ui-20260514`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 106 tests pass.
+  - live UI run `POST /configs/다음/run`: success, 40 items total (`최태원`: 20, `SK`: 20).
+  - latest live run HTML saved to `qa-artifacts\daum-news-ui-20260514\daum-run-live-final.html`.
+  - tracked-source secret scan found no provided Kakao key outside ignored `.env`.
+  - Alpha developer, reviewer, QA, and auditor worker flow completed; final reviewer/QA/audit passed after rework.
+
+## API Count Semantics Rework Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: make Naver/Daum news count behavior unambiguous from the UI by exposing one count field and using fixed provider fetch parameters internally.
+- completed:
+  - Naver fixed fetch parameters: `display=100`, `start=1`, `page_limit=1`; user-facing count maps only to `loop_limit`.
+  - Daum fixed fetch parameters: `size=50`, `page=1`, `page_limit=2`; user-facing count maps only to `loop_limit`.
+  - fixed Daum runtime so `loop_limit <= 50` no longer shrinks the fixed two-page fetch down to one page.
+  - fixed Naver sort persistence by saving `sort` in the parser step as well as the URL.
+  - made the Naver editor panel detect Naver API URL/step configs, including renamed or stale configs such as `네이버뉴스`.
+  - updated `configs\네이버뉴스.json` with fixed `display=100`, `page_limit=1`, and bounded `loop_limit=30`.
+  - changed Naver and Daum preview behavior to skip external API calls.
+  - stripped provider credentials from preview rerender payloads.
+  - changed Naver manifest `item_files` to relative `items\item_####.json` paths.
+- not done:
+  - no git push was run; user owns push/merge execution.
+- next one action:
+  - user can inspect `http://127.0.0.1:3000/configs/네이버`, `http://127.0.0.1:3000/configs/네이버뉴스`, and `http://127.0.0.1:3000/configs/다음`.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\api-count-fixed-20260514`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 112 tests pass.
+  - browser UI proof: Naver and Daum editors each show exactly one provider count field and no cross-provider panel pollution.
+  - bounded live Naver smoke: success, 3 saved records, runtime URL `display=100&start=1&sort=sim`, preview skipped external API.
+  - bounded live Daum smoke: success, 3 saved records, runtime URL `page=1&size=50`, final URL `page=2&size=50`, preview skipped external API.
+  - tracked-source/QA-artifact secret scan found no provided real API keys outside ignored `.env`.
+
+## Naver/Daum Cumulative Output Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal: prevent Naver/Daum API result JSON files from being reset or overwritten on repeated runs.
+- completed:
+  - changed Naver provider saves to write each run under `<term_dir>\items\YYYYMMDD_n`.
+  - changed Daum provider saves to write each run under `<term_dir>\items\YYYYMMDD_n`.
+  - changed workflow-level API manifests to write under `<output_dir>\runs\YYYYMMDD_n\workflow_records.json`.
+  - for Naver/Daum API parser runs, kept reported output paths under the root `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n` shape instead of `filter\<term>`.
+  - added UI run safety that blocks `output_dir` paths resolving outside the crawler project folder.
+- not done:
+  - no retention/quota cleanup policy was added; accumulated runs are intentionally preserved.
+  - no git push was run; user owns push/merge execution.
+- next one action:
+  - user can run Naver/Daum again from the UI and inspect the new dated run folder under the matching search-term directory.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\naver_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\daum_news_api.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\cumulative-output-20260514-after-review`
+- validation result or blocker:
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 116 tests pass.
+  - proof script confirmed:
+    - `qa-artifacts\cumulative-output-20260514-after-review\naver\002_SK\items\20260514_3\naver_news_api.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\daum\002_SK\items\20260514_3\daum_news_api.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\naver\runs\20260514_3\workflow_records.json`
+    - `qa-artifacts\cumulative-output-20260514-after-review\daum\runs\20260514_3\workflow_records.json`
+  - tracked-source secret scan found no provided real API keys outside ignored `.env`.
+
+## Google News RSS Slice Checkpoint
+- date: 2026-05-14
+- status: completed, pending user-owned git push.
+- current goal: implement Google News RSS collection for terms `Chey Tae-won` and `SK` using the original developer's `action=parser`, `attr=google` path.
+- completed:
+  - kept Google on RSS instead of adding an API key dependency.
+  - updated `configs\구글.json` to use Google News RSS with `q={search_term}`, English/US feed parameters, and search terms `Chey Tae-won` and `SK`.
+  - changed Google RSS saves to create per-item JSON files and a manifest under `<output_dir>\<NNN_search_term>\items\YYYYMMDD_n`.
+  - changed no-filter Google RSS workflow output to stay under the root term path, while keeping filtered Google compatibility.
+  - added Google RSS URL validation so `attr=google` only fetches `https://news.google.com` and does not follow redirects.
+  - added workflow `output_dir` containment so config-driven runs cannot write outside the crawler project directory.
+  - added regression tests for Google host validation, output-dir containment, dated run allocation, loop limits, and filtered/no-filter output behavior.
+- not done:
+  - no article-body or publisher-page crawling was added.
+  - no retention/cleanup policy was added for accumulated RSS outputs.
+  - no git push was run; user owns push execution.
+- next one action:
+  - user can review and push only the Google slice files, excluding unrelated `configs\산업부_보도자료.json`.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\구글.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\google_news_rss.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-news-rss-20260514-full`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m unittest tests.test_workflow -v`: 80 tests pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 119 tests pass.
+  - earlier live Google RSS proof with config `loop_limit=20`: success, 40 total records.
+  - follow-up live Google RSS proof with current saved config `loop_limit=5`: success, 10 total records; description cleanup scan found 0 HTML tag hits, 0 HTML entity hits, and 0 source-name suffix hits.
+  - proof paths:
+    - `qa-artifacts\google-news-rss-20260514-full\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-news-rss-20260514-full\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-news-rss-20260514-full\google\runs\20260514_1\workflow_records.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\001_Chey Tae-won\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\002_SK\items\20260514_1\google_news_rss.json`
+    - `qa-artifacts\google-rss-description-cleanup-current-config-20260514-v2\google\runs\20260514_1\workflow_records.json`
+  - Alpha developer, reviewer, QA, and auditor flow completed; auditor findings on URL/output containment were fixed and retested.
+  - Google RSS description cleanup follow-up completed; parser strips HTML tags/entities and Google RSS `<font>` source labels from `description` while keeping `source` separately.
+
+## TheBell Developer Worker Pre-Edit Gate
+- date: 2026-05-14
+- role: Alpha developer worker.
+- classification: non-trivial.
+- reason: adds a new parser provider, config, workflow dispatch, editor UI panel, and regression tests across runtime/output/UI paths.
+- Alpha wave required: yes; this session is the developer implementation worker evidence, not final ruling.
+- waiver: none.
+- next action: implement `attr=thebell` following existing Naver/Daum/Google parser patterns without reverting unrelated dirty files.
+
+## TheBell Uniform HTML Slice Checkpoint
+- date: 2026-05-14
+- status: superseded historical checkpoint. The later execution-step correction removed the TheBell parser-provider path from the active implementation.
+- run_id: `thebell-uniform-html-20260514`
+- alpha_session_key: `alpha-thebell-20260514`
+- budget guardrail:
+  - keep startup and discovery reads narrow to TheBell search/detail structure and existing parser/UI files.
+  - live proof should use a small page count first.
+- expensive-step warning:
+  - TheBell `SK` has many search results; page count directly multiplies article-detail requests.
+  - do not use article-count semantics for this slice.
+- hold threshold:
+  - hold if TheBell blocks article detail pages, if page URL semantics change, or if login/paywall text cannot be reliably separated from article body.
+- current goal:
+  - add TheBell collection for `최태원` and `SK` using page-count settings and per-article JSON output.
+- completed:
+  - confirmed search endpoint `search/search.asp` and result links under `div.searchResult div.newsList`.
+  - confirmed detail title/body candidates in `viewHead` and `viewSection`.
+  - confirmed visible body extraction must remove `newLoginBox`/login/paywall prompts.
+  - recorded contract, plan, classification, and hold ruling.
+- completed after implementation:
+  - added `crawler_app\thebell_news.py`.
+  - added workflow parser attr `thebell`.
+  - added TheBell-only editor panel and page-count config generation.
+  - added `configs\더벨.json`.
+  - added parser/workflow/web tests.
+  - live proof saved 10 records with `page_limit=1`.
+  - Alpha developer worker was attempted but stalled; main session completed the bounded implementation as an explicit fallback, then sent the result to reviewer, QA, and auditor workers.
+  - reviewer, QA, and auditor workers returned conditional pass.
+- not done:
+  - no git push was run; user owns push execution.
+  - no retention/robots/terms policy was implemented.
+- next one action:
+  - use the later TheBell execution-step and Generic News Storage Restore checkpoints as the current implementation contract.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\thebell_news.py crawler_app\workflow.py crawler_app\web.py tests\test_thebell_news.py tests\test_workflow.py tests\test_web.py`: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 136 tests pass.
+  - live proof: `qa-artifacts\thebell-live-20260514`, 10 records total, 5 for `최태원`, 5 for `SK`, no login/paywall/script phrase hits in saved body fields.
+  - UI proof: `qa-artifacts\thebell-ui-20260514\thebell-editor-3002.png` and `generic-editor-3002.png`.
+- superseded by:
+  - active TheBell UI/config now uses generic execution steps: `open_detail`, `extract_title`, `extract_body`.
+  - active TheBell output now follows Yonhap-style generic-news storage: `filter\<NNN_search_term>\texts\YYYYMMDD`.
+
+## TheBell Execution Step Correction Checkpoint
+- date: 2026-05-14
+- status: completed; supersedes the earlier TheBell-specific parser panel as the active UI/config path.
+- current goal:
+  - keep TheBell as a generic execution-step site and remove `download_file` from the TheBell workflow because TheBell has news articles, not attached press-release files.
+- completed:
+  - converted `configs\더벨.json` to `open_detail`, `extract_title`, and `extract_body`.
+  - removed TheBell-specific editor panel wiring and the `thebell` parser attr choice from the editor UI.
+  - kept general extract body cleanup via `exclude_xpath` for descendant removal.
+  - verified the visible TheBell editor rows contain no `download_file`.
+- not done:
+  - no git push was run; user owns push execution.
+- cleanup:
+  - removed the superseded `crawler_app\thebell_news.py` provider parser and `tests\test_thebell_news.py`.
+  - removed active workflow/web TheBell parser support so TheBell now routes through generic execution steps only.
+- next one action:
+  - continue future non-API/non-platform site work by cloning the 실행 단계 pattern from `산업부_보도자료` only where file-download steps truly apply.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\static\app.js`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\templates\editor.html`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_web.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+- validation result or blocker:
+  - `node --check static\app.js`: pass.
+  - `.venv\Scripts\python.exe -m py_compile crawler_app\workflow.py crawler_app\web.py tests\test_workflow.py tests\test_web.py`: pass.
+  - focused TheBell editor/save and extract cleanup tests: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 123 tests pass after removing superseded TheBell parser tests.
+  - live proof: `qa-artifacts\thebell-workflow-steps-20260514`, 5 records for `최태원`, `downloaded 0`, `extracted 10`.
+  - UI proof: `qa-artifacts\thebell-workflow-ui-20260514\thebell-editor.png`; row inspection showed only `open_detail`, `extract_title`, `extract_body`.
+
+## TheBell Output Accumulation And Items Limit Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - verify TheBell `items` limit 10 on the user-confirmed NEWS page while preserving the existing 3-step UI shape; storage-path changes from this checkpoint were later superseded by the Yonhap restore checkpoint below.
+- completed:
+  - tested a per-search-term `items\YYYYMMDD_n` routing idea, then superseded it after comparing with origin Yonhap storage.
+  - kept the useful part: relocation avoids overwriting an existing target path and leaves already-final target-root files in place.
+  - generic workflow manifests were restored to origin-compatible `filter\workflow_records.json`.
+  - restored `configs\더벨.json` to the existing `open_detail`, `extract_title`, `extract_body` shape after user clarified no new execution step was requested.
+  - changed the start URL from broad `section=ALL` to minimal `section=NEWS`, which is what makes the page show 10 news items.
+  - clarified in config notes that `open_detail.loop_limit` is current-page article count.
+- design notes and tradeoffs:
+  - `items` mode means "repeat rows on the current page"; it cannot collect beyond the current result page by itself.
+  - The old one-step TheBell config used `items` on the ALL search page, which only exposed 5 news rows, so limit 10 appeared to be ignored.
+  - Moving only the start URL to the NEWS search view exposes 10 news rows per page while preserving the existing UI.
+  - Extra parameters from the user's inspected URL were tested; date/detail-search extras did not affect item count, so they were not added.
+- related files/paths:
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\crawler_app\workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\configs\더벨.json`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\tests\test_workflow.py`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\thebell-items-only-20260514`
+  - `C:\AI_JOB\firstproject\crawler_project\crawlService-main\qa-artifacts\thebell-output-items-ui-20260514`
+- validation result or blocker:
+  - URL comparison proof: provided URL, no-date URL, minimal NEWS URL each produced 10 items; old ALL URL produced 5.
+  - `items` proof: success, 10 records, 0 downloads, 20 extracted title/body files.
+  - final storage proof is the later Yonhap-style proof under `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514`.
+  - UI proof: `qa-artifacts\thebell-output-items-ui-20260514\thebell-editor-items.png`; rows showed only `open_detail`, `extract_title`, `extract_body`.
+  - `node --check static\app.js`: pass.
+  - Python compile check: pass.
+  - focused output/pagination tests: pass.
+  - latest `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+
+## Generic News Storage Restore Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - align TheBell/news generic execution-step storage with the origin Yonhap path structure and reserve `산업부_보도자료` as the reference for government/attachment sites.
+- completed:
+  - checked origin Yonhap config and workflow in `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed origin Yonhap stores generic extracted text under `outputs\yna\filter\001_default\texts\YYYYMMDD\...txt` and manifest at `outputs\yna\filter\workflow_records.json`.
+  - restored current generic workflow term output dir from `filter\<term>\items\YYYYMMDD_n` back to `<output_dir>\<term>` during execution and `filter\<term>` after relocation.
+  - restored generic workflow manifest from `filter\runs\YYYYMMDD_n\workflow_records.json` back to `filter\workflow_records.json`.
+  - kept safer relocation behavior to avoid overwriting same-named target files.
+- design notes and tradeoffs:
+  - News sites should follow Yonhap-style generic text extraction paths to reduce surprise for the development team.
+  - Government/attachment sites should follow `산업부_보도자료` as the reference because they combine text extraction and `download_file`.
+  - The downside is generic `workflow_records.json` is not run-versioned; this matches origin behavior but the latest manifest overwrites the previous manifest.
+  - Repeated extracted text files can still accumulate because `_save_extract_outputs` and safer relocation produce unique file names when collisions happen.
+- validation result or blocker:
+  - TheBell live proof: 10 records, output at `qa-artifacts\thebell-yonhap-path-20260514\filter\001_최태원\texts\20260514\...txt`.
+  - manifest proof: `qa-artifacts\thebell-yonhap-path-20260514\filter\workflow_records.json`.
+  - focused tests: pass.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+  - `node --check static\app.js`: pass.
+
+## Source Change Guardrail Checkpoint
+- date: 2026-05-14
+- status: active guardrail.
+- current goal:
+  - protect the crawler program from unnecessary source-code churn until all crawler site work is complete.
+- completed:
+  - added `SOURCE_CHANGE_GUARDRAIL.md`.
+  - recorded that original source/code behavior must be checked from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - recorded default config/XPath-only onboarding for new sites.
+  - recorded baseline split: news sites follow original Yonhap behavior; government/attachment sites follow `산업부_보도자료`; Naver/Daum remain API-backed exceptions.
+  - linked the guardrail from `TASK_CONTRACT.md`.
+- next one action:
+  - before the next crawler site implementation, classify the target site and check the closest origin baseline before proposing any source-code edit.
+- validation result or blocker:
+  - documentation-only guardrail; no runtime test needed.
+
+## Google RSS Source-Change Reassessment
+- date: 2026-05-14
+- status: assessed; no implementation change.
+- current goal:
+  - decide whether Google News RSS should remain a parser exception or be treated like a generic XPath-only news site.
+- completed:
+  - checked origin path `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed origin already contains `configs\구글.json`, `crawler_app\google_news_rss.py`, and `action=parser`, `attr=google`.
+  - tested a generic XPath preview against Google RSS with `//item[1]` / `//item[2]`; current generic preview failed before XPath matching because Google RSS XML with an encoding declaration is passed through the HTML parser path.
+  - confirmed generic execution steps save extracted text/html artifacts, while the RSS parser returns structured fields such as title, link, pubDate, source, description, and guid.
+- decision notes:
+  - Google RSS is not API-backed like Naver/Daum, but it is also not an HTML news page like Yonhap/TheBell.
+  - Treat Google as an origin-existing RSS/platform-backed exception.
+  - Future Google changes should prefer config changes such as search terms, locale URL parameters, and item limit; parser/source changes require a recorded RSS-specific reason.
+- validation result or blocker:
+  - generic XPath preview probe failed with XML/HTML parser mismatch; no source code was changed.
+
+## MarketInsight News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add MarketInsight collection for `최태원` and `SK`, fix the existing `open_detail` pagination mode, and verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin `연합뉴스` config from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main`.
+  - confirmed MarketInsight search endpoint: `https://marketinsight.hankyung.com/search?keyword={search_term}`.
+  - confirmed search results repeat under `ul.news-list li`, with detail links at `h3.news-tit a`.
+  - confirmed article details expose title under `article.article-view .article-head h1` and body under `article.article-view .article-body`.
+  - added `configs\마켓인사이트.json`.
+  - fixed workflow behavior so `open_detail` can stay as the first and only click loop with `loop_mode=pagination`, `pagination_mode=page_number`, and `loop_limit=2`.
+  - kept `next_button` available but changed pagination UI defaults to `page_number`.
+  - kept output accumulation source-code change canceled per user request; the only shared source-code change left is the `open_detail` pagination behavior fix.
+- design notes and tradeoffs:
+  - a shared source-code change is needed because the existing UI already exposes `pagination` mode on `open_detail`, but the workflow engine did not interpret that mode as "collect pages 1..limit using the item XPath pair."
+  - MarketInsight is a news-style HTML execution-step site, not API-backed and not RSS/platform-backed.
+  - current config collects up to 2 pages per search term.
+  - `open_detail.loop_limit` is the user-facing page-count setting when `open_detail.loop_mode=pagination`.
+  - per-page items are inferred from the `open_detail` XPath pair.
+  - `page_number` is now the default pagination mode because it is clearer and more stable for URL/page-parameter sites; `next_button` remains available for sites that require it.
+- next one action:
+  - wait for the user's push-prep instruction; do not push automatically.
+- validation result or blocker:
+  - smoke proof succeeded under `qa-artifacts\marketinsight-smoke-20260514`: 4 records, 8 extracted title/body files.
+  - full first-page live proof succeeded under `qa-artifacts\marketinsight-live-20260514`: 30 records, 60 extracted title/body files, 0 downloads, no workflow errors.
+  - pagination live proof succeeded under `qa-artifacts\marketinsight-open-detail-pagination-20260514`: 60 records, 120 extracted title/body files, 0 downloads, no workflow errors.
+  - pagination evidence: `click_loop_step_indexes` was `[1]`; the first record started from `page=1` and the last SK record started from `https://marketinsight.hankyung.com/search?keyword=SK&page=2`.
+  - output followed generic news/Yonhap-style storage: `filter\<NNN_search_term>\texts\YYYYMMDD` and `filter\workflow_records.json`.
+  - pagination UI proof succeeded under `qa-artifacts\marketinsight-open-detail-pagination-ui-20260514`: editor page contained only `open_detail`, `extract_title`, and `extract_body`; `open_detail` had `pagination/page_number/limit=2`; Naver/Daum-specific panels were absent.
+  - latest `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - latest `node --check static\app.js`: pass.
+  - TestClient render check: `/configs/new` defaults `pagination_mode` to `page_number`, not `next_button`.
+  - UI proof succeeded under `qa-artifacts\marketinsight-ui-20260514`: list contained `마켓인사이트`, editor opened, generic steps were present, and Naver/Daum-specific panels were absent.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 124 tests pass.
+  - `node --check static\app.js`: pass.
+  - no blocker.
+
+## InvestChosun News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add InvestChosun collection for `최태원` and `SK` using the existing generic news execution-step flow, then verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin news baseline from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - confirmed InvestChosun search URL uses `q` for the search term and `pn` for the page number.
+  - added `configs\인베스트조선.json`.
+  - configured `open_detail`, `extract_title`, and `extract_body` only; no `download_file`, provider parser, UI panel, or shared source-code change.
+  - adjusted article list XPath to a direct repeatable path so loop inference resolves all 10 current-page items.
+  - removed image-expand and ranking/recommendation blocks from body extraction with config `exclude_xpath`.
+- still not done:
+  - no git push was run.
+- next one action:
+  - if the user wants to push, use `$git-push-change-log` and stage only intended files for this site plus any already-approved unpushed commit state.
+- related files/paths:
+  - `configs\인베스트조선.json`
+  - `qa-artifacts\investchosun-live-20260514-v2\summary.json`
+  - `qa-artifacts\investchosun-ui-20260514\ui_result.json`
+  - `qa-artifacts\investchosun-ui-20260514\editor-3020.png`
+- validation result or blocker:
+  - live proof succeeded: 40 records total, `최태원` 20 and `SK` 20, pages `[1, 2]`, 80 extracted title/body files, 0 downloads.
+  - body cleanup proof: `이미지 크게보기` and `많이 본 뉴스` were absent from verified body extracts.
+  - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+
+## Signal News Config Checkpoint
+- date: 2026-05-14
+- status: completed.
+- current goal:
+  - add Signal collection using the existing generic news execution-step flow, with `최태원` and `SK` as the verified initial proof terms, then verify before user-owned push.
+- completed:
+  - checked `SOURCE_CHANGE_GUARDRAIL.md`.
+  - checked origin news baseline from `C:\AI_JOB\firstproject\crawler_project\origin\crawlService-main\configs\연합뉴스.json`.
+  - confirmed Signal search URL uses `word` for the search term and `page` for the page number; the saved config keeps concrete `page=1` so items mode also works.
+  - added `configs\시그널.json`.
+  - configured `open_detail`, `extract_title`, and `extract_body` only; no `download_file`, provider parser, UI panel, or shared source-code change.
+  - configured member-only search result exclusion through `open_detail.exclude_xpath`.
+  - configured body image/paid-preview exclusion through `extract_body.exclude_xpath`.
+- still not done:
+  - no git push was run.
+- next one action:
+  - if the user wants to push, use `$git-push-change-log` and stage only intended files for this site plus explicitly approved dirty files.
+- related files/paths:
+  - `configs\시그널.json`
+  - `qa-artifacts\signal-live-20260514\summary.json`
+  - `qa-artifacts\signal-ui-20260514\ui_result.json`
+  - `qa-artifacts\signal-ui-20260514\editor-3020.png`
+- validation result or blocker:
+  - live proof succeeded: 33 accessible records total, `최태원` 14 and `SK` 19, pages `[1, 2]`, 66 extracted title/body files, 0 downloads.
+  - body cleanup proof: `회원 전용기사`, `signal 이 기사는`, and `가장 많이 읽은` were absent from verified body extracts.
+  - UI proof confirmed generic 3-step editor and no Naver/Daum provider panels.
+  - user-run failure diagnosis: saved config had `open_detail.loop_mode=items` while `start_url` still contained `{page_number}`, so items mode visited a nonconcrete page URL and found 0 board items.
+  - fix: changed `start_url` to `https://signal.sedaily.com/search?word={search_term}&page=1`; pagination mode still rewrites the `page` query parameter, while items mode now uses page 1.
+  - mode proof after fix: `qa-artifacts\signal-mode-check-20260514\summary.json`; `items` succeeded with 6 records, `pagination` succeeded with 33 records.
+  - `.venv\Scripts\python.exe -m unittest discover -s tests`: 127 tests pass.
+  - `node --check static\app.js`: pass.
+
+## Batch Job Orchestrator And Completion Email Checkpoint
+- date: 2026-05-15
+- run_id: `crawler-alpha-20260515-batch-orchestrator`
+- alpha_session_key: `alpha-crawler-20260515-batch`
+- alpha_topic_instance_key: `crawler-batch-orchestrator-email-20260515`
+- alpha_worker_namespace: `crawler-alpha-batch`
+- current goal:
+  - add an operator page that turns existing crawler configs into interval-based batch jobs and sends completion email notifications.
+- completed:
+  - baseline project structure inspected.
+  - full pre-change test suite passed: 127 tests.
+  - Alpha pre-edit gate recorded as non-trivial with worker flow required.
+  - threat model and security checklist created for scheduler/email risks.
+- completed after implementation:
+  - added file-backed job state and JSONL history.
+  - added `/jobs` page for enable/disable, interval minutes, run-now, status, last/next run, and email state.
+  - added in-app async scheduler with per-job lock, global concurrency cap, stale job pruning, interrupted-run recovery, and shutdown timeout.
+  - changed existing config-list run route to use the scheduler path so manual runs share the same lock/cap/history.
+  - added env-gated SMTP completion email to `bloodknihts@gmail.com`; disabled by default.
+  - added unsafe cross-origin POST rejection.
+  - added tests for job persistence, stale pruning, interrupted recovery, interval reschedule, exception handling, route delegation, and cross-origin rejection.
+  - browser QA confirmed `/jobs` renders 37 rows with enable checkboxes and interval inputs.
+- not done:
+  - OS-level Windows Task Scheduler registration, authentication/login, and real SMTP send smoke.
+- next one action:
+  - final Alpha recheck and final report.
+- related paths:
+  - `crawler_app\web.py`
+  - `crawler_app\job_store.py`
+  - `crawler_app\scheduler.py`
+  - `crawler_app\emailer.py`
+  - `templates\jobs.html`
+  - `tests\test_jobs.py`
+- validation result or blocker:
+  - baseline `.venv\Scripts\python.exe -m unittest discover -s tests`: pass, 127 tests.
+  - latest `python -m unittest discover -s tests`: pass, 140 tests.
+  - `node --check static\app.js`: pass.
+  - local `/jobs` smoke: `http://127.0.0.1:3015/jobs` returned 200.
+  - browser proof: `qa-artifacts\batch-jobs-ui-20260515\result.json`, `qa-artifacts\batch-jobs-ui-20260515\jobs-page.png`.
+
+### Developer Worker Reentry - Codex
+- date: 2026-05-15
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: scheduler execution, persisted job state, email behavior, routes, templates, styles, docs, and tests are all affected.
+  - Alpha wave required: yes; current chat is explicitly the Alpha developer worker implementation task.
+  - waiver: none.
+  - next action: implement the requested conservative in-app async scheduler slice and hand off with tests.

@@ -1,0 +1,42 @@
+{
+  "name": "보건복지",
+  "start_url": "https://www.mohw.go.kr/board.es?mid=a10503010100&bid=0027",
+  "output_dir": "outputs/mohw",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"contents_body\"]/div[3]/table/tbody/tr[1]/td[2]/a",
+      "xpath_2": "//*[@id=\"contents_body\"]/div[3]/table/tbody/tr[2]/td[2]/a",
+      "loop": true,
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"contents_body\"]/article/div[1]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"contents_body\"]/article/div[2]/ul/li[1]/span[2]/a[1]",
+      "xpath_2": "//*[@id=\"contents_body\"]/article/div[2]/ul/li[2]/span[2]/a[1]",
+      "loop": true,
+      "action": "download",
+      "attr": "href",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-28T18:00:01+09:00",
+  "updated_at": "2026-04-28T18:00:54+09:00"
+}

@@ -1,0 +1,37 @@
+.env
+.env.*
+!.env.example
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime logs
+logs/
+*.log
+crawler_jobs.json
+crawler_jobs.jsonl
+outputs/
+qa-artifacts/
+$outDir/
+qa-server-*.pid
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+~$*

@@ -1,0 +1,33 @@
+{
+  "name": "중국산업정보부",
+  "start_url": "https://www.most.gov.cn/xxgk/xinxifenlei/zfxxgkzd/",
+  "output_dir": "outputs/mostgovcn",
+  "timeout_ms": 100000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "어떤 게시판을 크롤링 할지 확인 필요 일단 정보공개 > 정부정보공개시스템 리스트 가져옴 20260428",
+  "search_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/div[1]/div[3]/div[2]/div[2]/div[2]/ul/li[1]/a",
+      "xpath_2": "/html/body/div[1]/div[3]/div[2]/div[2]/div[2]/ul/li[2]/a",
+      "loop": true,
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "/html/body/div[6]/div/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-28T18:08:26+09:00",
+  "updated_at": "2026-04-28T18:08:52+09:00"
+}

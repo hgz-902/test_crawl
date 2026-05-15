@@ -1,0 +1,31 @@
+{
+  "name": "국무회의_보도자료",
+  "start_url": "https://www.korea.kr/briefing/pressReleaseList.do",
+  "output_dir": "outputs/korea_release",
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "jpg, odt 등 예외 파일 다운로드 안됨",
+  "search_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"container\"]/div/div/div/div[2]/ul/li[1]/a",
+      "xpath_2": "//*[@id=\"container\"]/div/div/div/div[2]/ul/li[2]/a",
+      "loop": true,
+      "loop_limit": 3,
+      "action": "click",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"container\"]/div[2]/div/div[1]/div[2]/dl/dd/p[1]/span[2]/a[2]",
+      "xpath_2": "//*[@id=\"container\"]/div[2]/div/div[1]/div[2]/dl/dd/p[2]/span[2]/a[2]",
+      "loop": true,
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-04-28T14:50:30+09:00",
+  "updated_at": "2026-04-28T14:56:43+09:00"
+}

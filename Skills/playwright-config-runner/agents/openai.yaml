@@ -1,0 +1,4 @@
+interface:
+  display_name: "Playwright Config Runner"
+  short_description: "Run and debug JSON Playwright configs"
+  default_prompt: "Use $playwright-config-runner to run or debug a configs/*.json Playwright crawler and report the errors and config fixes."

@@ -1,0 +1,59 @@
+{
+  "name": "시그널",
+  "start_url": "https://signal.sedaily.com/search?word={search_term}&page=1",
+  "output_dir": "outputs/signal",
+  "timeout_ms": 60000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "시그널은 일부 회원 전용 기사를 제외하고 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다.",
+  "search_terms": [
+    "최태원",
+    "SK",
+    "SK이노베이션",
+    "SK E&S",
+    "SK에너지",
+    "SK지오센트릭",
+    "SK어스온",
+    "SK엔무브",
+    "SK아이이테크놀로지",
+    "SK인천석유화학",
+    "SK온",
+    "대한상의"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//ul[contains(@class, 'news_list')]/li[1]/div/dl/dt/a",
+      "xpath_2": "//ul[contains(@class, 'news_list')]/li[2]/div/dl/dt/a",
+      "exclude_xpath": ".//*[contains(@class, 'lock')] | .//*[contains(normalize-space(.), '회원 전용기사')]",
+      "loop": true,
+      "loop_mode": "pagination",
+      "loop_limit": 2,
+      "pagination_mode": "page_number",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id='mainTitle']",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//div[contains(@class, 'view_con')]",
+      "exclude_xpath": ".//div[contains(@class, 'article-photo-wrap')] | .//div[contains(@class, 'preview_pop')]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-14T20:50:00+09:00",
+  "updated_at": "2026-05-14T21:02:21+09:00"
+}

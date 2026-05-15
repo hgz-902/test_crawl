@@ -1,0 +1,48 @@
+{
+  "name": "인베스트조선",
+  "start_url": "https://www.investchosun.com/svc/news/search.html?q={search_term}&pn={page_number}",
+  "output_dir": "outputs/investchosun",
+  "timeout_ms": 60000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "인베스트조선은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다.",
+  "search_terms": [
+    "최태원",
+    "SK"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//ul[contains(@class, 'search-list')]/li[1]/div[contains(@class, 'list_detail')]/dl/dt/a",
+      "xpath_2": "//ul[contains(@class, 'search-list')]/li[2]/div[contains(@class, 'list_detail')]/dl/dt/a",
+      "loop": true,
+      "loop_mode": "pagination",
+      "loop_limit": 2,
+      "pagination_mode": "page_number",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//div[contains(@class, 'art_title')]/div[contains(@class, 'title')]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//div[@id='article']",
+      "exclude_xpath": ".//div[contains(@class, 'center_img')] | .//div[contains(@class, 'ranking')]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-14T21:00:00+09:00",
+  "updated_at": "2026-05-14T20:36:59+09:00"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "트위터X",
+  "start_url": "https://x.com/?lang=ko",
+  "output_dir": "outputs/xdot",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "로그인, 크롤링 보안 우회 개발 필요",
+  "search_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//a[1]",
+      "loop": false,
+      "action": "click",
+      "wait_state": "visible"
+    }
+  ],
+  "created_at": "2026-04-29T09:28:54+09:00",
+  "updated_at": "2026-04-29T09:28:54+09:00"
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Crawler Manager{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Crawler Manager</a>
+      <nav>
+        <a href="/">설정 목록</a>
+        <a href="/jobs">배치 JOB</a>
+        <a href="/configs/new">새 설정</a>
+      </nav>
+    </header>
+    <main class="shell">
+      {% block content %}{% endblock %}
+    </main>
+    <script src="{{ url_for('static', path='app.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+{% block title %}배치 JOB{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>배치 JOB 오케스트레이터</h1>
+  </div>
+  <a class="button" href="/">설정 목록</a>
+</section>
+
+{% if saved %}
+<div class="notice success">배치 JOB 설정을 저장했습니다.</div>
+{% endif %}
+{% if ran %}
+<div class="notice success">{{ ran }} 실행 요청이 완료되었습니다.</div>
+{% endif %}
+
+<section class="panel">
+  <div class="job-summary">
+    <div>
+      <h2>자동 실행 상태</h2>
+      <p>FastAPI 앱이 실행 중일 때 활성화된 JOB을 주기적으로 확인합니다.</p>
+    </div>
+    <div class="job-mail-state {% if smtp_configured %}ready{% else %}muted{% endif %}">
+      {% if smtp_configured %}
+      완료 이메일 활성화
+      {% else %}
+      완료 이메일 비활성화
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% if jobs %}
+<form method="post" action="/jobs">
+  <div class="table-wrap">
+    <table class="configs-table jobs-table">
+      <thead>
+        <tr>
+          <th class="center-col">활성</th>
+          <th>크롤링 설정</th>
+          <th>간격(분)</th>
+          <th>마지막 상태</th>
+          <th>최근 완료</th>
+          <th>다음 실행</th>
+          <th>수집</th>
+          <th>작업</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td class="center-col">
+            <input type="checkbox" name="enabled" value="{{ job.config_id }}" {% if job.enabled %}checked{% endif %} aria-label="{{ job.config.name }} 활성화">
+          </td>
+          <td>
+            <strong>{{ job.config.name }}</strong>
+            <div class="muted-text">{{ job.config.start_url }}</div>
+          </td>
+          <td>
+            <input class="interval-input" type="number" name="interval_{{ job.config_id }}" min="1" value="{{ job.interval_minutes }}">
+          </td>
+          <td>
+            <span class="status-pill status-{{ job.last_status }}">{{ "running" if job.running else job.last_status }}</span>
+            {% if job.last_error %}
+            <div class="job-error">{{ job.last_error }}</div>
+            {% endif %}
+          </td>
+          <td class="muted-text">{{ job.last_finished_at or "-" }}</td>
+          <td class="muted-text">{{ job.next_run_at or "-" }}</td>
+          <td class="center-col">{{ job.last_items_count }}</td>
+          <td class="actions">
+            <button formmethod="post" formaction="/jobs/{{ job.config_id }}/run" type="submit" data-confirm="{{ job.config.name }} JOB을 지금 실행할까요? 외부 사이트 접속과 파일 저장이 발생할 수 있습니다.">지금 실행</button>
+            <a class="button" href="/configs/{{ job.config_id }}">편집</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="sticky-actions">
+    <button class="primary" type="submit">JOB 설정 저장</button>
+  </div>
+</form>
+{% else %}
+<div class="empty">등록된 크롤러 설정이 없습니다. 먼저 새 설정을 만들어 주세요.</div>
+{% endif %}
+{% endblock %}
