@@ -50,7 +50,6 @@
 <form id="config-form" method="post" action="/configs">
   <input type="hidden" name="payload" id="payload">
   <input type="hidden" name="original_id" value="{{ config_id }}">
-  <script type="application/json" id="initial-config-json">{{ config | tojson }}</script>
 
   <section class="panel">
     <h2>기본정보</h2>
@@ -90,71 +89,6 @@
     </details>
   </section>
 
-  {% if show_naver_api_panel %}
-  <section class="panel">
-    <details class="collapsible-panel" open>
-      <summary>
-        <h2>Naver News API</h2>
-        <span class="collapsible-toggle" aria-hidden="true">
-          <span class="collapsible-hint">접기/펼치기</span>
-          <span class="collapsible-icon">▾</span>
-        </span>
-      </summary>
-      <div class="collapsible-body">
-        <label class="check">
-          <input type="checkbox" data-naver-enabled>
-          Naver API 패널 사용
-        </label>
-        <div class="grid naver-grid">
-          <label>정렬
-            <select data-naver-sort>
-              <option value="date">date (최신순)</option>
-              <option value="sim">sim (정확도순)</option>
-            </select>
-          </label>
-          <label>검색어당 가져올 뉴스 개수
-            <input type="number" min="1" max="100" data-naver-count value="20">
-          </label>
-          <input type="hidden" data-naver-page-limit value="1">
-        </div>
-      </div>
-    </details>
-  </section>
-  {% endif %}
-
-  {% if show_daum_api_panel %}
-  <section class="panel">
-    <details class="collapsible-panel" open>
-      <summary>
-        <h2>Daum News API</h2>
-        <span class="collapsible-toggle" aria-hidden="true">
-          <span class="collapsible-hint">접기/펼치기</span>
-          <span class="collapsible-icon">▾</span>
-        </span>
-      </summary>
-      <div class="collapsible-body">
-        <label class="check">
-          <input type="checkbox" data-daum-enabled>
-          Daum API 패널 사용
-        </label>
-        <div class="grid naver-grid">
-          <label>정렬
-            <select data-daum-sort>
-              <option value="recency">recency (최신순)</option>
-              <option value="accuracy">accuracy (정확도순)</option>
-            </select>
-          </label>
-          <label>검색어당 가져올 뉴스 개수
-            <input type="number" min="1" max="100" data-daum-count value="20">
-          </label>
-          <input type="hidden" data-daum-page-limit value="2">
-        </div>
-      </div>
-    </details>
-  </section>
-  {% endif %}
-
-  {% if not show_naver_api_panel and not show_daum_api_panel %}
   <section class="panel">
     <div class="section-row">
       <h2>실행 단계</h2>
@@ -261,8 +195,8 @@
             <label class="step-pagination-mode">
               <span>page</span>
               <select data-step-prop="pagination_mode" {% if step.action == "parser" %}disabled{% endif %}>
-                <option value="page_number" {% if not step.pagination_mode or step.pagination_mode == "page_number" %}selected{% endif %}>page_number</option>
-                <option value="next_button" {% if step.pagination_mode == "next_button" %}selected{% endif %}>next_button</option>
+                <option value="next_button" {% if not step.pagination_mode or step.pagination_mode == "next_button" %}selected{% endif %}>next_button</option>
+                <option value="page_number" {% if step.pagination_mode == "page_number" %}selected{% endif %}>page_number</option>
                 {% if step.pagination_mode and step.pagination_mode not in ["next_button", "page_number"] %}
                 <option value="{{ step.pagination_mode }}" selected>{{ step.pagination_mode }}</option>
                 {% endif %}
@@ -320,7 +254,6 @@
       {% endfor %}
     </div>
   </section>
-  {% endif %}
 
   <section class="panel">
     <details class="collapsible-panel">

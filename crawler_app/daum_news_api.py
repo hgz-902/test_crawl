@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -54,12 +53,7 @@ def fetch_daum_news_api_items(
             raise ValueError("Daum Web Search API redirected unexpectedly; aborting to avoid credential leakage.")
         _validate_daum_api_url(response.url)
         final_url = response.url
-        discovered.extend(
-            parse_daum_web_search_items(
-                response.content,
-                allowed_domains=allowed_domains,
-            )
-        )
+        discovered.extend(parse_daum_web_search_items(response.content, allowed_domains=allowed_domains))
 
     deduped: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -136,50 +130,26 @@ def save_daum_news_api_items(
     allowed_domains: tuple[str, ...] = DEFAULT_NEWS_DOMAINS,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    items_dir = output_dir / "items"
-    run_dir = _next_daily_run_dir(items_dir)
-
-    item_files: list[str] = []
-    for index, item in enumerate(items, start=1):
-        item_name = f"item_{index:04d}.json"
-        item_path = run_dir / item_name
-        item_path.write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
-        item_files.append(item_name)
-
     payload = {
         "search_term": search_term,
         "api_url": api_url,
         "final_url": final_url,
         "item_count": len(items),
         "filter_terms": filter_terms or [],
-        "item_files": item_files,
         "source_provider": "kakao_daum_web_search",
         "source_note": "Filtered to Daum News domains (news.daum.net, v.daum.net).",
         "allowed_domains": list(allowed_domains),
+        "items": items,
     }
-    output_path = run_dir / file_name
+    output_path = output_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
-
-
-def _next_daily_run_dir(items_dir: Path) -> Path:
-    today = date.today().strftime("%Y%m%d")
-    for index in range(1, 10000):
-        candidate = items_dir / f"{today}_{index}"
-        try:
-            candidate.mkdir(parents=True, exist_ok=False)
-            return candidate
-        except FileExistsError:
-            continue
-    raise RuntimeError(f"Could not allocate daily Daum output directory under {items_dir}.")
 
 
 def _headers() -> dict[str, str]:
     rest_api_key = os.environ.get(KAKAO_REST_API_KEY_ENV, "").strip()
     if not rest_api_key:
-        raise ValueError(
-            "KAKAO_REST_API_KEY must be set in the environment to call the Kakao Daum Web Search API."
-        )
+        raise ValueError("KAKAO_REST_API_KEY must be set in the environment to call the Kakao Daum Web Search API.")
 
     return {
         "User-Agent": USER_AGENT,
@@ -271,6 +241,7 @@ def _is_allowed_domain(host: str, allowed_domains: tuple[str, ...]) -> bool:
 def _clean_text(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", unescape(text)).strip()
+
 
 def _safe_int(value: str | None, *, default: int, minimum: int) -> int:
     try:

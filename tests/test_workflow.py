@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,7 +15,6 @@ from crawler_app.workflow import (
     _config_click_loop_step_indexes,
     _config_filter_terms,
     _config_primary_loop_step_index,
-    _config_primary_loop_is_paginated_items,
     _config_primary_loop_mode,
     _config_search_terms,
     _download_multiple_step,
@@ -30,17 +28,13 @@ from crawler_app.workflow import (
     _resolve_board_loop_items,
     _resolve_board_loop_item_numbers,
     _resolve_step_xpath,
-    _render_page_url,
     _render_template_value,
-    _relocate_path,
     _save_extract_outputs,
     _select_board_item_scope,
-    _step_value,
     _build_board_loop_spec,
     _attach_dialog_handler,
     _run_nested_click_loops,
     _run_nested_pagination_click_loops,
-    _run_paginated_item_loops,
     _run_one_item,
     _run_step,
     preview_workflow_config,
@@ -49,14 +43,9 @@ from crawler_app.workflow import (
     normalize_workflow_config,
     validate_workflow_config,
 )
-from crawler_app.google_news_rss import parse_google_news_rss_items, save_google_news_rss_items
+from crawler_app.daum_news_api import parse_daum_web_search_items
+from crawler_app.google_news_rss import parse_google_news_rss_items
 from crawler_app.naver_news_api import fetch_naver_news_api_items, parse_naver_news_api_items
-
-
-def temporary_project_output_dir() -> tempfile.TemporaryDirectory[str]:
-    base_dir = Path(__file__).resolve().parent.parent / "outputs" / ".test"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return tempfile.TemporaryDirectory(dir=base_dir)
 
 
 class FakeResponse:
@@ -704,43 +693,6 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         validate_workflow_config(config)
 
-    def test_validate_workflow_config_allows_pagination_mode_on_item_anchors(self) -> None:
-        config = {
-            "name": "sample",
-            "start_url": "https://example.com/search?keyword={search_term}",
-            "output_dir": "outputs/sample",
-            "steps": [
-                {
-                    "name": "open_detail",
-                    "xpath": "//ul/li[1]/a",
-                    "xpath_2": "//ul/li[2]/a",
-                    "action": "click",
-                    "loop": True,
-                    "loop_mode": "pagination",
-                    "pagination_mode": "page_number",
-                    "loop_limit": 2,
-                },
-                {"name": "extract_body", "xpath": "//article", "action": "extract", "attr": "text"},
-            ],
-        }
-
-        validate_workflow_config(config)
-        self.assertTrue(_config_primary_loop_is_paginated_items(config))
-
-    def test_render_page_url_adds_or_replaces_page_parameter(self) -> None:
-        self.assertEqual(
-            _render_page_url("https://example.com/search?keyword={search_term}", "SK", 2),
-            "https://example.com/search?keyword=SK&page=2",
-        )
-        self.assertEqual(
-            _render_page_url("https://example.com/search?page=1&keyword={search_term}", "최태원", 3),
-            "https://example.com/search?page=3&keyword=%EC%B5%9C%ED%83%9C%EC%9B%90",
-        )
-        self.assertEqual(
-            _render_page_url("https://example.com/search?keyword={search_term}&p={page_number}", "SK", 4),
-            "https://example.com/search?keyword=SK&p=4",
-        )
-
     def test_validate_workflow_config_rejects_pagination_loop_after_first_step(self) -> None:
         config = {
             "name": "sample",
@@ -922,36 +874,6 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         validate_workflow_config(config)
 
-    def test_validate_workflow_config_rejects_google_rss_parser_non_google_url(self) -> None:
-        config = {
-            "name": "google",
-            "start_url": "https://example.com/rss/search?q={search_term}",
-            "output_dir": "outputs/google",
-            "steps": [
-                {
-                    "name": "google_rss",
-                    "action": "parser",
-                    "attr": "google",
-                }
-            ],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
-
-    def test_validate_workflow_config_rejects_output_dir_outside_project(self) -> None:
-        config = {
-            "name": "sample",
-            "start_url": "https://example.com",
-            "output_dir": "../outside",
-            "steps": [
-                {"name": "download", "xpath": "//a[1]", "action": "download"},
-            ],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
-
     def test_validate_workflow_config_rejects_parser_xpath_fields(self) -> None:
         config = {
             "name": "google",
@@ -1020,29 +942,6 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         self.assertEqual([item["title"] for item in items], ["새 기사", "오래된 기사"])
 
-    def test_parse_google_news_rss_items_normalizes_description_html(self) -> None:
-        items = parse_google_news_rss_items(
-            """
-            <rss version="2.0">
-              <channel>
-                <item>
-                  <title>첫 기사</title>
-                  <link>https://example.com/article-1</link>
-                  <guid>guid-1</guid>
-                  <description><![CDATA[
-                    <ol><li><a href="https://news.example.com/article">첫 문장 &amp; 핵심</a>
-                    <font color="#6f6f6f">예시뉴스</font></li></ol>
-                  ]]></description>
-                </item>
-              </channel>
-            </rss>
-            """.encode("utf-8")
-        )
-
-        self.assertEqual(items[0]["description"], "첫 문장 & 핵심")
-        self.assertNotIn("<", items[0]["description"])
-        self.assertNotIn("&amp;", items[0]["description"])
-
     def test_parse_naver_news_api_items_extracts_expected_fields(self) -> None:
         items = parse_naver_news_api_items(
             """
@@ -1103,189 +1002,52 @@ class WorkflowDownloadTests(unittest.TestCase):
                     "name": "naver_news_api",
                     "action": "parser",
                     "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
                 }
             ],
         }
 
         validate_workflow_config(config)
-
-    def test_validate_workflow_config_allows_bounded_naver_api_parser_options(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=10&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
-                }
-            ],
-        }
-
-        validate_workflow_config(config)
-
-    def test_normalize_workflow_config_removes_deprecated_naver_detail_options(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=10&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
-                    "display": 7,
-                    "fetch_detail": True,
-                    "detail_timeout_seconds": 5,
-                    "detail_pause_seconds": 0.2,
-                    "max_detail_chars": 20000,
-                    "allowed_detail_domains": ["n.news.naver.com"],
-                }
-            ],
-        }
-
-        normalized = normalize_workflow_config(config)
-
-        step = normalized["steps"][0]
-        self.assertEqual(step["attr"], "naver")
-        self.assertEqual(step["display"], 100)
-        self.assertEqual(step["page_limit"], 1)
-        self.assertIn("display=100", normalized["start_url"])
-        self.assertIn("start=1", normalized["start_url"])
-        self.assertNotIn("fetch_detail", step)
-        self.assertNotIn("allowed_detail_domains", step)
-        self.assertNotIn("detail_timeout_seconds", step)
-        self.assertNotIn("detail_pause_seconds", step)
-        self.assertNotIn("max_detail_chars", step)
-
-    def test_validate_workflow_config_rejects_invalid_naver_page_limit(self) -> None:
-        base_step = {
-            "name": "naver_news_api",
-            "action": "parser",
-            "attr": "naver",
-            "loop_limit": 20,
-        }
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=10&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "steps": [{**base_step, "page_limit": "oops"}],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
-
-    def test_validate_workflow_config_rejects_missing_naver_loop_limit(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 1,
-                }
-            ],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
-
-    def test_validate_workflow_config_rejects_too_broad_naver_limits(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 11,
-                    "loop_limit": 101,
-                }
-            ],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
 
     def test_validate_workflow_config_allows_daum_news_api_parser_step(self) -> None:
         config = {
-            "name": "daum-news",
-            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
-            "output_dir": "outputs/daum-news",
+            "name": "daum",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
             "steps": [
                 {
-                    "name": "daum_news_api",
+                    "name": "Kakao_api",
                     "action": "parser",
                     "attr": "daum",
-                    "sort": "recency",
-                    "page_limit": 2,
-                    "loop_limit": 100,
+                    "loop_limit": 3,
                 }
             ],
         }
 
         validate_workflow_config(config)
 
-    def test_normalize_workflow_config_syncs_daum_count_to_url(self) -> None:
-        config = {
-            "name": "daum-news",
-            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=accuracy&page=3&size=10",
-            "output_dir": "outputs/daum-news",
-            "kakao_rest_api_key": "stale-key",
-            "steps": [
+    def test_parse_daum_web_search_items_extracts_expected_fields(self) -> None:
+        items = parse_daum_web_search_items(
+            """
+            {
+              "documents": [
                 {
-                    "name": "daum_news_api",
-                    "action": "parser",
-                    "attr": "daum",
-                    "sort": "recency",
-                    "page_limit": 1,
-                    "loop_limit": 75,
-                    "kakao_rest_api_key": "nested-stale-key",
+                  "title": "다음 <b>뉴스</b>",
+                  "contents": "<b>요약</b> 문장",
+                  "url": "https://v.daum.net/v/202604290001",
+                  "datetime": "2026-04-29T09:00:00.000+09:00"
                 }
-            ],
-        }
+              ]
+            }
+            """.encode("utf-8")
+        )
 
-        normalized = normalize_workflow_config(config)
-
-        self.assertIn("sort=recency", normalized["start_url"])
-        self.assertIn("page=1", normalized["start_url"])
-        self.assertIn("size=50", normalized["start_url"])
-        self.assertIn("query={search_term}+site%3Av.daum.net", normalized["start_url"])
-        self.assertEqual(normalized["steps"][0]["page_limit"], 2)
-        self.assertNotIn("kakao_rest_api_key", normalized)
-        self.assertNotIn("kakao_rest_api_key", normalized["steps"][0])
-
-    def test_validate_workflow_config_rejects_too_broad_daum_limits(self) -> None:
-        config = {
-            "name": "daum-news",
-            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
-            "output_dir": "outputs/daum-news",
-            "steps": [
-                {
-                    "name": "daum_news_api",
-                    "action": "parser",
-                    "attr": "daum",
-                    "sort": "recency",
-                    "page_limit": 3,
-                    "loop_limit": 101,
-                }
-            ],
-        }
-
-        with self.assertRaises(WorkflowConfigError):
-            validate_workflow_config(config)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "다음 뉴스")
+        self.assertEqual(items[0]["detail_url"], "https://v.daum.net/v/202604290001")
+        self.assertEqual(items[0]["link"], "https://v.daum.net/v/202604290001")
+        self.assertEqual(items[0]["description"], "요약 문장")
+        self.assertEqual(items[0]["pubDate"], "2026-04-29T09:00:00.000+09:00")
+        self.assertEqual(items[0]["source_api"], "kakao_daum_web_search")
 
     def test_run_workflow_config_parses_naver_news_api_without_playwright(self) -> None:
         config = {
@@ -1299,8 +1061,6 @@ class WorkflowDownloadTests(unittest.TestCase):
                     "name": "naver_news_api",
                     "action": "parser",
                     "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
                 }
             ],
         }
@@ -1316,7 +1076,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "naver-news")
             with patch.dict(
                 os.environ,
@@ -1338,81 +1098,31 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "네이버 뉴스")
-            naver_output_path = Path(execution.extracted_files[0])
-            self.assertEqual(naver_output_path.name, "naver_news_api.json")
-            self.assertEqual(naver_output_path.parent.parent.name, "items")
-            self.assertEqual(naver_output_path.parent.name, f"{date.today():%Y%m%d}_1")
-            self.assertNotIn("filter", naver_output_path.parts)
-            naver_manifest_path = Path(execution.diagnostics["manifest_file"])
-            self.assertEqual(naver_manifest_path.name, "workflow_records.json")
-            self.assertEqual(naver_manifest_path.parent.parent.name, "runs")
-            self.assertEqual(naver_manifest_path.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertEqual(Path(execution.extracted_files[0]).name, "naver_news_api.json")
+            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
-
-    def test_run_workflow_config_keeps_naver_api_outputs_in_term_path_when_filtering(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "timeout_ms": 1000,
-            "search_terms": ["SK"],
-            "filter_terms": ["SK"],
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
-                }
-            ],
-        }
-        api_items = [
-            {"post_id": "1", "title": "SK 뉴스", "detail_url": "https://n.news.naver.com/1", "link": "https://n.news.naver.com/1"},
-            {"post_id": "2", "title": "다른 뉴스", "detail_url": "https://n.news.naver.com/2", "link": "https://n.news.naver.com/2"},
-        ]
-
-        with temporary_project_output_dir() as tmp_dir:
-            config["output_dir"] = str(Path(tmp_dir) / "naver-news")
-            with patch(
-                "crawler_app.workflow.fetch_naver_news_api_items",
-                return_value=(api_items, "https://openapi.naver.com/v1/search/news.json?query=SK&display=100&start=1&sort=date"),
-            ):
-                execution = run_workflow_config(config)
-
-            self.assertTrue(execution.success)
-            self.assertEqual(len(execution.records), 1)
-            self.assertEqual(execution.diagnostics["nonfilter_record_count"], 1)
-            output_path = Path(execution.extracted_files[0])
-            self.assertIn("001_SK", output_path.parts)
-            self.assertIn("items", output_path.parts)
-            self.assertNotIn("filter", output_path.parts)
-            self.assertEqual(Path(execution.diagnostics["manifest_file"]).parent.parent.name, "runs")
 
     def test_run_workflow_config_parses_daum_news_api_without_playwright(self) -> None:
         config = {
-            "name": "daum-news",
-            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
-            "output_dir": "outputs/daum-news",
+            "name": "daum",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
             "timeout_ms": 1000,
             "search_terms": ["SK"],
             "steps": [
                 {
-                    "name": "daum_news_api",
+                    "name": "Kakao_api",
                     "action": "parser",
                     "attr": "daum",
-                    "sort": "recency",
-                    "page_limit": 1,
-                    "loop_limit": 20,
                 }
             ],
         }
         api_items = [
             {
-                "post_id": "https://v.daum.net/v/202605140001",
+                "post_id": "https://v.daum.net/v/1",
                 "title": "다음 뉴스",
-                "detail_url": "https://v.daum.net/v/202605140001",
-                "link": "https://v.daum.net/v/202605140001",
+                "detail_url": "https://v.daum.net/v/1",
+                "link": "https://v.daum.net/v/1",
                 "pubDate": "2026-05-14T09:00:00.000+09:00",
                 "description": "요약 문장",
                 "source_domain": "v.daum.net",
@@ -1420,11 +1130,11 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
-            config["output_dir"] = str(Path(tmp_dir) / "daum-news")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "daum")
             with patch(
                 "crawler_app.workflow.fetch_daum_news_api_items",
-                return_value=(api_items, "https://dapi.kakao.com/v2/search/web?query=SK&sort=recency&page=1&size=50"),
+                return_value=(api_items, "https://dapi.kakao.com/v2/search/web?query=SK+site%3Av.daum.net&sort=recency&page=1&size=50"),
             ):
                 execution = run_workflow_config(config)
 
@@ -1432,71 +1142,10 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.diagnostics["parser_name"], "daum")
             self.assertEqual(execution.diagnostics["parser_item_count"], 1)
             self.assertEqual(len(execution.records), 1)
-            self.assertEqual(execution.records[0]["steps"][0]["attr"], "daum")
+            self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "다음 뉴스")
-            daum_output_path = Path(execution.extracted_files[0])
-            self.assertEqual(daum_output_path.name, "daum_news_api.json")
-            self.assertEqual(daum_output_path.parent.parent.name, "items")
-            self.assertEqual(daum_output_path.parent.name, f"{date.today():%Y%m%d}_1")
-            self.assertNotIn("filter", daum_output_path.parts)
-            daum_manifest_path = Path(execution.diagnostics["manifest_file"])
-            self.assertEqual(daum_manifest_path.name, "workflow_records.json")
-            self.assertEqual(daum_manifest_path.parent.parent.name, "runs")
-            self.assertEqual(daum_manifest_path.parent.name, f"{date.today():%Y%m%d}_1")
-            self.assertTrue(Path(execution.records[0]["output_file"]).exists())
-
-    def test_preview_workflow_config_skips_live_daum_api_calls(self) -> None:
-        config = {
-            "name": "daum-news",
-            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}&sort=recency&page=1&size=50",
-            "output_dir": "outputs/daum-news",
-            "timeout_ms": 1000,
-            "search_terms": ["최태원", "SK"],
-            "steps": [
-                {
-                    "name": "daum_news_api",
-                    "action": "parser",
-                    "attr": "daum",
-                    "sort": "recency",
-                    "page_limit": 1,
-                    "loop_limit": 20,
-                }
-            ],
-        }
-
-        with patch("crawler_app.workflow.fetch_daum_news_api_items") as fetcher:
-            preview = preview_workflow_config(config)
-
-        fetcher.assert_not_called()
-        self.assertTrue(preview["preview_skipped"])
-        self.assertEqual(preview["parser_item_count"], 0)
-        self.assertEqual(len(preview["search_term_runs"]), 2)
-
-    def test_preview_workflow_config_skips_live_naver_api_calls(self) -> None:
-        config = {
-            "name": "naver-news",
-            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
-            "output_dir": "outputs/naver-news",
-            "timeout_ms": 1000,
-            "search_terms": ["최태원", "SK"],
-            "steps": [
-                {
-                    "name": "naver_news_api",
-                    "action": "parser",
-                    "attr": "naver",
-                    "page_limit": 1,
-                    "loop_limit": 20,
-                }
-            ],
-        }
-
-        with patch("crawler_app.workflow.fetch_naver_news_api_items") as fetcher:
-            preview = preview_workflow_config(config)
-
-        fetcher.assert_not_called()
-        self.assertTrue(preview["preview_skipped"])
-        self.assertEqual(preview["parser_item_count"], 0)
-        self.assertEqual(len(preview["search_term_runs"]), 2)
+            self.assertEqual(Path(execution.extracted_files[0]).name, "daum_news_api.json")
+            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {
@@ -1538,7 +1187,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1554,11 +1203,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "둘째 기사")
             self.assertEqual(len(execution.extracted_files), 1)
-            saved_path = Path(execution.extracted_files[0])
-            self.assertTrue(saved_path.exists())
-            self.assertEqual(saved_path.parent.parent.name, "items")
-            self.assertEqual(saved_path.parent.name, f"{date.today():%Y%m%d}_1")
-            self.assertNotIn("filter", saved_path.parts)
+            self.assertTrue(Path(execution.extracted_files[0]).exists())
+            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1588,7 +1234,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             }
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1598,14 +1244,9 @@ class WorkflowDownloadTests(unittest.TestCase):
 
             self.assertTrue(execution.success)
             saved_path = Path(execution.extracted_files[0])
-            self.assertNotIn("filter", saved_path.parts)
-            self.assertEqual(saved_path.parent.parent.name, "items")
+            self.assertIn("filter", saved_path.parts)
             self.assertIn("001_default", saved_path.parts)
             self.assertEqual(saved_path.name, "google_news_rss.json")
-            self.assertEqual(saved_path.parent.name, f"{date.today():%Y%m%d}_1")
-            saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
-            self.assertEqual(saved_payload["item_files"], ["item_0001.json"])
-            self.assertTrue((saved_path.parent / "item_0001.json").exists())
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
 
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
@@ -1649,7 +1290,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1665,31 +1306,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             saved_path = Path(execution.extracted_files[0])
             saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_payload["item_count"], 1)
-            self.assertEqual(saved_payload["item_files"], ["item_0001.json"])
-            self.assertTrue((saved_path.parent / "item_0001.json").exists())
-            saved_item = json.loads((saved_path.parent / "item_0001.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved_item["title"], "둘째 기사")
-            self.assertNotIn("filter", saved_path.parts)
-
-    def test_save_google_news_rss_items_allocates_next_daily_run_directory(self) -> None:
-        with temporary_project_output_dir() as tmp_dir:
-            output_dir = Path(tmp_dir) / "google" / "002_SK"
-            today = date.today().strftime("%Y%m%d")
-            (output_dir / "items" / f"{today}_1").mkdir(parents=True)
-            (output_dir / "items" / f"{today}_2").mkdir(parents=True)
-
-            manifest = save_google_news_rss_items(
-                output_dir,
-                search_term="SK",
-                rss_url="https://news.google.com/rss/search?q=SK",
-                final_url="https://news.google.com/rss/search?q=SK",
-                items=[{"post_id": "1", "title": "A"}],
-            )
-
-            self.assertEqual(manifest.parent, output_dir / "items" / f"{today}_3")
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            self.assertEqual(payload["item_files"], ["item_0001.json"])
-            self.assertTrue((manifest.parent / "item_0001.json").exists())
+            self.assertEqual(saved_payload["items"][0]["title"], "둘째 기사")
+            self.assertIn("filter", saved_path.parts)
 
     def test_run_workflow_config_filters_google_news_rss_items(self) -> None:
         config = {
@@ -1732,7 +1350,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             },
         ]
 
-        with temporary_project_output_dir() as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             config["output_dir"] = str(Path(tmp_dir) / "google")
             with patch(
                 "crawler_app.workflow.fetch_google_news_rss_items",
@@ -1753,11 +1371,11 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
 
-            matched_manifest = json.loads(matched_path.read_text(encoding="utf-8"))
-            matched_item = json.loads((matched_path.parent / matched_manifest["item_files"][0]).read_text(encoding="utf-8"))
-            nonfilter_payload = json.loads(nonfilter_path.read_text(encoding="utf-8"))
-            self.assertEqual(matched_item["title"], "SK이노베이션, 1분기 실적 발표")
-            self.assertEqual(nonfilter_payload["records"][0]["extracts"]["title"], "정유 업황 점검")
+            matched_payload = matched_path.read_text(encoding="utf-8")
+            nonfilter_payload = nonfilter_path.read_text(encoding="utf-8")
+            self.assertIn("SK이노베이션, 1분기 실적 발표", matched_payload)
+            self.assertNotIn("정유 업황 점검", matched_payload)
+            self.assertIn("정유 업황 점검", nonfilter_payload)
 
     def test_preview_workflow_config_reports_parser_item_count(self) -> None:
         config = {
@@ -2312,83 +1930,6 @@ class WorkflowDownloadTests(unittest.TestCase):
         self.assertEqual(records[0]["steps"][1]["index"], 2)
         self.assertEqual(records[0]["start_url"], "https://crkorea.kr/index.html?menuno=229&page=1")
 
-    def test_run_paginated_item_loops_uses_open_detail_limit_as_page_count(self) -> None:
-        config = {
-            "start_url": "https://marketinsight.hankyung.com/search?keyword={search_term}",
-            "output_dir": "outputs/marketinsight",
-            "steps": [
-                {
-                    "name": "open_detail",
-                    "xpath": "//ul/li[1]/a",
-                    "xpath_2": "//ul/li[2]/a",
-                    "action": "click",
-                    "loop": True,
-                    "loop_mode": "pagination",
-                    "pagination_mode": "page_number",
-                    "loop_limit": 2,
-                },
-                {"name": "extract_body", "xpath": "//article", "action": "extract", "attr": "text"},
-            ],
-        }
-        pages = [FakeLoopPage({}), FakeLoopPage({})]
-        opened_urls: list[str] = []
-        item_calls: list[tuple[int, str, int]] = []
-
-        def fake_new_page(browser: object) -> FakeLoopPage:
-            return pages.pop(0)
-
-        def fake_resolve_items(page: FakeLoopPage, spec: BoardLoopSpec, exclude_xpath: str = "") -> list[int]:
-            opened_urls.append(page.url)
-            return [1, 2]
-
-        def fake_run_one_item(
-            browser: object,
-            config_arg: dict[str, object],
-            item_index: int | None,
-            timeout_ms: int,
-            step_wait_ms: int,
-            **kwargs,
-        ) -> dict[str, object]:
-            start_url = str(kwargs["start_url_override"])
-            board_item_number = int(kwargs["board_item_number"])
-            item_calls.append((item_index or 0, start_url, board_item_number))
-            return {
-                "item_index": item_index,
-                "success": True,
-                "steps": [{"index": 1, "name": "open_detail", "success": True}],
-                "extracts": {},
-                "downloaded_files": [],
-                "extracted_files": [],
-                "error": None,
-                "start_url": start_url,
-                "final_url": f"{start_url}/detail/{board_item_number}",
-            }
-
-        with patch("crawler_app.workflow._new_workflow_page", side_effect=fake_new_page), patch(
-            "crawler_app.workflow._resolve_board_loop_item_numbers", side_effect=fake_resolve_items
-        ), patch("crawler_app.workflow._run_one_item", side_effect=fake_run_one_item):
-            records = _run_paginated_item_loops(
-                browser=object(),
-                config=config,
-                search_term="SK",
-                search_term_index=0,
-                search_term_count=1,
-                output_dir=Path(tempfile.gettempdir()),
-                timeout_ms=1000,
-                step_wait_ms=1000,
-                parse_pause_seconds=0,
-                item_loop_step_index=1,
-            )
-
-        self.assertEqual(opened_urls, [
-            "https://marketinsight.hankyung.com/search?keyword=SK&page=1",
-            "https://marketinsight.hankyung.com/search?keyword=SK&page=2",
-        ])
-        self.assertEqual(len(records), 4)
-        self.assertEqual(item_calls[0], (0, "https://marketinsight.hankyung.com/search?keyword=SK&page=1", 1))
-        self.assertEqual(item_calls[-1], (3, "https://marketinsight.hankyung.com/search?keyword=SK&page=2", 2))
-        self.assertEqual(records[-1]["pagination_page_number"], 2)
-
     def test_finalize_workflow_execution_marks_empty_loop_as_error(self) -> None:
         config = {
             "name": "중국세관",
@@ -2646,41 +2187,6 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(len(paths), 1)
             self.assertEqual(paths[0].name, "record_single_parse.txt")
 
-    def test_relocate_path_keeps_existing_target_root_and_avoids_overwrite(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            source_root = root / "source"
-            target_root = root / "target"
-            source_file = source_root / "001_SK" / "texts" / f"{date.today():%Y%m%d}" / "body.txt"
-            source_file.parent.mkdir(parents=True)
-            source_file.write_text("new", encoding="utf-8")
-            target_file = target_root / source_file.relative_to(source_root)
-            target_file.parent.mkdir(parents=True)
-            target_file.write_text("old", encoding="utf-8")
-
-            relocated = Path(_relocate_path(str(source_file), source_root, target_root))
-
-            self.assertTrue(relocated.exists())
-            self.assertEqual(relocated.read_text(encoding="utf-8"), "new")
-            self.assertEqual(target_file.read_text(encoding="utf-8"), "old")
-            self.assertNotEqual(relocated, target_file)
-            self.assertEqual(_relocate_path(str(relocated), source_root, target_root), str(relocated))
-
-    def test_step_value_removes_excluded_descendants_for_text_extract(self) -> None:
-        locator = FakeLocator("")
-        locator.text = "기사 본문 <div class='newLoginBox'>로그인 해주세요</div> 남은 본문"
-        step = {
-            "name": "extract_body",
-            "action": "extract",
-            "attr": "text",
-            "exclude_xpath": ".//*[contains(@class, 'newLoginBox')]",
-        }
-
-        value = _step_value(locator, step)
-
-        self.assertIn("기사 본문", value)
-        self.assertIn("남은 본문", value)
-        self.assertNotIn("로그인 해주세요", value)
 
 if __name__ == "__main__":
     unittest.main()

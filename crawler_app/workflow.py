@@ -16,17 +16,8 @@ import time
 from lxml import html as lxml_html
 import requests
 
-from crawler_app.daum_news_api import (
-    DAUM_NEWS_API_ATTR,
-    fetch_daum_news_api_items,
-    save_daum_news_api_items,
-)
-from crawler_app.google_news_rss import (
-    GOOGLE_NEWS_RSS_ATTR,
-    fetch_google_news_rss_items,
-    save_google_news_rss_items,
-    validate_google_news_rss_url,
-)
+from crawler_app.daum_news_api import DAUM_NEWS_API_ATTR, fetch_daum_news_api_items, save_daum_news_api_items
+from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
     fetch_naver_news_api_items,
@@ -38,7 +29,7 @@ SUPPORTED_ACTIONS = {"click", "goto", "download", "extract", "parser"}
 SUPPORTED_LOOP_MODES = {"items", "pagination"}
 SUPPORTED_PAGINATION_MODES = {"next_button", "page_number"}
 SUPPORTED_OPEN_MODES = {"auto", "same_tab", "popup"}
-SUPPORTED_PARSER_ATTRS = {GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}
+SUPPORTED_PARSER_ATTRS = {DAUM_NEWS_API_ATTR, GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR}
 SUPPORTED_ATTRS = {"href", "src", "text", "html", *SUPPORTED_PARSER_ATTRS}
 STEP_ATTR_ALLOWED_VALUES = {
     "click": set(),
@@ -51,12 +42,6 @@ SUPPORTED_WAIT_STATES = {"attached", "visible", "hidden", "detached"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
-NAVER_NEWS_API_MAX_LOOP_LIMIT = 100
-DAUM_NEWS_API_MAX_LOOP_LIMIT = 100
-NAVER_NEWS_API_FIXED_PAGE_LIMIT = 1
-NAVER_NEWS_API_FIXED_DISPLAY = 100
-DAUM_NEWS_API_FIXED_PAGE_LIMIT = 2
-DAUM_NEWS_API_FIXED_SIZE = 50
 BOARD_CONTAINER_CHILD_XPATHS = {
     "ol": ("./li",),
     "tbody": ("./tr",),
@@ -67,7 +52,6 @@ BOARD_ITEM_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)\[(?P<index>\d+)\]$")
 BOARD_PATH_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)(?:\[(?P<index>\d+)\])?$")
 BOARD_TRAILING_NUMBER_SEGMENT_RE = re.compile(r"^(?P<prefix>.*?)(?P<index>\d+)(?P<suffix>[^0-9]*)$")
 ITEM_NUMBER_PLACEHOLDER = "{item_number}"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @dataclass(slots=True)
@@ -107,12 +91,6 @@ def _result_category_root(output_dir: Path, category: str) -> Path:
 def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     source_path = Path(path)
     try:
-        source_path.relative_to(target_root)
-        return str(source_path)
-    except ValueError:
-        pass
-
-    try:
         relative_path = source_path.relative_to(source_root)
     except ValueError:
         return str(source_path)
@@ -120,8 +98,6 @@ def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     target_path = target_root / relative_path
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if source_path.exists() and source_path.resolve() != target_path.resolve():
-        if target_path.exists():
-            target_path = _unique_path(target_path)
         source_path.replace(target_path)
     return str(target_path)
 
@@ -243,8 +219,6 @@ def load_workflow_config(path: str | Path) -> dict[str, Any]:
 
 def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(config)
-    for credential_field in ("naver_client_id", "naver_client_secret", "kakao_rest_api_key"):
-        normalized.pop(credential_field, None)
     steps = normalized.get("steps")
     if not isinstance(steps, list):
         return normalized
@@ -252,9 +226,6 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
     for step in steps:
         if not isinstance(step, dict):
             continue
-
-        for credential_field in ("naver_client_id", "naver_client_secret", "kakao_rest_api_key"):
-            step.pop(credential_field, None)
 
         action = str(step.get("action") or "").strip().lower()
         if action:
@@ -305,59 +276,7 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
             step.pop("loop", None)
             if not str(step.get("attr") or "").strip():
                 step["attr"] = _infer_parser_attr_from_start_url(str(normalized.get("start_url") or "")) or GOOGLE_NEWS_RSS_ATTR
-            parser_attr = str(step.get("attr") or "").strip().lower()
-            if parser_attr == NAVER_NEWS_API_ATTR:
-                for deprecated_field in (
-                    "fetch_detail",
-                    "detail_timeout_seconds",
-                    "detail_pause_seconds",
-                    "max_detail_chars",
-                    "allowed_detail_domains",
-                ):
-                    step.pop(deprecated_field, None)
-                step["display"] = NAVER_NEWS_API_FIXED_DISPLAY
-                step["page_limit"] = NAVER_NEWS_API_FIXED_PAGE_LIMIT
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "display",
-                    str(NAVER_NEWS_API_FIXED_DISPLAY),
-                )
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "start",
-                    "1",
-                )
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "sort",
-                    "sim" if str(step.get("sort") or "").strip().lower() == "sim" else "date",
-                )
-            elif parser_attr == DAUM_NEWS_API_ATTR:
-                raw_sort = str(step.get("sort") or "").strip().lower()
-                if raw_sort not in {"accuracy", "recency"}:
-                    raw_sort = "recency"
-                    step["sort"] = raw_sort
-                step["page_limit"] = DAUM_NEWS_API_FIXED_PAGE_LIMIT
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "query",
-                    "{search_term}+site%3Av.daum.net",
-                )
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "sort",
-                    raw_sort,
-                )
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "page",
-                    "1",
-                )
-                normalized["start_url"] = _set_query_param(
-                    str(normalized.get("start_url") or ""),
-                    "size",
-                    str(DAUM_NEWS_API_FIXED_SIZE),
-                )
+
     return normalized
 
 
@@ -368,8 +287,6 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
 
     if config.get("renderer", "playwright") != "playwright":
         raise WorkflowConfigError("Only renderer='playwright' is supported.")
-
-    _resolve_output_dir(config["output_dir"])
 
     parse_pause_seconds = config.get("parse_pause_seconds")
     if parse_pause_seconds not in (None, ""):
@@ -480,15 +397,6 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                     raise WorkflowConfigError(f"steps[{index}].loop_limit must be a non-negative integer.") from exc
                 if parsed_limit < 0:
                     raise WorkflowConfigError(f"steps[{index}].loop_limit must be a non-negative integer.")
-            if attr == NAVER_NEWS_API_ATTR:
-                _validate_naver_parser_step(step, index)
-            if attr == DAUM_NEWS_API_ATTR:
-                _validate_daum_parser_step(step, index)
-            if attr == GOOGLE_NEWS_RSS_ATTR:
-                try:
-                    validate_google_news_rss_url(str(config.get("start_url") or ""))
-                except ValueError as exc:
-                    raise WorkflowConfigError(str(exc)) from exc
             continue
         if not step.get("xpath"):
             raise WorkflowConfigError(f"steps[{index}].xpath is required.")
@@ -526,23 +434,12 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                     )
                 if not str(step.get("xpath") or "").strip():
                     raise WorkflowConfigError(f"steps[{index}].xpath is required when loop_mode=pagination.")
-                if (
-                    pagination_mode == "page_number"
-                    and "{page_number}" not in str(step.get("xpath") or "")
-                    and not str(step.get("xpath_2") or "").strip()
-                ):
+                if pagination_mode == "page_number" and "{page_number}" not in str(step.get("xpath") or ""):
                     raise WorkflowConfigError(
                         f"steps[{index}].xpath must include {{page_number}} when pagination_mode=page_number."
                     )
                 if action != "click":
                     raise WorkflowConfigError(f"steps[{index}].loop is only supported for click when loop_mode=pagination.")
-                if str(step.get("xpath_2") or "").strip():
-                    if pagination_mode != "page_number":
-                        raise WorkflowConfigError(
-                            f"steps[{index}].pagination_mode must be page_number when using pagination on item anchors."
-                        )
-                    if _build_board_loop_spec(str(step.get("xpath") or ""), str(step.get("xpath_2") or "")) is None:
-                        raise WorkflowConfigError(f"steps[{index}] loop anchors must define one repeating index.")
             else:
                 if not step.get("xpath_2"):
                     raise WorkflowConfigError(f"steps[{index}].xpath_2 is required when loop=true.")
@@ -705,7 +602,7 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
 
-    output_dir = _resolve_output_dir(config["output_dir"])
+    output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     execution = WorkflowExecution(config_name=str(config["name"]), output_dir=output_dir)
     search_terms = _config_search_terms(config)
@@ -800,27 +697,7 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
         try:
             for search_term_index, search_term in enumerate(search_terms or [None]):
                 term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
-                if _config_primary_loop_is_paginated_items(config):
-                    records = _run_paginated_item_loops(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        item_loop_step_index=primary_loop_step_index or 1,
-                    )
-                    execution.records.extend(records)
-                    execution.downloaded_files.extend(
-                        path for record in records for path in record.get("downloaded_files", [])
-                    )
-                    execution.extracted_files.extend(
-                        path for record in records for path in record.get("extracted_files", [])
-                    )
-                elif primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
+                if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
                     records = _run_nested_pagination_click_loops(
                         browser=context,
                         config=config,
@@ -1146,14 +1023,9 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
     raw_records = list(execution.records)
-    raw_extracted_files = list(execution.extracted_files)
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
     filter_enabled = bool(filter_terms)
-    parser_name = _config_parser_name(config)
-    use_direct_api_output = parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} or (
-        parser_name == GOOGLE_NEWS_RSS_ATTR and not filter_enabled
-    )
-    matched_root = execution.output_dir if use_direct_api_output else _result_category_root(execution.output_dir, "filter")
+    matched_root = _result_category_root(execution.output_dir, "filter")
     nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
 
     execution.diagnostics["filter_terms"] = filter_terms
@@ -1169,21 +1041,17 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
     execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
 
+    parser_name = _config_parser_name(config)
     if parser_name is not None:
-        if use_direct_api_output:
-            execution.extracted_files = raw_extracted_files
-            execution.diagnostics["matched_output_files"] = raw_extracted_files
-            execution.diagnostics["nonfilter_output_files"] = []
-        else:
-            _save_filtered_parser_outputs(
-                execution=execution,
-                config=config,
-                matched_records=matched_records,
-                nonfilter_records=nonfilter_records,
-                filter_terms=filter_terms,
-                matched_root=matched_root,
-                nonfilter_root=nonfilter_root,
-            )
+        _save_filtered_parser_outputs(
+            execution=execution,
+            config=config,
+            matched_records=matched_records,
+            nonfilter_records=nonfilter_records,
+            filter_terms=filter_terms,
+            matched_root=matched_root,
+            nonfilter_root=nonfilter_root,
+        )
     else:
         if filter_enabled:
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
@@ -1208,9 +1076,8 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
 
     _cleanup_empty_dirs(execution.output_dir, protected_roots=[matched_root, *([nonfilter_root] if nonfilter_root is not None else [])])
 
-    snapshot_root = _next_daily_workflow_run_dir(execution.output_dir) if use_direct_api_output else matched_root
     matched_path = _save_workflow_record_snapshot(
-        snapshot_root,
+        matched_root,
         config,
         matched_records,
         filter_terms=filter_terms,
@@ -1294,31 +1161,13 @@ def _save_filtered_parser_outputs(
         execution.diagnostics["nonfilter_records_file"] = str(nonfilter_snapshot)
 
 
-def _fetch_parser_items(
-    parser_name: str,
-    source_url: str,
-    *,
-    timeout: float,
-    parser_step: dict[str, Any] | None = None,
-) -> tuple[list[dict[str, Any]], str]:
+def _fetch_parser_items(parser_name: str, source_url: str, *, timeout: float) -> tuple[list[dict[str, Any]], str]:
+    if parser_name == DAUM_NEWS_API_ATTR:
+        return fetch_daum_news_api_items(source_url, timeout=timeout)
     if parser_name == GOOGLE_NEWS_RSS_ATTR:
         return fetch_google_news_rss_items(source_url, timeout=timeout)
     if parser_name == NAVER_NEWS_API_ATTR:
-        step = parser_step or {}
-        return fetch_naver_news_api_items(
-            source_url,
-            timeout=timeout,
-            page_limit=_positive_int(step.get("page_limit"), default=1),
-            item_limit=_positive_int_or_none(step.get("loop_limit")),
-        )
-    if parser_name == DAUM_NEWS_API_ATTR:
-        step = parser_step or {}
-        return fetch_daum_news_api_items(
-            source_url,
-            timeout=timeout,
-            page_limit=_positive_int(step.get("page_limit"), default=1),
-            item_limit=_positive_int_or_none(step.get("loop_limit")),
-        )
+        return fetch_naver_news_api_items(source_url, timeout=timeout)
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
 
 
@@ -1332,6 +1181,15 @@ def _save_parser_items(
     items: list[dict[str, Any]],
     filter_terms: list[str] | None = None,
 ) -> Path:
+    if parser_name == DAUM_NEWS_API_ATTR:
+        return save_daum_news_api_items(
+            output_dir,
+            search_term=search_term,
+            api_url=source_url,
+            final_url=final_url,
+            items=items,
+            filter_terms=filter_terms,
+        )
     if parser_name == GOOGLE_NEWS_RSS_ATTR:
         return save_google_news_rss_items(
             output_dir,
@@ -1343,15 +1201,6 @@ def _save_parser_items(
         )
     if parser_name == NAVER_NEWS_API_ATTR:
         return save_naver_news_api_items(
-            output_dir,
-            search_term=search_term,
-            api_url=source_url,
-            final_url=final_url,
-            items=items,
-            filter_terms=filter_terms,
-        )
-    if parser_name == DAUM_NEWS_API_ATTR:
-        return save_daum_news_api_items(
             output_dir,
             search_term=search_term,
             api_url=source_url,
@@ -1510,12 +1359,7 @@ def _run_parser_workflow(
             len(effective_terms),
         )
         source_url = _render_template_value(str(config["start_url"]), search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(
-            parser_name,
-            source_url,
-            timeout=timeout_ms / 1000,
-            parser_step=parser_step,
-        )
+        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout_ms / 1000)
         if item_limit is not None:
             items = items[:item_limit]
         total_items += len(items)
@@ -1535,8 +1379,7 @@ def _run_parser_workflow(
                 "item_count": len(items),
                 "empty": len(items) == 0,
                 "rss_url": source_url,
-                "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
-                "search_url": "",
+                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
                 "final_url": final_url,
                 "output_file": str(output_path),
             }
@@ -1633,59 +1476,9 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
     parser_step = next((step for step in steps if isinstance(step, dict)), {})
     item_limit = _step_loop_limit(parser_step)
 
-    if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR}:
-        skip_reason = (
-            "Daum API preview is disabled to avoid external API calls and quota use."
-            if parser_name == DAUM_NEWS_API_ATTR
-            else "Naver API preview is disabled to avoid external API calls and quota use."
-        )
-        for search_term_index, search_term in enumerate(effective_terms):
-            source_url = _render_template_value(start_url, search_term, url_encode=True)
-            search_term_runs.append(
-                {
-                    "search_term_index": search_term_index,
-                    "search_term": search_term,
-                    "item_count": 0,
-                    "empty": True,
-                    "rss_url": source_url,
-                    "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
-                    "search_url": "",
-                    "final_url": source_url,
-                    "preview_skipped": True,
-                    "skip_reason": skip_reason,
-                }
-            )
-        first_step = (config.get("steps") or [{}])[0]
-        return {
-            "start_url": start_url,
-            "search_terms": search_terms,
-            "search_term_count": len(effective_terms),
-            "parser_name": parser_name,
-            "parser_enabled": True,
-            "parser_item_count": 0,
-            "preview_skipped": True,
-            "search_term_runs": search_term_runs,
-            "step_counts": [
-                {
-                    "name": first_step.get("name") or "parser",
-                    "xpath": "",
-                    "action": "parser",
-                    "wait_state": "auto",
-                    "loop_limit": item_limit,
-                    "count": 0,
-                    "error": skip_reason,
-                }
-            ],
-        }
-
     for search_term_index, search_term in enumerate(effective_terms):
         source_url = _render_template_value(start_url, search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(
-            parser_name,
-            source_url,
-            timeout=timeout,
-            parser_step=parser_step,
-        )
+        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout)
         if item_limit is not None:
             items = items[:item_limit]
         total_count += len(items)
@@ -1696,8 +1489,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
                 "item_count": len(items),
                 "empty": len(items) == 0,
                 "rss_url": source_url,
-                "api_url": source_url if parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR} else "",
-                "search_url": "",
+                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
                 "final_url": final_url,
             }
         )
@@ -1994,65 +1786,6 @@ def _run_nested_pagination_click_loops(
     return records
 
 
-def _run_paginated_item_loops(
-    browser: Any,
-    config: dict[str, Any],
-    search_term: str | None,
-    search_term_index: int,
-    search_term_count: int,
-    output_dir: Path,
-    timeout_ms: int,
-    step_wait_ms: int,
-    parse_pause_seconds: int,
-    item_loop_step_index: int,
-) -> list[dict[str, Any]]:
-    steps = config.get("steps") or []
-    item_loop_step = steps[item_loop_step_index - 1]
-    item_loop_spec = _build_board_loop_spec(str(item_loop_step.get("xpath") or ""), str(item_loop_step.get("xpath_2") or ""))
-    if item_loop_spec is None:
-        return []
-
-    page_limit = _step_loop_limit(item_loop_step) or 1
-    records: list[dict[str, Any]] = []
-    for page_number in range(1, page_limit + 1):
-        page = _new_workflow_page(browser)
-        listing_url = _render_page_url(str(config["start_url"]), search_term, page_number)
-        try:
-            page.goto(listing_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            item_exclude_xpath = str(item_loop_step.get("exclude_xpath") or "").strip()
-            item_numbers = _resolve_board_loop_item_numbers(page, item_loop_spec, exclude_xpath=item_exclude_xpath)
-            listing_url = page.url
-        finally:
-            page.close()
-
-        for item_number in item_numbers:
-            record = _run_one_item(
-                browser,
-                config,
-                len(records),
-                timeout_ms,
-                step_wait_ms,
-                parse_pause_seconds=parse_pause_seconds,
-                search_term=search_term,
-                search_term_index=search_term_index,
-                search_term_count=search_term_count,
-                output_dir_override=output_dir,
-                primary_loop_step_index=item_loop_step_index,
-                start_url_override=listing_url,
-                start_step_index=item_loop_step_index,
-                board_loop_spec=item_loop_spec,
-                board_item_number=item_number,
-            )
-            record["pagination_page_number"] = page_number
-            record["pagination_page_url"] = listing_url
-            if record.get("steps"):
-                record["steps"][0]["pagination_target_page"] = page_number
-                record["steps"][0]["pagination_page_url"] = listing_url
-            records.append(record)
-
-    return records
-
-
 def _resolve_page_loop_count(
     browser: Any,
     config: dict[str, Any],
@@ -2324,7 +2057,7 @@ def _run_step(
                         locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
                     except Exception:
                         pass
-                locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
+                locators = _filtered_locators(locator_group, exclude_xpath)
                 if not locators:
                     raise RuntimeError("No elements matched after applying exclude_xpath.")
                 locator = locators[0]
@@ -2400,14 +2133,14 @@ def _run_step(
                 locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
             except Exception:
                 pass
-        locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
+        locators = _filtered_locators(locator_group, exclude_xpath)
         if not locators:
             if wait_state not in {"hidden", "detached"}:
                 try:
                     locator_group.first.wait_for(state=wait_state, timeout=wait_timeout_ms)
                 except Exception:
                     pass
-                locators = _filtered_locators(locator_group, "" if action == "extract" else exclude_xpath)
+                locators = _filtered_locators(locator_group, exclude_xpath)
         if not locators:
             raise RuntimeError("No elements matched after applying exclude_xpath.")
         locator = locators[0]
@@ -2633,103 +2366,13 @@ def _config_parser_name(config: dict[str, Any]) -> str | None:
 
 def _infer_parser_attr_from_start_url(start_url: str) -> str | None:
     lowered = start_url.strip().lower()
-    if "openapi.naver.com/v1/search/news" in lowered:
-        return NAVER_NEWS_API_ATTR
     if "dapi.kakao.com/v2/search/web" in lowered:
         return DAUM_NEWS_API_ATTR
+    if "openapi.naver.com/v1/search/news" in lowered:
+        return NAVER_NEWS_API_ATTR
     if "news.google.com/rss/search" in lowered:
         return GOOGLE_NEWS_RSS_ATTR
     return None
-
-
-def _set_query_param(url: str, key: str, value: str) -> str:
-    if not url:
-        return url
-    base_and_query, separator, fragment = url.partition("#")
-    base, query_separator, query = base_and_query.partition("?")
-    if not query_separator:
-        return f"{base}?{key}={value}{separator}{fragment}"
-
-    updated_parts: list[str] = []
-    replaced = False
-    for part in query.split("&"):
-        if not part:
-            continue
-        part_key, part_separator, _part_value = part.partition("=")
-        if part_key == key:
-            updated_parts.append(f"{key}={value}")
-            replaced = True
-        else:
-            updated_parts.append(part if part_separator else part_key)
-    if not replaced:
-        updated_parts.append(f"{key}={value}")
-    return f"{base}?{'&'.join(updated_parts)}{separator}{fragment}"
-
-
-def _validate_naver_parser_step(step: dict[str, Any], index: int) -> None:
-    page_limit = _validate_optional_positive_int(step, index, "page_limit") or 1
-    if page_limit != NAVER_NEWS_API_FIXED_PAGE_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].page_limit must be {NAVER_NEWS_API_FIXED_PAGE_LIMIT} for Naver News API."
-        )
-
-    loop_limit = _validate_required_positive_int(step, index, "loop_limit", provider_name="Naver News API")
-    if loop_limit > NAVER_NEWS_API_MAX_LOOP_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].loop_limit must be between 1 and {NAVER_NEWS_API_MAX_LOOP_LIMIT} for Naver News API."
-        )
-
-
-def _validate_daum_parser_step(step: dict[str, Any], index: int) -> None:
-    page_limit = _validate_optional_positive_int(step, index, "page_limit") or 1
-    if page_limit != DAUM_NEWS_API_FIXED_PAGE_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].page_limit must be {DAUM_NEWS_API_FIXED_PAGE_LIMIT} for Daum News API."
-        )
-
-    loop_limit = _validate_required_positive_int(step, index, "loop_limit", provider_name="Daum News API")
-    if loop_limit > DAUM_NEWS_API_MAX_LOOP_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].loop_limit must be between 1 and {DAUM_NEWS_API_MAX_LOOP_LIMIT} for Daum News API."
-        )
-
-    raw_sort = str(step.get("sort") or "").strip().lower()
-    if raw_sort and raw_sort not in {"accuracy", "recency"}:
-        raise WorkflowConfigError(f"steps[{index}].sort must be one of ['accuracy', 'recency'] for Daum News API.")
-
-
-def _validate_optional_positive_int(step: dict[str, Any], index: int, field: str) -> int | None:
-    value = step.get(field)
-    if value in (None, ""):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.") from exc
-    if parsed <= 0:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.")
-    return parsed
-
-
-def _validate_required_positive_int(
-    step: dict[str, Any],
-    index: int,
-    field: str,
-    *,
-    provider_name: str | None = None,
-) -> int:
-    value = step.get(field)
-    if value in (None, ""):
-        if provider_name:
-            raise WorkflowConfigError(f"steps[{index}].{field} is required for {provider_name}.")
-        raise WorkflowConfigError(f"steps[{index}].{field} is required.")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.") from exc
-    if parsed <= 0:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.")
-    return parsed
 
 
 def _config_primary_loop_spec(config: dict[str, Any]) -> BoardLoopSpec | None:
@@ -2779,21 +2422,6 @@ def _config_primary_pagination_spec(config: dict[str, Any]) -> PaginationLoopSpe
     return None
 
 
-def _config_primary_loop_is_paginated_items(config: dict[str, Any]) -> bool:
-    steps = config.get("steps") or []
-    loop_index = _config_primary_loop_step_index(config)
-    if not loop_index or loop_index < 1 or loop_index > len(steps):
-        return False
-    step = steps[loop_index - 1]
-    return (
-        isinstance(step, dict)
-        and bool(step.get("loop"))
-        and _step_loop_mode(step) == "pagination"
-        and str(step.get("action") or "") == "click"
-        and bool(str(step.get("xpath_2") or "").strip())
-    )
-
-
 def _config_primary_loop_mode(config: dict[str, Any]) -> str | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -2831,19 +2459,6 @@ def _search_term_output_dir(
 ) -> Path:
     label = safe_name(search_term or "default")
     return base_output_dir / f"{search_term_index + 1:03d}_{label}"
-
-
-def _next_daily_workflow_run_dir(output_dir: Path) -> Path:
-    today = date.today().strftime("%Y%m%d")
-    runs_dir = output_dir / "runs"
-    for index in range(1, 10000):
-        candidate = runs_dir / f"{today}_{index}"
-        try:
-            candidate.mkdir(parents=True, exist_ok=False)
-            return candidate
-        except FileExistsError:
-            continue
-    raise RuntimeError(f"Could not allocate daily workflow run directory under {runs_dir}.")
 
 
 def _config_board_repeat_spec(config: dict[str, Any]) -> BoardRepeatSpec | None:
@@ -3455,46 +3070,10 @@ def _child_board_xpath(list_xpath: str, container_tag: str | None, child_tag: st
 def _step_value(locator: Any, step: dict[str, Any]) -> str:
     attr = str(step.get("attr") or "href")
     if attr == "text":
-        cleaned_html = _locator_inner_html_without_excluded_nodes(locator, step)
-        if cleaned_html is not None:
-            return _html_to_text(cleaned_html).strip()
         return locator.inner_text().strip()
     if attr == "html":
-        cleaned_html = _locator_inner_html_without_excluded_nodes(locator, step)
-        if cleaned_html is not None:
-            return cleaned_html.strip()
         return locator.inner_html().strip()
     return (locator.get_attribute(attr) or "").strip()
-
-
-def _locator_inner_html_without_excluded_nodes(locator: Any, step: dict[str, Any]) -> str | None:
-    exclude_xpath = str(step.get("exclude_xpath") or "").strip()
-    if not exclude_xpath:
-        return None
-
-    try:
-        raw_html = locator.inner_html()
-    except Exception:
-        return None
-
-    try:
-        root = lxml_html.fromstring(f"<div>{raw_html}</div>")
-    except Exception:
-        return raw_html
-
-    for node in list(root.xpath(exclude_xpath)):
-        parent = node.getparent()
-        if parent is None:
-            continue
-        tail = node.tail or ""
-        previous = node.getprevious()
-        if tail:
-            if previous is not None:
-                previous.tail = (previous.tail or "") + tail
-            else:
-                parent.text = (parent.text or "") + tail
-        parent.remove(node)
-    return lxml_html.tostring(root, encoding="unicode", method="html")
 
 
 def _render_template_value(template: str, search_term: str | None, *, url_encode: bool = False) -> str:
@@ -3503,13 +3082,6 @@ def _render_template_value(template: str, search_term: str | None, *, url_encode
         replacement = quote_plus(search_term or "") if url_encode else (search_term or "")
         rendered = rendered.replace("{search_term}", replacement)
     return rendered
-
-
-def _render_page_url(template: str, search_term: str | None, page_number: int) -> str:
-    rendered = _render_template_value(template, search_term, url_encode=True)
-    if "{page_number}" in rendered:
-        return rendered.replace("{page_number}", str(page_number))
-    return _set_query_param(rendered, "page", str(page_number))
 
 
 def _step_url(page: Any, locator: Any, step: dict[str, Any]) -> str:
@@ -3816,22 +3388,6 @@ def _config_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _positive_int(value: Any, *, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _positive_int_or_none(value: Any) -> int | None:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
-
-
 def _new_workflow_page(browser: Any) -> Any:
     page = browser.new_page()
     _attach_dialog_handler(page)
@@ -3933,21 +3489,6 @@ def _headers() -> dict[str, str]:
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
         )
     }
-
-
-def _resolve_output_dir(value: Any) -> Path:
-    raw_path = Path(str(value or "").strip())
-    if not raw_path:
-        raise WorkflowConfigError("output_dir must not be empty.")
-
-    output_dir = raw_path if raw_path.is_absolute() else PROJECT_ROOT / raw_path
-    try:
-        resolved = output_dir.resolve(strict=False)
-        root = PROJECT_ROOT.resolve(strict=False)
-        resolved.relative_to(root)
-    except ValueError as exc:
-        raise WorkflowConfigError("output_dir must stay under the crawler project directory.") from exc
-    return resolved
 
 
 def safe_name(value: str) -> str:

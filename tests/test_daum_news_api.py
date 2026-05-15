@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +17,7 @@ from crawler_app.daum_news_api import (
 
 
 class _FakeResponse:
-    def __init__(self, *, url: str, body: bytes = b"", status_code: int = 200):
+    def __init__(self, *, url: str, body: bytes = b"", status_code: int = 200) -> None:
         self.url = url
         self.content = body
         self.status_code = status_code
@@ -30,7 +29,7 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    def __init__(self, responses: dict[str, _FakeResponse]):
+    def __init__(self, responses: dict[str, _FakeResponse]) -> None:
         self.responses = responses
         self.headers: dict[str, str] = {}
         self.calls: list[str] = []
@@ -152,7 +151,7 @@ class DaumNewsApiTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fetch_daum_news_api_items("https://example.com/v2/search/web?query=x")
 
-    def test_save_daum_news_api_items_writes_manifest_and_per_item_files(self) -> None:
+    def test_save_daum_news_api_items_writes_provider_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "daum"
             manifest = save_daum_news_api_items(
@@ -164,32 +163,11 @@ class DaumNewsApiTests(unittest.TestCase):
             )
 
             payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(manifest.name, "daum_news_api.json")
             self.assertEqual(payload["item_count"], 1)
             self.assertEqual(payload["source_provider"], "kakao_daum_web_search")
             self.assertEqual(payload["allowed_domains"], ["news.daum.net", "v.daum.net"])
-            self.assertEqual(len(payload["item_files"]), 1)
-            self.assertEqual(manifest.parent.parent.name, "items")
-            self.assertEqual(manifest.parent.name, f"{date.today():%Y%m%d}_1")
-            self.assertEqual(payload["item_files"][0], "item_0001.json")
-            self.assertTrue((manifest.parent / payload["item_files"][0]).exists())
-
-    def test_save_daum_news_api_items_allocates_next_daily_run_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            output_dir = Path(tmp_dir) / "daum" / "002_SK"
-            today = date.today().strftime("%Y%m%d")
-            (output_dir / "items" / f"{today}_1").mkdir(parents=True)
-            (output_dir / "items" / f"{today}_2").mkdir(parents=True)
-
-            manifest = save_daum_news_api_items(
-                output_dir,
-                search_term="SK",
-                api_url="https://dapi.kakao.com/v2/search/web?query=SK",
-                final_url="https://dapi.kakao.com/v2/search/web?query=SK",
-                items=[{"post_id": "1", "title": "A"}],
-            )
-
-            self.assertEqual(manifest.parent, output_dir / "items" / f"{today}_3")
-            self.assertTrue((manifest.parent / "item_0001.json").exists())
+            self.assertEqual(payload["items"][0]["title"], "A")
 
 
 if __name__ == "__main__":
