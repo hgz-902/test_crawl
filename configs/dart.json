@@ -1,0 +1,46 @@
+{
+  "name": "DART",
+  "start_url": "https://dart.fss.or.kr/dsab007/detailSearch.ax?currentPage=1&maxResults=15&maxLinks=10&option=corp&textCrpNm={search_term}",
+  "output_dir": "outputs/dart",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": false,
+  "ignore_https_errors": false,
+  "notes": "DART는 AJAX 검색 결과 endpoint를 직접 start_url로 사용한다. 회사명 검색 기준이며, 보고서 링크는 직접 AJAX 결과 페이지에서 같은 탭으로 열리므로 click + same_tab으로 상세 페이지를 연다.",
+  "search_terms": [
+    "SK",
+    "SK이노베이션"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//table/tbody/tr[1]/td[3]/a",
+      "xpath_2": "//table/tbody/tr[2]/td[3]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 5,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//title",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-15T00:00:00+09:00",
+  "updated_at": "2026-05-15T00:00:00+09:00"
+}

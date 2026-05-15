@@ -1,7 +1,7 @@
 {
-  "name": "더벨",
-  "start_url": "https://www.thebell.co.kr/front/index.asp",
-  "output_dir": "outputs/thebell",
+  "name": "에프앤가이드",
+  "start_url": "https://www.fnguide.com/",
+  "output_dir": "outputs/fnguide",
   "timeout_ms": 30000,
   "renderer": "playwright",
   "headless": false,
