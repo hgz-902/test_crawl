@@ -140,4 +140,9 @@ git push origin HEAD:dev/crawler-current
 
 ## Push Result
 
-TODO
+Succeeded. Primary code/reset commit `c597920` was pushed to `origin/dev/crawler-current` with:
+
+~~~text
+To https://github.com/K-Ternag/crawlService
+   8a7bda5..c597920  HEAD -> dev/crawler-current
+~~~
