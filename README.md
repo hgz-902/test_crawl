@@ -210,7 +210,7 @@ Each enabled job stores:
 - `next_run_at`
 - `last_status`
 
-Manual batch runs execute only selected jobs whose `next_run_at` is empty or already reached. Use the "force now" checkbox on the orchestration page when you intentionally want to ignore the interval for a one-off run. This remains a local in-app scheduler model; it does not register Windows Task Scheduler tasks by itself.
+Manual batch runs execute only selected jobs whose `next_run_at` is empty or already reached. Use the "force now" checkbox on the orchestration page when you intentionally want to ignore the interval for a one-off run.
 
 ### Keyword Mail Notification
 
@@ -238,7 +238,32 @@ If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and rec
 
 ### Windows Task Scheduler
 
-The current implementation saves schedule interval state and provides a manual due-job batch runner. It does not automatically register Windows Task Scheduler jobs. A Task Scheduler registration script can be added later after separate approval.
+When the orchestration page settings are saved on Windows, the app synchronizes Windows Task Scheduler immediately:
+
+1. Deletes only tasks managed by this app under `\CrawlerOrchestration\crawler_*`.
+2. Recreates one task for each enabled crawler config.
+3. Uses each row's interval value and unit:
+   - minutes -> `schtasks /SC MINUTE /MO <value>`
+   - hours -> `schtasks /SC HOURLY /MO <value>`
+   - days -> `schtasks /SC DAILY /MO <value>`
+4. Runs `scripts/Run-OrchestrationJob.ps1`, which loads local `.env` values into the scheduled process and then executes one job through `crawler_app.scheduled_runner`.
+
+The scheduled task uses the interval as the source of truth and runs the selected job with `force_due=True`. It also passes the actual email-send option for scheduled runs, so SMTP credentials must be configured carefully.
+
+Secrets must stay out of git. Use Windows user environment variables or an ignored local `.env` file:
+
+```powershell
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=bloodknihts@gmail.com
+SMTP_FROM=bloodknihts@gmail.com
+SMTP_PASSWORD=<Gmail app password>
+NAVER_CLIENT_ID=<Naver client id>
+NAVER_CLIENT_SECRET=<Naver client secret>
+KAKAO_REST_API_KEY=<Kakao REST API key>
+```
+
+Scheduled run logs are written under `runtime/scheduled-task/`, which is ignored by git.
 
 ### Validation
 

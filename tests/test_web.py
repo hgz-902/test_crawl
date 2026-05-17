@@ -265,6 +265,10 @@ class WebLoggingTests(unittest.TestCase):
             web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
         ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
             web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ), patch.object(
+            web,
+            "sync_windows_scheduled_tasks",
+            return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
         ):
             response = client.post(
                 "/orchestration/save",
@@ -305,6 +309,10 @@ class WebLoggingTests(unittest.TestCase):
             settings = store.load_settings()
             with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
                 web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+            ), patch.object(
+                web,
+                "sync_windows_scheduled_tasks",
+                return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
             ):
                 response = client.post(
                     "/orchestration/save",
@@ -323,6 +331,43 @@ class WebLoggingTests(unittest.TestCase):
             self.assertEqual(reloaded["keywords"], ["SK", "carbon"])
             self.assertTrue(reloaded["jobs"]["sample"]["enabled"])
             self.assertEqual(reloaded["jobs"]["sample"]["interval"], {"value": 7, "unit": "minutes"})
+
+    def test_orchestration_save_reports_scheduler_sync_failure(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = web.OrchestrationStateStore(
+                settings_path=Path(tmp_dir) / "settings.json",
+                history_path=Path(tmp_dir) / "history.json",
+            )
+            settings = store.load_settings()
+            with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
+                web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+            ), patch.object(web, "sync_windows_scheduled_tasks", side_effect=RuntimeError("scheduler denied")):
+                response = client.post(
+                    "/orchestration/save",
+                    data={
+                        "enabled_jobs": "sample",
+                        "interval_value__sample": "15",
+                        "interval_unit__sample": "minutes",
+                        "keywords": "SK",
+                        "recipients": "to@example.com",
+                        "sender": "from@example.com",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("Windows Task Scheduler", response.text)
 
     def test_orchestration_run_passes_force_due_and_email_permission(self) -> None:
         fake_job = type(

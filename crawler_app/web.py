@@ -29,6 +29,7 @@ from crawler_app.orchestration import (
     run_batch,
     settings_for_registered_jobs,
 )
+from crawler_app.windows_scheduler import sync_windows_scheduled_tasks
 from crawler_app.workflow import preview_workflow_config
 from crawlers.configurable_crawler import ConfigurableCrawler
 
@@ -78,6 +79,18 @@ async def save_orchestration_route(request: Request) -> HTMLResponse:
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
     updated = _settings_from_form(form, jobs, settings)
     saved = ORCHESTRATION_STORE.save_settings(updated)
+    scheduler_message = ""
+    error = None
+    status_code = 200
+    try:
+        scheduler_result = await asyncio.to_thread(sync_windows_scheduled_tasks, saved, jobs)
+        if scheduler_result.status == "synced":
+            scheduler_message = f" Windows Task Scheduler 작업 {len(scheduler_result.created)}개를 재생성했습니다."
+        elif scheduler_result.status == "skipped":
+            scheduler_message = f" Windows Task Scheduler 동기화는 건너뛰었습니다({scheduler_result.skipped_reason})."
+    except Exception as exc:
+        error = f"Windows Task Scheduler 동기화 실패: {exc}"
+        status_code = 500
     return templates.TemplateResponse(
         request,
         "orchestration.html",
@@ -86,10 +99,11 @@ async def save_orchestration_route(request: Request) -> HTMLResponse:
             "settings": saved,
             "history": ORCHESTRATION_STORE.load_history(limit=10),
             "last_batch": None,
-            "message": "오케스트레이션 설정을 저장했습니다.",
-            "error": None,
+            "message": f"오케스트레이션 설정을 저장했습니다.{scheduler_message}" if not error else None,
+            "error": error,
             "smtp_ready": _smtp_ready(),
         },
+        status_code=status_code,
     )
 
 
