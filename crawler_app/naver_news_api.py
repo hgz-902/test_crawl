@@ -23,35 +23,40 @@ USER_AGENT = (
 )
 DEFAULT_PAGE_LIMIT = 1
 NAVER_API_HOST = "openapi.naver.com"
+NAVER_DISPLAY_MAX = 100
 
 
-def build_naver_news_search_page_urls(api_url: str, *, page_limit: int = DEFAULT_PAGE_LIMIT) -> list[str]:
-    if page_limit <= 1:
-        return [api_url]
-
+def build_naver_news_search_page_urls(
+    api_url: str,
+    *,
+    page_limit: int = DEFAULT_PAGE_LIMIT,
+    display: int | None = None,
+) -> list[str]:
     parsed = urlparse(api_url)
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
 
     query_map = dict(pairs)
+    display_override = display
+    display = _resolve_display_count(query_map.get("display"), override=display_override)
+    if page_limit <= 1:
+        if display_override is not None and str(query_map.get("display")) != str(display):
+            return [urlunparse(parsed._replace(query=urlencode(_replace_or_append_query_pairs(pairs, {"display": str(display)}), doseq=True)))]
+        return [api_url]
+
     start_raw = query_map.get("start", "1")
-    display_raw = query_map.get("display", "10")
     try:
         start = int(start_raw)
     except ValueError:
         start = 1
-    try:
-        display = int(display_raw)
-    except ValueError:
-        display = 10
 
     start = max(1, start)
-    display = max(1, display)
     urls: list[str] = []
     for index in range(page_limit):
         page_start = start + (index * display)
-        updated_pairs = [(key, str(page_start) if key == "start" else value) for key, value in pairs]
-        if "start" not in query_map:
-            updated_pairs.append(("start", str(page_start)))
+        updates = {"start": str(page_start)}
+        if display_override is not None:
+            updates["display"] = str(display)
+        updated_pairs = _replace_or_append_query_pairs(pairs, updates)
         urls.append(urlunparse(parsed._replace(query=urlencode(updated_pairs, doseq=True))))
     return urls
 
@@ -69,8 +74,9 @@ def fetch_naver_news_api_items(
     api_session.headers.update(_headers())
     discovered: list[dict[str, Any]] = []
     final_url = api_url
+    display = item_limit if item_limit is not None else None
 
-    for page_url in build_naver_news_search_page_urls(api_url, page_limit=max(1, page_limit)):
+    for page_url in build_naver_news_search_page_urls(api_url, page_limit=max(1, page_limit), display=display):
         _validate_naver_api_url(page_url)
         response = api_session.get(page_url, timeout=timeout)
         response.raise_for_status()
@@ -177,6 +183,33 @@ def _validate_naver_api_url(api_url: str) -> None:
     parsed = urlparse(api_url)
     if parsed.scheme != "https" or parsed.netloc.lower() != NAVER_API_HOST:
         raise ValueError("Naver News API URL must use https://openapi.naver.com.")
+
+
+def _resolve_display_count(raw_display: str | None, *, override: int | None = None) -> int:
+    raw_value = override if override is not None else raw_display
+    try:
+        value = int(raw_value) if raw_value is not None else 10
+    except (TypeError, ValueError):
+        value = 10
+    return max(1, min(NAVER_DISPLAY_MAX, value))
+
+
+def _replace_or_append_query_pairs(
+    pairs: list[tuple[str, str]],
+    updates: dict[str, str],
+) -> list[tuple[str, str]]:
+    replaced: set[str] = set()
+    updated_pairs: list[tuple[str, str]] = []
+    for key, value in pairs:
+        if key in updates:
+            updated_pairs.append((key, updates[key]))
+            replaced.add(key)
+        else:
+            updated_pairs.append((key, value))
+    for key, value in updates.items():
+        if key not in replaced:
+            updated_pairs.append((key, value))
+    return updated_pairs
 
 
 def _looks_like_json(content_type: str, payload: bytes) -> bool:

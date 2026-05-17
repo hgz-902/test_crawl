@@ -746,3 +746,38 @@
   - Yonhap HTML may drift; list/detail XPath should be updated from the UI if site structure changes.
   - generic news storage remains origin-compatible and not run-versioned for `filter\workflow_records.json`.
   - no git push was run; user owns push execution.
+## 2026-05-16 Cross-Agent Orchestration Hardening
+
+- Alpha pre-edit gate:
+  - classification: non-trivial
+  - reason: peer review identified runtime behavior gaps in parser duplicate output filtering, interval scheduling semantics, SMTP send approval, duplicate scope, and Korean UI text.
+  - Alpha wave required: no new worker wave in this turn; this is a bounded hardening pass driven by concrete cross-agent findings and will be validated with tests and browser proof.
+  - waiver: bounded main-session implementation; no legacy OpenClaw fallback.
+  - next action: patch the common orchestration/workflow/UI layer, then run full unittest and browser UI validation.
+- Scope:
+  - `crawler_app/orchestration.py`
+  - `crawler_app/web.py`
+  - `crawler_app/workflow.py`
+  - `templates/orchestration.html`
+  - `templates/layout.html`
+  - orchestration/workflow/web tests and README documentation
+- Validation:
+  - `python -m unittest discover -s tests`: 114 tests passed.
+  - `git diff --check`: passed with CRLF conversion warnings only.
+  - Browser proof: `qa-artifacts/orchestration-hardening-20260516/result.json` and `orchestration.png`.
+  - Secret scan: no concrete provided SMTP/Gmail password found outside ignored local artifacts; only placeholders/test fixtures matched.
+  - Added regression tests for per-config duplicate scope and orchestration/layout mojibake markers after the external expert comparison.
+- Ruling: pass for this bounded hardening pass.
+- Remaining risk: automatic Windows Task Scheduler registration remains deferred; real SMTP sending still requires operator checkbox and environment variables.
+
+## 2026-05-17 InvestChosun Config-Only Repair Gate
+
+- classification: trivial config-only runtime repair
+- reason: user explicitly forbids source-code edits; only start URL/XPath/config fields may change for one crawler config.
+- source-code change needed: no
+- allowed files: configs/인베스트조선.json and validation notes only if needed
+- acceptance criteria: 인베스트조선 appears in config list, config loads, crawler reaches at least one detail page, extracts title/body, and source code files remain untouched by this slice.
+- validation plan: run config load/preview plus bounded crawler run; inspect outputs/diagnostics.
+- red-team status: waived for source implementation; external site access is bounded to public InvestChosun pages and no credentials are used.
+- ruling: pending validation
+

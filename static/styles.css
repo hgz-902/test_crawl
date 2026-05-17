@@ -164,6 +164,11 @@ p,
   border-color: #efb0b0;
 }
 
+.notice.success {
+  color: #137333;
+  border-color: #a8dab5;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -203,6 +208,137 @@ th:last-child {
 
 td {
   vertical-align: middle;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.panel-heading h2 {
+  margin-bottom: 6px;
+}
+
+.flush {
+  padding: 0;
+}
+
+.muted-text {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.select-col {
+  width: 72px;
+  text-align: center;
+}
+
+.interval-col {
+  width: 190px;
+}
+
+.orchestration-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.orchestration-table thead tr,
+.orchestration-table tbody tr {
+  position: relative;
+}
+
+.orchestration-table thead tr::after,
+.orchestration-table tbody tr::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.orchestration-table th,
+.orchestration-table td {
+  border-bottom: 0;
+}
+
+.interval-control {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(78px, 1fr);
+  gap: 8px;
+}
+
+.interval-control input,
+.interval-control select,
+.orchestration-settings textarea,
+.orchestration-settings input {
+  width: 100%;
+}
+
+.orchestration-settings {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 18px;
+}
+
+.orchestration-settings h2 {
+  margin-bottom: 8px;
+}
+
+.orchestration-settings p {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.orchestration-run-options {
+  display: grid;
+  gap: 12px;
+}
+
+.orchestration-run-options p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.check-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  line-height: 1.4;
+}
+
+.check-row input {
+  flex: 0 0 auto;
+}
+
+.smtp-state {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.smtp-state.ready {
+  color: #137333;
+  background: #e9f6ec;
+  border-color: #a8dab5;
+}
+
+.smtp-state.dry {
+  color: #8a5a00;
+  background: #fff7e0;
+  border-color: #edd28a;
 }
 
 .url {
@@ -815,5 +951,15 @@ pre {
   .page-head,
   .topbar {
     flex-direction: column;
+  }
+
+  .panel-heading,
+  .orchestration-settings,
+  .interval-control {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-heading {
+    display: grid;
   }
 }

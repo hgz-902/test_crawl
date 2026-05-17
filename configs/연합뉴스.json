@@ -37,7 +37,7 @@
       "xpath_2": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[@data-cid][2]/div/div/strong/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 25,
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"

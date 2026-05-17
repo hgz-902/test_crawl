@@ -159,3 +159,92 @@ else:
 - PDF 추출은 `pypdf` 의존성이 필요합니다.
 - 현재 PDF는 텍스트 레이어가 있는 파일만 지원합니다.
 - 구형 `hwp`는 아직 지원하지 않고 `hwpx`만 지원합니다.
+
+## Crawler Orchestration
+
+This feature is a common operations layer for existing `configs/*.json` crawlers. It does not add new site-specific crawler code. It keeps the existing JSON config workflow, `workflow_records.json`, outputs, and logging structure as the source of crawler behavior.
+
+### Run The UI
+
+```powershell
+python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
+```
+
+Open `http://127.0.0.1:3000/orchestration`.
+
+The orchestration page supports:
+
+- Selecting registered crawler configs.
+- Setting each selected crawler interval in minutes, hours, or days.
+- Editing keyword terms.
+- Editing notification recipients.
+- Saving local orchestration settings.
+- Running due crawler jobs manually, with an optional one-run force checkbox.
+- Viewing recent run history, duplicate-stopped jobs, and mail dry-run/sent status.
+
+Settings and run history are stored in local runtime files:
+
+- `orchestration_state/settings.json`
+- `orchestration_state/run_history.json`
+
+`orchestration_state/` is ignored by git because it is machine-local runtime state.
+
+### Duplicate Stop Policy
+
+Before a batch run, the orchestration layer reads existing `workflow_records.json` snapshots under configured output directories and builds a duplicate index.
+
+Duplicate keys are derived from common record fields:
+
+- Title candidates: `extracts.title`, `extracts.extract_title`, title-like extract names, or parser step value.
+- URL candidates: `extracts.detail_url`, `extracts.link`, `extracts.originallink`, `extracts.url`, `final_url`, or `start_url`.
+- Preferred key: `title + url`.
+- Fallback key: title only when no URL is available.
+
+When a duplicate is found, only the current crawler job is stopped as `duplicate_stopped`. The duplicate record is not added to the new result or parser output, and the next selected crawler job continues. During normal UI runs, each config builds its duplicate index from its own configured output directory so another config's matching title or URL does not stop the current config.
+
+### Schedule Semantics
+
+Each enabled job stores:
+
+- `last_run_at`
+- `next_run_at`
+- `last_status`
+
+Manual batch runs execute only selected jobs whose `next_run_at` is empty or already reached. Use the "force now" checkbox on the orchestration page when you intentionally want to ignore the interval for a one-off run. This remains a local in-app scheduler model; it does not register Windows Task Scheduler tasks by itself.
+
+### Keyword Mail Notification
+
+Default keywords:
+
+- `SK`
+- `최태원`
+
+Default recipients:
+
+- `bloodknihts@gmail.com`
+- `superknihts@nate.com`
+
+SMTP credentials are never stored in code, config, README, logs, or UI settings. They are read only from environment variables:
+
+```powershell
+$env:SMTP_HOST="smtp.gmail.com"
+$env:SMTP_PORT="587"
+$env:SMTP_USER="bloodknihts@gmail.com"
+$env:SMTP_FROM="bloodknihts@gmail.com"
+$env:SMTP_PASSWORD="<Gmail app password>"
+```
+
+If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and records the dry-run result instead of sending mail. Even when SMTP credentials exist, the UI sends real mail only when the operator checks the per-run "actual email send" option. Real Gmail sending should only be tested after the user provides an app password.
+
+### Windows Task Scheduler
+
+The current implementation saves schedule interval state and provides a manual due-job batch runner. It does not automatically register Windows Task Scheduler jobs. A Task Scheduler registration script can be added later after separate approval.
+
+### Validation
+
+```powershell
+python -m unittest discover -s tests
+python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
+```
+
+Then verify `/orchestration` in a browser by saving settings and running a small selected batch. Without SMTP credentials, mail notification should report dry-run.

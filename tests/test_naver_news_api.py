@@ -61,6 +61,12 @@ class NaverNewsApiTests(unittest.TestCase):
         self.assertEqual(urls[0], "https://openapi.naver.com/v1/search/news.json?query=x&display=10&sort=date&start=1")
         self.assertEqual(urls[1], "https://openapi.naver.com/v1/search/news.json?query=x&display=10&sort=date&start=11")
 
+    def test_build_naver_news_search_page_urls_can_override_display(self) -> None:
+        base = "https://openapi.naver.com/v1/search/news.json?query=x&display=100&start=1&sort=date"
+        urls = build_naver_news_search_page_urls(base, page_limit=2, display=20)
+        self.assertEqual(urls[0], "https://openapi.naver.com/v1/search/news.json?query=x&display=20&start=1&sort=date")
+        self.assertEqual(urls[1], "https://openapi.naver.com/v1/search/news.json?query=x&display=20&start=21&sort=date")
+
     def test_fetch_naver_news_api_items_collects_pages_without_detail_fetch(self) -> None:
         api_1 = "https://openapi.naver.com/v1/search/news.json?query=%EC%B5%9C%ED%83%9C%EC%9B%90&display=10&start=1&sort=date"
         api_2 = "https://openapi.naver.com/v1/search/news.json?query=%EC%B5%9C%ED%83%9C%EC%9B%90&display=10&start=11&sort=date"
@@ -92,9 +98,10 @@ class NaverNewsApiTests(unittest.TestCase):
 
     def test_fetch_naver_news_api_items_applies_item_limit(self) -> None:
         api_1 = "https://openapi.naver.com/v1/search/news.json?query=x&display=10&start=1"
+        limited_api_1 = "https://openapi.naver.com/v1/search/news.json?query=x&display=1&start=1"
         responses = {
-            api_1: _FakeResponse(
-                url=api_1,
+            limited_api_1: _FakeResponse(
+                url=limited_api_1,
                 body=json.dumps(
                     {
                         "items": [
@@ -112,6 +119,7 @@ class NaverNewsApiTests(unittest.TestCase):
                 items, _ = fetch_naver_news_api_items(api_1, timeout=2.0, item_limit=1)
 
         self.assertEqual(len(items), 1)
+        self.assertEqual(fake_session.calls, [limited_api_1])
         self.assertEqual(items[0]["title"], "기사1")
 
     def test_fetch_naver_news_api_items_rejects_non_naver_api_url(self) -> None:

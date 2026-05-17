@@ -42,7 +42,7 @@
   "steps": [
     {
       "name": "google_rss",
-      "loop_limit": 5,
+      "loop_limit": 20,
       "action": "parser",
       "attr": "google"
     }

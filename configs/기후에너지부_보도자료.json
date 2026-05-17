@@ -55,7 +55,7 @@
       "xpath_2": "//*[@id=\"content_body\"]/div/table/tbody/tr[2]/td[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -75,7 +75,8 @@
       "loop": true,
       "loop_mode": "items",
       "action": "download",
-      "wait_state": "attached"
+      "wait_state": "attached",
+      "loop_limit": 20
     }
   ],
   "created_at": "2026-04-27T18:16:30+09:00",

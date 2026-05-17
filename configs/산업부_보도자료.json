@@ -54,7 +54,7 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -75,7 +75,8 @@
       "loop_mode": "items",
       "action": "download",
       "attr": "href",
-      "wait_state": "attached"
+      "wait_state": "attached",
+      "loop_limit": 20
     }
   ],
   "created_at": "2026-04-28T18:13:20+09:00",

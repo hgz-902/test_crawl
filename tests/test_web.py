@@ -200,6 +200,237 @@ class WebLoggingTests(unittest.TestCase):
                 for handler in original_handlers:
                     logger.addHandler(handler)
 
+    def test_orchestration_page_renders_jobs(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": ["SK"],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "jobs": {"sample": {"enabled": True, "interval": {"value": 15, "unit": "minutes"}}},
+        }
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]):
+            response = client.get("/orchestration")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Sample", response.text)
+        self.assertIn("SMTP dry-run", response.text)
+
+    def test_orchestration_templates_do_not_contain_known_mojibake_markers(self) -> None:
+        markers = ("?ㅼ", "理", "諛", "湲", "以묐", "醫", "遺?")
+        for template_name in ("layout.html", "orchestration.html"):
+            template_text = (web.TEMPLATE_DIR / template_name).read_text(encoding="utf-8")
+            for marker in markers:
+                self.assertNotIn(marker, template_text, f"{template_name} contains mojibake marker {marker!r}")
+
+    def test_orchestration_save_persists_form_settings(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "jobs": {"sample": {"enabled": False, "interval": {"value": 1, "unit": "hours"}}},
+        }
+        saved_payloads: list[dict[str, object]] = []
+
+        def fake_save(payload: dict[str, object]) -> dict[str, object]:
+            saved_payloads.append(payload)
+            return payload
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ):
+            response = client.post(
+                "/orchestration/save",
+                data={
+                    "enabled_jobs": "sample",
+                    "interval_value__sample": "30",
+                    "interval_unit__sample": "minutes",
+                    "keywords": "SK\ncarbon",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(saved_payloads[0]["keywords"], ["SK", "carbon"])
+        self.assertTrue(saved_payloads[0]["jobs"]["sample"]["enabled"])
+        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["interval"], {"value": 30, "unit": "minutes"})
+
+    def test_orchestration_save_writes_real_store(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = web.OrchestrationStateStore(
+                settings_path=Path(tmp_dir) / "settings.json",
+                history_path=Path(tmp_dir) / "history.json",
+            )
+            settings = store.load_settings()
+            with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
+                web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+            ):
+                response = client.post(
+                    "/orchestration/save",
+                    data={
+                        "enabled_jobs": "sample",
+                        "interval_value__sample": "7",
+                        "interval_unit__sample": "minutes",
+                        "keywords": "SK\ncarbon",
+                        "recipients": "to@example.com",
+                        "sender": "from@example.com",
+                    },
+                )
+
+            reloaded = store.load_settings()
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(reloaded["keywords"], ["SK", "carbon"])
+            self.assertTrue(reloaded["jobs"]["sample"]["enabled"])
+            self.assertEqual(reloaded["jobs"]["sample"]["interval"], {"value": 7, "unit": "minutes"})
+
+    def test_orchestration_run_passes_force_due_and_email_permission(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "jobs": {
+                "sample": {
+                    "enabled": False,
+                    "interval": {"value": 1, "unit": "hours"},
+                    "last_run_at": "2026-05-16T00:00:00+00:00",
+                    "next_run_at": "2026-05-16T01:00:00+00:00",
+                    "last_status": "succeeded",
+                }
+            },
+        }
+        run_calls: list[dict[str, object]] = []
+
+        def fake_run_batch(selected, **kwargs):
+            run_calls.append({"selected": list(selected), **kwargs})
+            return type(
+                "FakeBatch",
+                (),
+                {
+                    "batch_id": "b1",
+                    "status": "completed",
+                    "total": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "duplicate_stopped": 0,
+                    "skipped_not_due": 0,
+                    "results": [],
+                    "started_at": "2026-05-16T00:00:00+00:00",
+                    "finished_at": "2026-05-16T00:00:01+00:00",
+                },
+            )()
+
+        with TestClient(web.app) as client, patch.object(
+            web,
+            "settings_for_registered_jobs",
+            return_value=(settings, [fake_job]),
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ), patch.object(web, "run_batch", side_effect=fake_run_batch), patch.object(
+            web,
+            "batch_to_dict",
+            return_value={
+                "batch_id": "b1",
+                "status": "completed",
+                "total": 1,
+                "succeeded": 1,
+                "failed": 0,
+                "duplicate_stopped": 0,
+                "skipped_not_due": 0,
+                "results": [],
+            },
+        ):
+            response = client.post(
+                "/orchestration/run",
+                data={
+                    "enabled_jobs": "sample",
+                    "interval_value__sample": "5",
+                    "interval_unit__sample": "minutes",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                    "force_due": "1",
+                    "allow_email_send": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(run_calls[0]["selected"], ["sample"])
+        self.assertTrue(run_calls[0]["force_due"])
+        self.assertTrue(run_calls[0]["allow_email_send"])
+
+    def test_orchestration_run_rejects_cross_origin_post(self) -> None:
+        with TestClient(web.app) as client:
+            response = client.post(
+                "/orchestration/run",
+                headers={"Origin": "https://attacker.example"},
+                data={},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_orchestration_save_rejects_cross_origin_post(self) -> None:
+        with TestClient(web.app) as client:
+            response = client.post(
+                "/orchestration/save",
+                headers={"Origin": "https://attacker.example"},
+                data={},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

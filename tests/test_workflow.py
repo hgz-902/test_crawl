@@ -1249,6 +1249,66 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(saved_path.name, "google_news_rss.json")
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
 
+    def test_run_workflow_config_record_policy_stops_parser_after_kept_record(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+        rss_items = [
+            {
+                "post_id": "fresh",
+                "title": "Fresh",
+                "detail_url": "https://example.com/fresh",
+                "link": "https://example.com/fresh",
+            },
+            {
+                "post_id": "dup",
+                "title": "Duplicate",
+                "detail_url": "https://example.com/dup",
+                "link": "https://example.com/dup",
+            },
+        ]
+
+        def record_policy(record: dict[str, object]) -> dict[str, object]:
+            extracts = record.get("extracts")
+            title = str(extracts.get("title") if isinstance(extracts, dict) else "")
+            if title == "Duplicate":
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_stopped",
+                    "metadata": {"duplicate_key": "duplicate"},
+                }
+            return {"include": True, "stop": False}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch(
+                "crawler_app.workflow.fetch_google_news_rss_items",
+                return_value=(rss_items, "https://news.google.com/rss/search?q=SK&hl=ko&gl=KR&ceid=KR:ko"),
+            ):
+                execution = run_workflow_config(config, record_policy=record_policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(execution.records), 1)
+            self.assertEqual(execution.records[0]["extracts"]["title"], "Fresh")
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(execution.diagnostics["record_policy_stop_reason"], "duplicate_stopped")
+            saved_path = Path(execution.extracted_files[0])
+            saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved_payload["item_count"], 1)
+            self.assertEqual([item["title"] for item in saved_payload["items"]], ["Fresh"])
+
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
         config = {
             "name": "google",

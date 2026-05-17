@@ -21,6 +21,11 @@ logs/
 *.log
 outputs/
 qa-artifacts/
+orchestration_state/
+attach/
+runtime/
+imsi/
+configs copy/
 $outDir/
 
 # Build artifacts

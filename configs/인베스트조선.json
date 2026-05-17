@@ -1,6 +1,6 @@
 {
   "name": "인베스트조선",
-  "start_url": "https://www.investchosun.com/svc/news/search.html?q={search_term}&pn={page_number}",
+  "start_url": "https://www.investchosun.com/svc/news/search.html?q={search_term}&pn=1",
   "output_dir": "outputs/investchosun",
   "timeout_ms": 60000,
   "renderer": "playwright",
@@ -15,12 +15,11 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//ul[contains(@class, 'search-list')]/li[1]/div[contains(@class, 'list_detail')]/dl/dt/a",
-      "xpath_2": "//ul[contains(@class, 'search-list')]/li[2]/div[contains(@class, 'list_detail')]/dl/dt/a",
+      "xpath": "//*[@id=\"section\"]/section/div/div[1]/div[2]/div[2]/ul/li[1]/div/dl/dt/a",
+      "xpath_2": "//*[@id=\"section\"]/section/div/div[1]/div[2]/div[2]/ul/li[2]/div/dl/dt/a",
       "loop": true,
-      "loop_mode": "pagination",
-      "loop_limit": 2,
-      "pagination_mode": "page_number",
+      "loop_mode": "items",
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -36,7 +35,6 @@
     {
       "name": "extract_body",
       "xpath": "//div[@id='article']",
-      "exclude_xpath": ".//div[contains(@class, 'center_img')] | .//div[contains(@class, 'ranking')]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -44,5 +42,5 @@
     }
   ],
   "created_at": "2026-05-14T21:00:00+09:00",
-  "updated_at": "2026-05-14T20:36:59+09:00"
+  "updated_at": "2026-05-17T13:55:33+09:00"
 }

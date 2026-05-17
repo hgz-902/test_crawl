@@ -19,7 +19,7 @@
       "xpath_2": "//*[@id=\"l-left-scroll-in\"]/div/div/div/ul/li[2]/div/dl/dt/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"

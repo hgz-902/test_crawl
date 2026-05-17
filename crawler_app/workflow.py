@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from email.header import decode_header
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote_plus, unquote, urljoin, urlparse
 import json
 import re
@@ -67,6 +67,24 @@ class WorkflowExecution:
     @property
     def success(self) -> bool:
         return self.error is None and all(record.get("success", False) for record in self.records)
+
+
+RecordPolicy = Callable[[dict[str, Any]], Any]
+
+
+class WorkflowRecordPolicyStop(RuntimeError):
+    """Raised internally when an optional record policy asks to stop a workflow."""
+
+    def __init__(
+        self,
+        reason: str = "record_policy_stopped",
+        metadata: dict[str, Any] | None = None,
+        records: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.metadata = metadata or {}
+        self.records = records or []
 
 
 def _build_record_key(search_term_index: int | None, item_index: int | None) -> str:
@@ -598,7 +616,7 @@ def preview_workflow_config(config: dict[str, Any], timeout: int = 30) -> dict[s
     }
 
 
-def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
+def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | None = None) -> WorkflowExecution:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
 
@@ -630,7 +648,10 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                 config=config,
                 parser_name=parser_name,
                 timeout_ms=timeout_ms,
+                record_policy=record_policy,
             )
+        except WorkflowRecordPolicyStop as exc:
+            _mark_record_policy_stop(execution, exc)
         except Exception as exc:
             execution.error = str(exc)
             execution.diagnostics["error_type"] = type(exc).__name__
@@ -710,6 +731,7 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                         parse_pause_seconds=parse_pause_seconds,
                         page_loop_step_index=click_loop_step_indexes[0],
                         item_loop_step_index=click_loop_step_indexes[1],
+                        record_policy=record_policy,
                     )
                     execution.records.extend(records)
                     execution.downloaded_files.extend(
@@ -768,9 +790,9 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                             board_item_number=page_number,
                             board_page_number=page_number,
                         )
-                        execution.records.append(record)
-                        execution.downloaded_files.extend(record.get("downloaded_files", []))
-                        execution.extracted_files.extend(record.get("extracted_files", []))
+                        if _append_execution_record(execution, record, record_policy):
+                            execution.downloaded_files.extend(record.get("downloaded_files", []))
+                            execution.extracted_files.extend(record.get("extracted_files", []))
                 elif len(click_loop_step_indexes) == 2:
                     records = _run_nested_click_loops(
                         browser=context,
@@ -784,6 +806,7 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                         parse_pause_seconds=parse_pause_seconds,
                         page_loop_step_index=click_loop_step_indexes[0],
                         item_loop_step_index=click_loop_step_indexes[1],
+                        record_policy=record_policy,
                     )
                     execution.records.extend(records)
                     execution.downloaded_files.extend(
@@ -844,9 +867,9 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                             primary_loop_step_index=primary_loop_step_index,
                             board_item_number=item_number,
                         )
-                        execution.records.append(record)
-                        execution.downloaded_files.extend(record.get("downloaded_files", []))
-                        execution.extracted_files.extend(record.get("extracted_files", []))
+                        if _append_execution_record(execution, record, record_policy):
+                            execution.downloaded_files.extend(record.get("downloaded_files", []))
+                            execution.extracted_files.extend(record.get("extracted_files", []))
                 else:
                     record = _run_one_item(
                         context,
@@ -861,9 +884,11 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                         output_dir_override=term_output_dir,
                         primary_loop_step_index=primary_loop_step_index,
                     )
-                    execution.records.append(record)
-                    execution.downloaded_files.extend(record.get("downloaded_files", []))
-                    execution.extracted_files.extend(record.get("extracted_files", []))
+                    if _append_execution_record(execution, record, record_policy):
+                        execution.downloaded_files.extend(record.get("downloaded_files", []))
+                        execution.extracted_files.extend(record.get("extracted_files", []))
+        except WorkflowRecordPolicyStop as exc:
+            _mark_record_policy_stop(execution, exc)
         except Exception as exc:
             execution.error = str(exc)
             execution.diagnostics["error_type"] = type(exc).__name__
@@ -1161,13 +1186,19 @@ def _save_filtered_parser_outputs(
         execution.diagnostics["nonfilter_records_file"] = str(nonfilter_snapshot)
 
 
-def _fetch_parser_items(parser_name: str, source_url: str, *, timeout: float) -> tuple[list[dict[str, Any]], str]:
+def _fetch_parser_items(
+    parser_name: str,
+    source_url: str,
+    *,
+    timeout: float,
+    item_limit: int | None = None,
+) -> tuple[list[dict[str, Any]], str]:
     if parser_name == DAUM_NEWS_API_ATTR:
-        return fetch_daum_news_api_items(source_url, timeout=timeout)
+        return fetch_daum_news_api_items(source_url, timeout=timeout, item_limit=item_limit)
     if parser_name == GOOGLE_NEWS_RSS_ATTR:
         return fetch_google_news_rss_items(source_url, timeout=timeout)
     if parser_name == NAVER_NEWS_API_ATTR:
-        return fetch_naver_news_api_items(source_url, timeout=timeout)
+        return fetch_naver_news_api_items(source_url, timeout=timeout, item_limit=item_limit)
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
 
 
@@ -1338,6 +1369,7 @@ def _run_parser_workflow(
     config: dict[str, Any],
     parser_name: str,
     timeout_ms: int,
+    record_policy: RecordPolicy | None = None,
 ) -> None:
     if parser_name not in SUPPORTED_PARSER_ATTRS:
         raise RuntimeError(f"Unsupported parser attr: {parser_name}")
@@ -1359,31 +1391,17 @@ def _run_parser_workflow(
             len(effective_terms),
         )
         source_url = _render_template_value(str(config["start_url"]), search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout_ms / 1000)
+        items, final_url = _fetch_parser_items(
+            parser_name,
+            source_url,
+            timeout=timeout_ms / 1000,
+            item_limit=item_limit,
+        )
         if item_limit is not None:
             items = items[:item_limit]
-        total_items += len(items)
-        output_path = _save_parser_items(
-            parser_name=parser_name,
-            output_dir=term_output_dir,
-            search_term=search_term,
-            source_url=source_url,
-            final_url=final_url,
-            items=items,
-        )
-        execution.extracted_files.append(str(output_path))
-        execution.diagnostics.setdefault("search_term_runs", []).append(
-            {
-                "search_term_index": search_term_index,
-                "search_term": search_term,
-                "item_count": len(items),
-                "empty": len(items) == 0,
-                "rss_url": source_url,
-                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
-                "final_url": final_url,
-                "output_file": str(output_path),
-            }
-        )
+        accepted_items: list[dict[str, Any]] = []
+        accepted_records: list[dict[str, Any]] = []
+        stop_exc: WorkflowRecordPolicyStop | None = None
         for item_index, item in enumerate(items):
             record_key = _build_record_key(search_term_index, item_index)
             record = _build_parser_record(
@@ -1397,9 +1415,47 @@ def _run_parser_workflow(
                 search_term_count=len(effective_terms),
                 rss_url=source_url,
                 final_url=final_url,
-                output_file=str(output_path),
+                output_file="",
             )
-            execution.records.append(record)
+            include, stop, reason, metadata = _record_policy_decision(record_policy, record)
+            if include:
+                accepted_items.append(item)
+                accepted_records.append(record)
+            if stop:
+                stop_exc = WorkflowRecordPolicyStop(reason=reason, metadata=metadata, records=accepted_records)
+                break
+
+        total_items += len(accepted_items)
+        output_path = _save_parser_items(
+            parser_name=parser_name,
+            output_dir=term_output_dir,
+            search_term=search_term,
+            source_url=source_url,
+            final_url=final_url,
+            items=accepted_items,
+        )
+        for record in accepted_records:
+            record["output_file"] = str(output_path)
+            for step in record.get("steps") or []:
+                if isinstance(step, dict):
+                    step["output_file"] = str(output_path)
+        execution.extracted_files.append(str(output_path))
+        execution.diagnostics.setdefault("search_term_runs", []).append(
+            {
+                "search_term_index": search_term_index,
+                "search_term": search_term,
+                "item_count": len(accepted_items),
+                "empty": len(accepted_items) == 0,
+                "rss_url": source_url,
+                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
+                "final_url": final_url,
+                "output_file": str(output_path),
+                "fetched_item_count": len(items),
+            }
+        )
+        if stop_exc is not None:
+            raise stop_exc
+        execution.records.extend(accepted_records)
 
     execution.diagnostics["parser_item_count"] = total_items
 
@@ -1478,7 +1534,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
 
     for search_term_index, search_term in enumerate(effective_terms):
         source_url = _render_template_value(start_url, search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout)
+        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout, item_limit=item_limit)
         if item_limit is not None:
             items = items[:item_limit]
         total_count += len(items)
@@ -1517,6 +1573,53 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
     }
 
 
+def _record_policy_decision(record_policy: RecordPolicy | None, record: dict[str, Any]) -> tuple[bool, bool, str, dict[str, Any]]:
+    if record_policy is None:
+        return True, False, "", {}
+
+    decision = record_policy(record)
+    if decision is None:
+        return True, False, "", {}
+    if isinstance(decision, bool):
+        return decision, not decision, "record_policy_stopped", {}
+    if isinstance(decision, dict):
+        include = bool(decision.get("include", True))
+        stop = bool(decision.get("stop", False))
+        reason = str(decision.get("reason") or "record_policy_stopped")
+        metadata = decision.get("metadata")
+        return include, stop, reason, metadata if isinstance(metadata, dict) else {}
+
+    return bool(decision), False, "", {}
+
+
+def _append_record(records: list[dict[str, Any]], record: dict[str, Any], record_policy: RecordPolicy | None) -> bool:
+    include, stop, reason, metadata = _record_policy_decision(record_policy, record)
+    if include:
+        records.append(record)
+    if stop:
+        raise WorkflowRecordPolicyStop(reason=reason, metadata=metadata, records=list(records))
+    return include
+
+
+def _append_execution_record(
+    execution: WorkflowExecution,
+    record: dict[str, Any],
+    record_policy: RecordPolicy | None,
+) -> bool:
+    return _append_record(execution.records, record, record_policy)
+
+
+def _mark_record_policy_stop(execution: WorkflowExecution, exc: WorkflowRecordPolicyStop) -> None:
+    for record in exc.records:
+        if record not in execution.records:
+            execution.records.append(record)
+            execution.downloaded_files.extend(record.get("downloaded_files", []))
+            execution.extracted_files.extend(record.get("extracted_files", []))
+    execution.diagnostics["record_policy_stopped"] = True
+    execution.diagnostics["record_policy_stop_reason"] = exc.reason
+    execution.diagnostics["record_policy_stop_metadata"] = exc.metadata
+
+
 def _run_nested_click_loops(
     browser: Any,
     config: dict[str, Any],
@@ -1529,6 +1632,7 @@ def _run_nested_click_loops(
     parse_pause_seconds: int,
     page_loop_step_index: int,
     item_loop_step_index: int,
+    record_policy: RecordPolicy | None = None,
 ) -> list[dict[str, Any]]:
     steps = config.get("steps") or []
     page_loop_step = steps[page_loop_step_index - 1]
@@ -1645,7 +1749,7 @@ def _run_nested_click_loops(
                 board_item_number=item_number,
             )
             record["steps"].insert(0, dict(page_loop_step_log))
-            records.append(record)
+            _append_record(records, record, record_policy)
 
     return records
 
@@ -1662,6 +1766,7 @@ def _run_nested_pagination_click_loops(
     parse_pause_seconds: int,
     page_loop_step_index: int,
     item_loop_step_index: int,
+    record_policy: RecordPolicy | None = None,
 ) -> list[dict[str, Any]]:
     steps = config.get("steps") or []
     page_loop_step = steps[page_loop_step_index - 1]
@@ -1781,7 +1886,7 @@ def _run_nested_pagination_click_loops(
                 board_item_number=item_number,
             )
             record["steps"].insert(0, dict(page_loop_step_log))
-            records.append(record)
+            _append_record(records, record, record_policy)
 
     return records
 
