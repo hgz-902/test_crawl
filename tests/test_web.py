@@ -246,6 +246,37 @@ class WebLoggingTests(unittest.TestCase):
         self.assertIn("2026-05-18 15:49:00", response.text)
         self.assertNotIn("2026-05-18T06:49:00+00:00", response.text)
 
+    def test_orchestration_page_does_not_fake_scheduler_rows_from_enabled_settings(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": ["SK"],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "jobs": {"sample": {"enabled": True, "interval": {"value": 15, "unit": "minutes"}}},
+        }
+
+        with patch.dict(os.environ, {"SMTP_HOST": "", "SMTP_PASSWORD": ""}), TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+            web, "load_scheduler_registry", return_value=[]
+        ):
+            response = client.get("/orchestration")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("현재 등록된 오케스트레이션 스케줄러가 없습니다", response.text)
+        self.assertNotIn(web.managed_task_name("sample"), response.text)
+
     def test_orchestration_templates_do_not_contain_known_mojibake_markers(self) -> None:
         markers = ("?ㅼ", "理", "諛", "湲", "以묐", "醫", "遺?")
         for template_name in ("layout.html", "orchestration.html"):

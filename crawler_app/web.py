@@ -456,37 +456,9 @@ def _smtp_ready() -> bool:
 def _scheduler_context(settings: dict[str, Any], jobs: list[Any]) -> tuple[list[dict[str, Any]], str]:
     try:
         registry_entries = load_scheduler_registry()
-        if not registry_entries and any(
-            isinstance(job_settings, dict) and job_settings.get("enabled")
-            for job_settings in settings.get("jobs", {}).values()
-        ):
-            registry_entries = _registry_entries_from_settings(settings, jobs)
     except Exception as exc:
         return [], str(exc)
     return _scheduler_rows(settings, jobs, registry_entries), ""
-
-
-def _registry_entries_from_settings(settings: dict[str, Any], jobs: list[Any]) -> list[dict[str, Any]]:
-    entries: list[dict[str, Any]] = []
-    job_settings_by_id = settings.get("jobs") if isinstance(settings.get("jobs"), dict) else {}
-    for job in jobs:
-        job_settings = job_settings_by_id.get(job.job_id)
-        if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
-            continue
-        entries.append(
-            {
-                "task_name": managed_task_name(job.job_id),
-                "job_id": job.job_id,
-                "config_name": job.config_name,
-                "output_dir": job.output_dir,
-                "search_terms_count": len(job.search_terms),
-                "filter_terms_count": len(job.filter_terms),
-                "interval": normalize_interval(job_settings.get("interval")),
-                "allow_email_send": bool(settings.get("allow_email_send")),
-                "registered_at": "",
-            }
-        )
-    return entries
 
 
 def _scheduler_rows(settings: dict[str, Any], jobs: list[Any], registry_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -59,10 +59,10 @@
 
 - Date: 2026-05-18 KST
 - Repository: `C:\AI_JOB\firstproject\crawler_project\crawler-test-codexapp`
-- Branch: `codex/crawler-test-codexapp`
-- Remote target: `origin/codex/crawler-test-codexapp` (`https://github.com/hgz-902/test_crawl.git`)
+- Branch: `dev/crawler-current`
+- Remote target: `origin/dev/crawler-current` (`https://github.com/K-Ternag/crawlService.git`)
 - Commit message: `오케스트레이션 병렬 스케줄러와 관리 UI 개선`
-- Approved push target: `https://github.com/hgz-902/test_crawl/tree/codex/crawler-test-codexapp`
+- Approved push target: `https://github.com/K-Ternag/crawlService/tree/dev/crawler-current`
 
 ### 요청 / 작업 단위
 
@@ -193,7 +193,7 @@
 ### Push Command
 
 ```powershell
-git push -u origin codex/crawler-test-codexapp:codex/crawler-test-codexapp
+git push -u origin dev/crawler-current:dev/crawler-current
 ```
 
 ### Push Result

@@ -246,6 +246,10 @@ td {
   border-spacing: 0;
 }
 
+.orchestration-table tbody tr {
+  height: 80px;
+}
+
 .orchestration-table thead tr,
 .orchestration-table tbody tr {
   position: relative;
@@ -267,6 +271,16 @@ td {
 .orchestration-table th,
 .orchestration-table td {
   border-bottom: 0;
+}
+
+.orchestration-table tbody td {
+  height: 80px;
+}
+
+.orchestration-table .url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scheduler-table form {

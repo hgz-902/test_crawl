@@ -4,9 +4,9 @@
   "output_dir": "outputs/mcee_10598",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": true,
+  "headless": false,
   "ignore_https_errors": false,
-  "notes": "",
+  "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [
     "0",
     "10",
@@ -56,11 +56,11 @@
       "xpath_2": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[2]/a",
       "loop": true,
       "loop_mode": "items",
+      "loop_limit": 4,
       "action": "download",
-      "wait_state": "attached",
-      "loop_limit": 4
+      "wait_state": "attached"
     }
   ],
   "created_at": "2026-04-27T18:16:30+09:00",
-  "updated_at": "2026-05-12T10:47:01+09:00"
+  "updated_at": "2026-05-18T15:54:47+09:00"
 }
