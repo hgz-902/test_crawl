@@ -4,7 +4,7 @@
   "output_dir": "outputs/motir_news",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": true,
+  "headless": false,
   "ignore_https_errors": false,
   "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [

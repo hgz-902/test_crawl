@@ -242,7 +242,7 @@ class WebLoggingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Sample", response.text)
         self.assertIn("SMTP dry-run", response.text)
-        self.assertIn("등록된 스케줄러", response.text)
+        self.assertIn("모니터링 상태", response.text)
         self.assertIn("2026-05-18 15:49:00", response.text)
         self.assertNotIn("2026-05-18T06:49:00+00:00", response.text)
 
@@ -314,17 +314,12 @@ class WebLoggingTests(unittest.TestCase):
             web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
         ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
             web.ORCHESTRATION_STORE, "load_history", return_value=[]
-        ), patch.object(
-            web,
-            "sync_windows_scheduled_tasks",
-            return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
         ):
             response = client.post(
                 "/orchestration/save",
                 data={
                     "enabled_jobs": "sample",
-                    "interval_value__sample": "30",
-                    "interval_unit__sample": "minutes",
+                    "cron__sample": "*/30 * * * *",
                     "keywords": "SK\ncarbon",
                     "recipients": "to@example.com",
                     "sender": "from@example.com",
@@ -336,7 +331,7 @@ class WebLoggingTests(unittest.TestCase):
         self.assertEqual(saved_payloads[0]["keywords"], ["SK", "carbon"])
         self.assertTrue(saved_payloads[0]["allow_email_send"])
         self.assertTrue(saved_payloads[0]["jobs"]["sample"]["enabled"])
-        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["interval"], {"value": 30, "unit": "minutes"})
+        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["cron"], "*/30 * * * *")
 
     def test_orchestration_save_writes_real_store(self) -> None:
         fake_job = type(
@@ -360,17 +355,12 @@ class WebLoggingTests(unittest.TestCase):
             settings = store.load_settings()
             with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
                 web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
-            ), patch.object(
-                web,
-                "sync_windows_scheduled_tasks",
-                return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
             ):
                 response = client.post(
                     "/orchestration/save",
                     data={
                         "enabled_jobs": "sample",
-                        "interval_value__sample": "7",
-                        "interval_unit__sample": "minutes",
+                        "cron__sample": "*/7 * * * *",
                         "keywords": "SK\ncarbon",
                         "recipients": "to@example.com",
                         "sender": "from@example.com",
@@ -381,9 +371,102 @@ class WebLoggingTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(reloaded["keywords"], ["SK", "carbon"])
             self.assertTrue(reloaded["jobs"]["sample"]["enabled"])
-            self.assertEqual(reloaded["jobs"]["sample"]["interval"], {"value": 7, "unit": "minutes"})
+            self.assertEqual(reloaded["jobs"]["sample"]["cron"], "*/7 * * * *")
 
-    def test_orchestration_save_force_due_runs_enabled_jobs_without_email_by_default(self) -> None:
+    def test_orchestration_save_rejects_invalid_cron_without_saving(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": False,
+            "jobs": {"sample": {"enabled": False, "cron": "0 * * * *", "interval": {"value": 1, "unit": "hours"}}},
+        }
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings") as save_settings, patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ):
+            response = client.post(
+                "/orchestration/save",
+                data={
+                    "enabled_jobs": "sample",
+                    "cron__sample": "not cron",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Cron 설정 오류", response.text)
+        save_settings.assert_not_called()
+
+    def test_orchestration_save_clears_stale_next_run_when_cron_changes(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": False,
+            "jobs": {
+                "sample": {
+                    "enabled": True,
+                    "cron": "0 * * * *",
+                    "interval": {"value": 1, "unit": "hours"},
+                    "next_run_at": "2026-05-18T10:00:00+00:00",
+                }
+            },
+        }
+        saved_payloads: list[dict[str, object]] = []
+
+        def fake_save(payload: dict[str, object]) -> dict[str, object]:
+            saved_payloads.append(payload)
+            return payload
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ):
+            response = client.post(
+                "/orchestration/save",
+                data={
+                    "enabled_jobs": "sample",
+                    "cron__sample": "*/15 * * * *",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["next_run_at"], "")
+
+    def test_orchestration_save_does_not_run_batch(self) -> None:
         fake_job = type(
             "FakeJob",
             (),
@@ -403,26 +486,6 @@ class WebLoggingTests(unittest.TestCase):
             "allow_email_send": False,
             "jobs": {"sample": {"enabled": False, "interval": {"value": 1, "unit": "hours"}}},
         }
-        run_calls: list[dict[str, object]] = []
-
-        def fake_run_batch(selected, **kwargs):
-            run_calls.append({"selected": list(selected), **kwargs})
-            return type(
-                "FakeBatch",
-                (),
-                {
-                    "batch_id": "b1",
-                    "status": "completed",
-                    "total": 1,
-                    "succeeded": 1,
-                    "failed": 0,
-                    "duplicate_stopped": 0,
-                    "skipped_not_due": 0,
-                    "results": [],
-                    "started_at": "2026-05-16T00:00:00+00:00",
-                    "finished_at": "2026-05-16T00:00:01+00:00",
-                },
-            )()
 
         with TestClient(web.app) as client, patch.object(
             web,
@@ -430,42 +493,20 @@ class WebLoggingTests(unittest.TestCase):
             return_value=(settings, [fake_job]),
         ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
             web.ORCHESTRATION_STORE, "load_history", return_value=[]
-        ), patch.object(
-            web,
-            "sync_windows_scheduled_tasks",
-            return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
-        ), patch.object(web, "run_batch", side_effect=fake_run_batch), patch.object(
-            web,
-            "batch_to_dict",
-            return_value={
-                "batch_id": "b1",
-                "status": "completed",
-                "total": 1,
-                "succeeded": 1,
-                "failed": 0,
-                "duplicate_stopped": 0,
-                "skipped_not_due": 0,
-                "results": [],
-            },
         ):
             response = client.post(
                 "/orchestration/save",
                 data={
                     "enabled_jobs": "sample",
-                    "interval_value__sample": "10",
-                    "interval_unit__sample": "minutes",
+                    "cron__sample": "*/10 * * * *",
                     "keywords": "SK",
                     "recipients": "to@example.com",
                     "sender": "from@example.com",
-                    "force_due": "1",
                 },
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("즉시 실행을 완료했습니다", response.text)
-        self.assertEqual(run_calls[0]["selected"], ["sample"])
-        self.assertTrue(run_calls[0]["force_due"])
-        self.assertFalse(run_calls[0]["allow_email_send"])
+        self.assertIn("Windows Task Scheduler는 변경하지 않았습니다", response.text)
 
     def test_orchestration_save_reports_scheduler_sync_failure(self) -> None:
         fake_job = type(
@@ -488,21 +529,118 @@ class WebLoggingTests(unittest.TestCase):
             settings = store.load_settings()
             with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
                 web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
-            ), patch.object(web, "sync_windows_scheduled_tasks", side_effect=RuntimeError("scheduler denied")):
+            ):
                 response = client.post(
                     "/orchestration/save",
                     data={
                         "enabled_jobs": "sample",
-                        "interval_value__sample": "15",
-                        "interval_unit__sample": "minutes",
+                        "cron__sample": "*/15 * * * *",
                         "keywords": "SK",
                         "recipients": "to@example.com",
                         "sender": "from@example.com",
                     },
                 )
 
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("Windows Task Scheduler", response.text)
+        self.assertEqual(response.status_code, 200)
+
+    def test_orchestration_monitoring_start_syncs_scheduler(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": True,
+            "jobs": {"sample": {"enabled": False, "cron": "0 * * * *", "interval": {"value": 1, "unit": "hours"}}},
+        }
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ), patch.object(
+            web,
+            "sync_windows_scheduled_tasks",
+            return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "deleted": [], "skipped_reason": ""})(),
+        ) as sync_tasks:
+            response = client.post(
+                "/orchestration/schedulers/sync",
+                data={
+                    "enabled_jobs": "sample",
+                    "cron__sample": "*/5 * * * *",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                    "allow_email_send": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        sync_tasks.assert_called_once()
+        self.assertIn("모니터링을 시작했습니다", response.text)
+
+    def test_orchestration_monitoring_start_rejects_unsupported_cron_before_save(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": True,
+            "jobs": {"sample": {"enabled": False, "cron": "0 * * * *", "interval": {"value": 1, "unit": "hours"}}},
+        }
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings") as save_settings, patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ), patch.object(web, "sync_windows_scheduled_tasks") as sync_tasks:
+            response = client.post(
+                "/orchestration/schedulers/sync",
+                data={
+                    "enabled_jobs": "sample",
+                    "cron__sample": "0 0 1 1 *",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                    "allow_email_send": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("모니터링 시작 실패", response.text)
+        save_settings.assert_not_called()
+        sync_tasks.assert_not_called()
+
+    def test_orchestration_monitoring_start_rejects_cross_origin_post(self) -> None:
+        with TestClient(web.app) as client:
+            response = client.post(
+                "/orchestration/schedulers/sync",
+                headers={"Origin": "https://attacker.example"},
+                data={},
+            )
+
+        self.assertEqual(response.status_code, 403)
 
     def test_orchestration_run_passes_force_due_and_email_permission(self) -> None:
         fake_job = type(

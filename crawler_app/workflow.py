@@ -61,6 +61,7 @@ class WorkflowExecution:
     records: list[dict[str, Any]] = field(default_factory=list)
     downloaded_files: list[str] = field(default_factory=list)
     extracted_files: list[str] = field(default_factory=list)
+    generated_files: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
@@ -717,178 +718,180 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
         )
         try:
             for search_term_index, search_term in enumerate(search_terms or [None]):
-                term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
-                if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
-                    records = _run_nested_pagination_click_loops(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        page_loop_step_index=click_loop_step_indexes[0],
-                        item_loop_step_index=click_loop_step_indexes[1],
-                        record_policy=record_policy,
-                    )
-                    execution.records.extend(records)
-                    execution.downloaded_files.extend(
-                        path for record in records for path in record.get("downloaded_files", [])
-                    )
-                    execution.extracted_files.extend(
-                        path for record in records for path in record.get("extracted_files", [])
-                    )
-                elif primary_loop_mode == "pagination":
-                    page_numbers = _resolve_item_numbers_for_term(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        primary_loop_step_index=primary_loop_step_index,
-                        primary_loop_spec=None,
-                        primary_pagination_spec=primary_pagination_spec,
-                        board_repeat_spec=board_repeat_spec,
-                        configured_repeat=configured_repeat,
-                    )
-                    page_count = len(page_numbers)
-                    execution.diagnostics.setdefault("search_term_runs", []).append(
-                        {
-                            "search_term_index": search_term_index,
-                            "search_term": search_term,
-                            "board_item_count": page_count,
-                            "empty": page_count == 0,
-                        }
-                    )
-                    execution.diagnostics["board_item_count"] = page_count
-                    if page_count <= 0:
-                        continue
-                    limit = page_count
-                    if primary_loop_limit is not None:
-                        limit = min(limit, primary_loop_limit)
-                    for index, page_number in enumerate(page_numbers[:limit]):
-                        record = _run_one_item(
-                            context,
-                            config,
-                            index,
-                            timeout_ms,
-                            step_wait_ms,
-                            parse_pause_seconds=parse_pause_seconds,
-                            board_pagination_spec=primary_pagination_spec,
-                            board_repeat_spec=board_repeat_spec,
+                try:
+                    term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
+                    if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
+                        records = _run_nested_pagination_click_loops(
+                            browser=context,
+                            config=config,
                             search_term=search_term,
                             search_term_index=search_term_index,
                             search_term_count=len(search_terms) or 1,
-                            output_dir_override=term_output_dir,
-                            primary_loop_step_index=primary_loop_step_index,
-                            board_item_number=page_number,
-                            board_page_number=page_number,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            page_loop_step_index=click_loop_step_indexes[0],
+                            item_loop_step_index=click_loop_step_indexes[1],
+                            record_policy=record_policy,
                         )
-                        if _append_execution_record(execution, record, record_policy):
-                            execution.downloaded_files.extend(record.get("downloaded_files", []))
-                            execution.extracted_files.extend(record.get("extracted_files", []))
-                elif len(click_loop_step_indexes) == 2:
-                    records = _run_nested_click_loops(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        page_loop_step_index=click_loop_step_indexes[0],
-                        item_loop_step_index=click_loop_step_indexes[1],
-                        record_policy=record_policy,
-                    )
-                    execution.records.extend(records)
-                    execution.downloaded_files.extend(
-                        path for record in records for path in record.get("downloaded_files", [])
-                    )
-                    execution.extracted_files.extend(
-                        path for record in records for path in record.get("extracted_files", [])
-                    )
-                elif primary_loop_step_index is not None or board.get("enabled"):
-                    board_item_numbers = _resolve_item_numbers_for_term(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        primary_loop_step_index=primary_loop_step_index,
-                        primary_loop_spec=primary_loop_spec,
-                        primary_pagination_spec=primary_pagination_spec,
-                        board_repeat_spec=board_repeat_spec,
-                        configured_repeat=configured_repeat,
-                    )
-                    board_item_count = len(board_item_numbers)
-                    execution.diagnostics.setdefault("search_term_runs", []).append(
-                        {
-                            "search_term_index": search_term_index,
-                            "search_term": search_term,
-                            "board_item_count": board_item_count,
-                            "empty": board_item_count == 0,
-                        }
-                    )
-                    execution.diagnostics["board_item_count"] = board_item_count
-                    if board_item_count <= 0:
-                        continue
-                    limit = board_item_count
-                    if primary_loop_limit is not None:
-                        limit = min(limit, primary_loop_limit)
-                    elif board.get("enabled"):
-                        limit = min(limit, int(board.get("limit") or board_item_count))
+                        execution.records.extend(records)
+                        execution.downloaded_files.extend(
+                            path for record in records for path in record.get("downloaded_files", [])
+                        )
+                        execution.extracted_files.extend(
+                            path for record in records for path in record.get("extracted_files", [])
+                        )
+                    elif primary_loop_mode == "pagination":
+                        page_numbers = _resolve_item_numbers_for_term(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            primary_loop_step_index=primary_loop_step_index,
+                            primary_loop_spec=None,
+                            primary_pagination_spec=primary_pagination_spec,
+                            board_repeat_spec=board_repeat_spec,
+                            configured_repeat=configured_repeat,
+                        )
+                        page_count = len(page_numbers)
+                        execution.diagnostics.setdefault("search_term_runs", []).append(
+                            {
+                                "search_term_index": search_term_index,
+                                "search_term": search_term,
+                                "board_item_count": page_count,
+                                "empty": page_count == 0,
+                            }
+                        )
+                        execution.diagnostics["board_item_count"] = page_count
+                        if page_count <= 0:
+                            continue
+                        limit = page_count
+                        if primary_loop_limit is not None:
+                            limit = min(limit, primary_loop_limit)
+                        for index, page_number in enumerate(page_numbers[:limit]):
+                            record = _run_one_item(
+                                context,
+                                config,
+                                index,
+                                timeout_ms,
+                                step_wait_ms,
+                                parse_pause_seconds=parse_pause_seconds,
+                                board_pagination_spec=primary_pagination_spec,
+                                board_repeat_spec=board_repeat_spec,
+                                search_term=search_term,
+                                search_term_index=search_term_index,
+                                search_term_count=len(search_terms) or 1,
+                                output_dir_override=term_output_dir,
+                                primary_loop_step_index=primary_loop_step_index,
+                                board_item_number=page_number,
+                                board_page_number=page_number,
+                            )
+                            if _append_execution_record(execution, record, record_policy):
+                                execution.downloaded_files.extend(record.get("downloaded_files", []))
+                                execution.extracted_files.extend(record.get("extracted_files", []))
+                    elif len(click_loop_step_indexes) == 2:
+                        records = _run_nested_click_loops(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            page_loop_step_index=click_loop_step_indexes[0],
+                            item_loop_step_index=click_loop_step_indexes[1],
+                            record_policy=record_policy,
+                        )
+                        execution.records.extend(records)
+                        execution.downloaded_files.extend(
+                            path for record in records for path in record.get("downloaded_files", [])
+                        )
+                        execution.extracted_files.extend(
+                            path for record in records for path in record.get("extracted_files", [])
+                        )
+                    elif primary_loop_step_index is not None or board.get("enabled"):
+                        board_item_numbers = _resolve_item_numbers_for_term(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            primary_loop_step_index=primary_loop_step_index,
+                            primary_loop_spec=primary_loop_spec,
+                            primary_pagination_spec=primary_pagination_spec,
+                            board_repeat_spec=board_repeat_spec,
+                            configured_repeat=configured_repeat,
+                        )
+                        board_item_count = len(board_item_numbers)
+                        execution.diagnostics.setdefault("search_term_runs", []).append(
+                            {
+                                "search_term_index": search_term_index,
+                                "search_term": search_term,
+                                "board_item_count": board_item_count,
+                                "empty": board_item_count == 0,
+                            }
+                        )
+                        execution.diagnostics["board_item_count"] = board_item_count
+                        if board_item_count <= 0:
+                            continue
+                        limit = board_item_count
+                        if primary_loop_limit is not None:
+                            limit = min(limit, primary_loop_limit)
+                        elif board.get("enabled"):
+                            limit = min(limit, int(board.get("limit") or board_item_count))
 
-                    for index, item_number in enumerate(board_item_numbers[:limit]):
+                        for index, item_number in enumerate(board_item_numbers[:limit]):
+                            record = _run_one_item(
+                                context,
+                                config,
+                                index,
+                                timeout_ms,
+                                step_wait_ms,
+                                parse_pause_seconds=parse_pause_seconds,
+                                board_loop_spec=primary_loop_spec,
+                                board_repeat_spec=board_repeat_spec,
+                                search_term=search_term,
+                                search_term_index=search_term_index,
+                                search_term_count=len(search_terms) or 1,
+                                output_dir_override=term_output_dir,
+                                primary_loop_step_index=primary_loop_step_index,
+                                board_item_number=item_number,
+                            )
+                            if _append_execution_record(execution, record, record_policy):
+                                execution.downloaded_files.extend(record.get("downloaded_files", []))
+                                execution.extracted_files.extend(record.get("extracted_files", []))
+                    else:
                         record = _run_one_item(
                             context,
                             config,
-                            index,
+                            None,
                             timeout_ms,
                             step_wait_ms,
                             parse_pause_seconds=parse_pause_seconds,
-                            board_loop_spec=primary_loop_spec,
-                            board_repeat_spec=board_repeat_spec,
                             search_term=search_term,
                             search_term_index=search_term_index,
                             search_term_count=len(search_terms) or 1,
                             output_dir_override=term_output_dir,
                             primary_loop_step_index=primary_loop_step_index,
-                            board_item_number=item_number,
                         )
                         if _append_execution_record(execution, record, record_policy):
                             execution.downloaded_files.extend(record.get("downloaded_files", []))
                             execution.extracted_files.extend(record.get("extracted_files", []))
-                else:
-                    record = _run_one_item(
-                        context,
-                        config,
-                        None,
-                        timeout_ms,
-                        step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir_override=term_output_dir,
-                        primary_loop_step_index=primary_loop_step_index,
-                    )
-                    if _append_execution_record(execution, record, record_policy):
-                        execution.downloaded_files.extend(record.get("downloaded_files", []))
-                        execution.extracted_files.extend(record.get("extracted_files", []))
-        except WorkflowRecordPolicyStop as exc:
-            _mark_record_policy_stop(execution, exc)
+                except WorkflowRecordPolicyStop as exc:
+                    _mark_record_policy_stop(execution, exc)
+                    continue
         except Exception as exc:
             execution.error = str(exc)
             execution.diagnostics["error_type"] = type(exc).__name__
@@ -1048,6 +1051,7 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
     raw_records = list(execution.records)
+    raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
     filter_enabled = bool(filter_terms)
     matched_root = _result_category_root(execution.output_dir, "filter")
@@ -1099,7 +1103,13 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
             )
             execution.diagnostics["nonfilter_records_file"] = str(nonfilter_path)
 
-    _cleanup_empty_dirs(execution.output_dir, protected_roots=[matched_root, *([nonfilter_root] if nonfilter_root is not None else [])])
+    protected_roots = [matched_root, *([nonfilter_root] if nonfilter_root is not None else [])]
+    _delete_unclassified_output_files(
+        execution.output_dir,
+        protected_roots=protected_roots,
+        candidate_files=raw_generated_files,
+    )
+    _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
 
     matched_path = _save_workflow_record_snapshot(
         matched_root,
@@ -1110,6 +1120,32 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     )
     execution.diagnostics["matched_records_file"] = str(matched_path)
     execution.diagnostics["manifest_file"] = str(matched_path)
+
+
+def _delete_unclassified_output_files(output_dir: Path, protected_roots: list[Path], candidate_files: list[str]) -> None:
+    normalized_protected = [root.resolve() for root in protected_roots if root is not None]
+    if not output_dir.exists():
+        return
+    candidates: set[Path] = set()
+    for value in candidate_files:
+        path = Path(value)
+        if not path.is_absolute():
+            path = path if path.exists() else output_dir / path
+        candidates.add(path)
+        if path.parent.exists() and output_dir.resolve() in path.parent.resolve().parents:
+            candidates.update(candidate for candidate in path.parent.rglob("*") if candidate.is_file())
+    for path in candidates:
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if output_dir.resolve() not in resolved.parents:
+            continue
+        if any(resolved == root or root in resolved.parents for root in normalized_protected):
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
 
 
 def _save_filtered_parser_outputs(
@@ -1150,6 +1186,11 @@ def _save_filtered_parser_outputs(
             items=matched_items,
             filter_terms=filter_terms,
         )
+        for record in matched_by_term.get(search_term_index, []):
+            record["output_file"] = str(matched_path)
+            for step in record.get("steps") or []:
+                if isinstance(step, dict):
+                    step["output_file"] = str(matched_path)
         matched_files.append(str(matched_path))
         run["output_file"] = str(matched_path)
         if nonfilter_root is not None:
@@ -1453,9 +1494,10 @@ def _run_parser_workflow(
                 "fetched_item_count": len(items),
             }
         )
-        if stop_exc is not None:
-            raise stop_exc
         execution.records.extend(accepted_records)
+        if stop_exc is not None:
+            _mark_record_policy_stop(execution, stop_exc)
+            continue
 
     execution.diagnostics["parser_item_count"] = total_items
 
@@ -1606,6 +1648,8 @@ def _append_execution_record(
     record: dict[str, Any],
     record_policy: RecordPolicy | None,
 ) -> bool:
+    execution.generated_files.extend(record.get("downloaded_files", []))
+    execution.generated_files.extend(record.get("extracted_files", []))
     return _append_record(execution.records, record, record_policy)
 
 

@@ -210,9 +210,13 @@ Each enabled job stores:
 - `next_run_at`
 - `last_status`
 
-The UI stores schedule settings in `orchestration_state/settings.json`, while runtime state is kept per crawler under `orchestration_state/jobs/<job_id>.json`. This avoids concurrent Windows scheduled jobs overwriting one shared status file. `next_run_at` is calculated from the settings save time or crawl start time, not from crawl completion time.
+The UI stores orchestration settings in `orchestration_state/settings.json`, while runtime state is kept per crawler under `orchestration_state/jobs/<job_id>.json`. This avoids concurrent Windows scheduled jobs overwriting one shared status file. `next_run_at` is calculated from each row's cron expression after a crawl starts or finishes.
 
-Manual batch runs execute only selected jobs whose `next_run_at` is empty or already reached. Use the immediate-run checkbox on the orchestration page when you intentionally want to run the selected jobs as soon as the settings are saved.
+The orchestration page separates configuration from execution:
+
+- `설정 저장` writes JSON settings only. It does not create, update, or delete Windows scheduled tasks.
+- `수동 실행` runs the currently selected jobs once with `force_due=True`. It does not change scheduler registration.
+- `모니터링 시작` validates the cron settings, saves them, then recreates this clone's Windows Task Scheduler tasks.
 
 ### Keyword Mail Notification
 
@@ -236,21 +240,23 @@ $env:SMTP_FROM="bloodknihts@gmail.com"
 $env:SMTP_PASSWORD="<Gmail app password>"
 ```
 
-If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and records the dry-run result instead of sending mail. Even when SMTP credentials exist, the UI sends real mail only when the operator checks the saved "actual email send" option. The same saved option is used by manual orchestration runs and Windows Task Scheduler runs. Real Gmail sending should only be tested after the user provides an app password.
+If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and records the dry-run result instead of sending mail. Even when SMTP credentials exist, the UI sends real mail only when the operator checks the saved "actual email send" option. Manual runs and scheduled runs re-read the saved setting before each run. Real Gmail sending should only be tested after the user provides an app password.
 
 ### Windows Task Scheduler
 
-When the orchestration page settings are saved on Windows, the app synchronizes Windows Task Scheduler immediately:
+When `모니터링 시작` is pressed on Windows, the app synchronizes Windows Task Scheduler:
 
-1. Deletes only tasks managed by this app under `\CrawlerOrchestration\crawler_*`.
+1. Deletes only tasks managed by this clone under `\CrawlerOrchestration\<project_namespace>\crawler_*`.
 2. Recreates one task per enabled crawler config.
-3. Uses each enabled row's interval value and unit for that crawler's task:
-   - minutes -> `schtasks /SC MINUTE /MO <value>`
-   - hours -> `schtasks /SC HOURLY /MO <value>`
-   - days -> `schtasks /SC DAILY /MO <value>`
+3. Converts each enabled row's five-field cron expression to the closest supported Windows Task Scheduler command:
+   - `*/5 * * * *` -> every 5 minutes
+   - `0 */2 * * *` -> every 2 hours
+   - `0 3 * * *` -> daily at 03:00
+   - `0 0 */2 * *` -> every 2 days at 00:00
+   - `0 9 * * MON` -> weekly on Monday at 09:00
 4. Runs `scripts/Run-OrchestrationJob.ps1 -JobId <job_id>`, which loads local `.env` values into the scheduled process and executes that crawler through `crawler_app.scheduled_runner`.
 
-Each scheduled task uses its own interval as the source of truth and runs with `force_due=True`. Different crawler tasks can run at the same time, while the same crawler is protected by a per-job lock under `orchestration_state/locks/<job_id>.lock`. Each crawler still follows the same item-level sequence: crawl, stop on existing-record duplicate or finish, compare keywords, then send or dry-run email according to the saved setting.
+Unsupported cron forms are rejected before settings are saved to the scheduler. Each scheduled task uses its registered Windows trigger and runs with `force_due=True`; the trigger itself is the cadence source of truth. Different crawler tasks can run at the same time, while the same crawler is protected by a per-job lock under `orchestration_state/locks/<job_id>.lock`. Each crawler still follows the same item-level sequence: crawl, stop on a previous-run duplicate within the current search term, continue the next search term or next job, compare keywords, then send or dry-run email according to the saved setting.
 
 Secrets must stay out of git. Use Windows user environment variables or an ignored local `.env` file:
 

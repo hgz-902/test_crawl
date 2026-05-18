@@ -17,16 +17,21 @@ def main() -> int:
     args = build_parser().parse_args()
     store = OrchestrationStateStore()
     settings = store.load_settings()
-    selected = args.job_ids or [
+    enabled_job_ids = [
         job_id
         for job_id, job_settings in (settings.get("jobs") or {}).items()
         if isinstance(job_settings, dict) and job_settings.get("enabled")
     ]
+    if args.job_ids:
+        enabled_set = set(enabled_job_ids)
+        selected = [job_id for job_id in args.job_ids if job_id in enabled_set]
+    else:
+        selected = enabled_job_ids
     batch = run_batch(
         selected,
         store=store,
         force_due=True,
-        allow_email_send=args.allow_email_send,
+        allow_email_send=bool(settings.get("allow_email_send", False)),
         parallel=True,
     )
     print(json.dumps(batch_to_dict(batch), ensure_ascii=False, indent=2))
