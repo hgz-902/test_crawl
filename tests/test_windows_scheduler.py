@@ -226,7 +226,11 @@ class WindowsSchedulerTests(unittest.TestCase):
         script_text = RUNNER_SCRIPT.read_text(encoding="utf-8")
 
         self.assertIn('.venv\\Scripts\\python.exe', script_text)
-        self.assertIn('& $pythonPath @args', script_text)
+        self.assertIn("Start-Process", script_text)
+        self.assertIn("-RedirectStandardOutput", script_text)
+        self.assertIn("-RedirectStandardError", script_text)
+        self.assertIn("Python process finished. exit_code=$exitCode", script_text)
+        self.assertIn("Scheduled orchestration task finished. exit_code=$exitCode", script_text)
 
 
 if __name__ == "__main__":
