@@ -4,7 +4,7 @@
   "output_dir": "outputs/daum",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "Kakao Daum Web Search API를 사용. 환경변수 KAKAO_REST_API_KEY가 필요하다. Action=parser, attr=daum으로 실행한다. 다음 뉴스 전용 API가 아니라 카카오 웹 검색 API 결과를 v.daum.net/news.daum.net 도메인으로 필터링한다.",
   "search_terms": [
@@ -17,7 +17,7 @@
       "name": "Kakao_api",
       "action": "parser",
       "attr": "daum",
-      "loop_limit": 20
+      "loop_limit": 10
     }
   ],
   "created_at": "2026-05-15T00:00:00+09:00",

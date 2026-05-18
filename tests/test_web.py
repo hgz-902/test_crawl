@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -220,14 +221,30 @@ class WebLoggingTests(unittest.TestCase):
             "jobs": {"sample": {"enabled": True, "interval": {"value": 15, "unit": "minutes"}}},
         }
 
-        with TestClient(web.app) as client, patch.object(
+        fake_registry = [
+            {
+                "task_name": web.managed_task_name("sample"),
+                "job_id": "sample",
+                "config_name": "Sample",
+                "interval": {"value": 15, "unit": "minutes"},
+                "allow_email_send": False,
+                "registered_at": "2026-05-18T06:49:00+00:00",
+            }
+        ]
+
+        with patch.dict(os.environ, {"SMTP_HOST": "", "SMTP_PASSWORD": ""}), TestClient(web.app) as client, patch.object(
             web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
-        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]):
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+            web, "load_scheduler_registry", return_value=fake_registry
+        ):
             response = client.get("/orchestration")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Sample", response.text)
         self.assertIn("SMTP dry-run", response.text)
+        self.assertIn("등록된 스케줄러", response.text)
+        self.assertIn("2026-05-18 15:49:00", response.text)
+        self.assertNotIn("2026-05-18T06:49:00+00:00", response.text)
 
     def test_orchestration_templates_do_not_contain_known_mojibake_markers(self) -> None:
         markers = ("?ㅼ", "理", "諛", "湲", "以묐", "醫", "遺?")
@@ -253,6 +270,7 @@ class WebLoggingTests(unittest.TestCase):
             "keywords": ["SK"],
             "recipients": ["to@example.com"],
             "sender": "from@example.com",
+            "allow_email_send": False,
             "jobs": {"sample": {"enabled": False, "interval": {"value": 1, "unit": "hours"}}},
         }
         saved_payloads: list[dict[str, object]] = []
@@ -279,11 +297,13 @@ class WebLoggingTests(unittest.TestCase):
                     "keywords": "SK\ncarbon",
                     "recipients": "to@example.com",
                     "sender": "from@example.com",
+                    "allow_email_send": "1",
                 },
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(saved_payloads[0]["keywords"], ["SK", "carbon"])
+        self.assertTrue(saved_payloads[0]["allow_email_send"])
         self.assertTrue(saved_payloads[0]["jobs"]["sample"]["enabled"])
         self.assertEqual(saved_payloads[0]["jobs"]["sample"]["interval"], {"value": 30, "unit": "minutes"})
 
@@ -331,6 +351,90 @@ class WebLoggingTests(unittest.TestCase):
             self.assertEqual(reloaded["keywords"], ["SK", "carbon"])
             self.assertTrue(reloaded["jobs"]["sample"]["enabled"])
             self.assertEqual(reloaded["jobs"]["sample"]["interval"], {"value": 7, "unit": "minutes"})
+
+    def test_orchestration_save_force_due_runs_enabled_jobs_without_email_by_default(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": False,
+            "jobs": {"sample": {"enabled": False, "interval": {"value": 1, "unit": "hours"}}},
+        }
+        run_calls: list[dict[str, object]] = []
+
+        def fake_run_batch(selected, **kwargs):
+            run_calls.append({"selected": list(selected), **kwargs})
+            return type(
+                "FakeBatch",
+                (),
+                {
+                    "batch_id": "b1",
+                    "status": "completed",
+                    "total": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "duplicate_stopped": 0,
+                    "skipped_not_due": 0,
+                    "results": [],
+                    "started_at": "2026-05-16T00:00:00+00:00",
+                    "finished_at": "2026-05-16T00:00:01+00:00",
+                },
+            )()
+
+        with TestClient(web.app) as client, patch.object(
+            web,
+            "settings_for_registered_jobs",
+            return_value=(settings, [fake_job]),
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
+            web.ORCHESTRATION_STORE, "load_history", return_value=[]
+        ), patch.object(
+            web,
+            "sync_windows_scheduled_tasks",
+            return_value=type("SyncResult", (), {"status": "synced", "created": ["task"], "skipped_reason": ""})(),
+        ), patch.object(web, "run_batch", side_effect=fake_run_batch), patch.object(
+            web,
+            "batch_to_dict",
+            return_value={
+                "batch_id": "b1",
+                "status": "completed",
+                "total": 1,
+                "succeeded": 1,
+                "failed": 0,
+                "duplicate_stopped": 0,
+                "skipped_not_due": 0,
+                "results": [],
+            },
+        ):
+            response = client.post(
+                "/orchestration/save",
+                data={
+                    "enabled_jobs": "sample",
+                    "interval_value__sample": "10",
+                    "interval_unit__sample": "minutes",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                    "force_due": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("즉시 실행을 완료했습니다", response.text)
+        self.assertEqual(run_calls[0]["selected"], ["sample"])
+        self.assertTrue(run_calls[0]["force_due"])
+        self.assertFalse(run_calls[0]["allow_email_send"])
 
     def test_orchestration_save_reports_scheduler_sync_failure(self) -> None:
         fake_job = type(
@@ -386,6 +490,7 @@ class WebLoggingTests(unittest.TestCase):
             "keywords": ["SK"],
             "recipients": ["to@example.com"],
             "sender": "from@example.com",
+            "allow_email_send": False,
             "jobs": {
                 "sample": {
                     "enabled": False,
@@ -456,6 +561,85 @@ class WebLoggingTests(unittest.TestCase):
         self.assertTrue(run_calls[0]["force_due"])
         self.assertTrue(run_calls[0]["allow_email_send"])
 
+    def test_orchestration_run_forces_selected_jobs_even_without_force_checkbox(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": False,
+            "jobs": {"sample": {"enabled": True, "interval": {"value": 10, "unit": "minutes"}}},
+        }
+        run_calls: list[dict[str, object]] = []
+
+        def fake_run_batch(selected, **kwargs):
+            run_calls.append({"selected": list(selected), **kwargs})
+            return type(
+                "FakeBatch",
+                (),
+                {
+                    "batch_id": "b1",
+                    "status": "completed",
+                    "total": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "duplicate_stopped": 0,
+                    "skipped_not_due": 0,
+                    "results": [],
+                    "started_at": "2026-05-16T00:00:00+00:00",
+                    "finished_at": "2026-05-16T00:00:01+00:00",
+                },
+            )()
+
+        with TestClient(web.app) as client, patch.object(
+            web,
+            "settings_for_registered_jobs",
+            return_value=(settings, [fake_job]),
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
+            web.ORCHESTRATION_STORE, "save_job_state", return_value={}
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+            web, "run_batch", side_effect=fake_run_batch
+        ), patch.object(
+            web,
+            "batch_to_dict",
+            return_value={
+                "batch_id": "b1",
+                "status": "completed",
+                "total": 1,
+                "succeeded": 1,
+                "failed": 0,
+                "duplicate_stopped": 0,
+                "skipped_not_due": 0,
+                "results": [],
+            },
+        ):
+            response = client.post(
+                "/orchestration/run",
+                data={
+                    "enabled_jobs": "sample",
+                    "interval_value__sample": "10",
+                    "interval_unit__sample": "minutes",
+                    "keywords": "SK",
+                    "recipients": "to@example.com",
+                    "sender": "from@example.com",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(run_calls[0]["selected"], ["sample"])
+        self.assertTrue(run_calls[0]["force_due"])
+
     def test_orchestration_run_rejects_cross_origin_post(self) -> None:
         with TestClient(web.app) as client:
             response = client.post(
@@ -472,6 +656,67 @@ class WebLoggingTests(unittest.TestCase):
                 "/orchestration/save",
                 headers={"Origin": "https://attacker.example"},
                 data={},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_orchestration_scheduler_delete_removes_task_and_disables_job(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        settings = {
+            "keywords": ["SK"],
+            "recipients": ["to@example.com"],
+            "sender": "from@example.com",
+            "allow_email_send": False,
+            "jobs": {
+                "sample": {
+                    "enabled": True,
+                    "interval": {"value": 15, "unit": "minutes"},
+                    "next_run_at": "2026-05-18T06:04:00+00:00",
+                    "last_status": "succeeded",
+                }
+            },
+        }
+        saved_payloads: list[dict[str, object]] = []
+
+        def fake_save(payload: dict[str, object]) -> dict[str, object]:
+            saved_payloads.append(payload)
+            return payload
+
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
+            web.ORCHESTRATION_STORE, "save_job_state", return_value={}
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+            web, "delete_managed_task", return_value=type("DeleteResult", (), {"status": "deleted", "skipped_reason": ""})()
+        ) as delete_task, patch.object(web, "load_scheduler_registry", return_value=[]):
+            response = client.post(
+                "/orchestration/schedulers/delete",
+                data={"task_name": web.managed_task_name("sample"), "job_id": "sample"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        delete_task.assert_called_once_with(web.managed_task_name("sample"))
+        self.assertFalse(saved_payloads[0]["jobs"]["sample"]["enabled"])
+        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["next_run_at"], "")
+        self.assertIn("선택한 스케줄러를 삭제했습니다", response.text)
+
+    def test_orchestration_scheduler_delete_rejects_cross_origin_post(self) -> None:
+        with TestClient(web.app) as client:
+            response = client.post(
+                "/orchestration/schedulers/delete",
+                headers={"Origin": "https://attacker.example"},
+                data={"task_name": web.managed_task_name("sample")},
             )
 
         self.assertEqual(response.status_code, 403)

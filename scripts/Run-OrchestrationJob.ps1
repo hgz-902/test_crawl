@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)][string]$ProjectRoot,
-  [Parameter(Mandatory=$true)][string]$JobId,
+  [string]$JobId = "",
   [switch]$AllowEmailSend
 )
 
@@ -24,13 +24,21 @@ if (Test-Path -LiteralPath $envPath) {
 $logDir = Join-Path $ProjectRoot "runtime\scheduled-task"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$safeJobId = ($JobId -replace '[^\p{L}\p{Nd}_-]+', '_')
-$logPath = Join-Path $logDir "$stamp-$safeJobId.log"
+$safeRunName = if ($JobId) { ($JobId -replace '[^\p{L}\p{Nd}_-]+', '_') } else { "batch" }
+$logPath = Join-Path $logDir "$stamp-$safeRunName.log"
 
-$args = @("-m", "crawler_app.scheduled_runner", "--job-id", $JobId)
+$args = @("-m", "crawler_app.scheduled_runner")
+if ($JobId) {
+  $args += @("--job-id", $JobId)
+}
 if ($AllowEmailSend) {
   $args += "--allow-email-send"
 }
 
-& python @args *> $logPath
+$pythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $pythonPath)) {
+  $pythonPath = "python"
+}
+
+& $pythonPath @args *> $logPath
 exit $LASTEXITCODE

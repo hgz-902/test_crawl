@@ -19,7 +19,7 @@
       "xpath_2": "//*[@id=\"section\"]/section/div/div[1]/div[2]/div[2]/ul/li[2]/div/dl/dt/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
+      "loop_limit": 10,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"

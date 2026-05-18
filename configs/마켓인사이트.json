@@ -4,7 +4,7 @@
   "output_dir": "outputs/marketinsight",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "마켓인사이트는 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 소스코드 수정 없이 검색 결과 목록의 기사 링크를 열고 제목과 본문을 추출한다.",
   "search_terms": [
@@ -19,7 +19,7 @@
       "xpath_2": "//*[@id=\"contents\"]/div/div[1]/div[1]/ul/li[2]/div/h3/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
+      "loop_limit": 10,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"

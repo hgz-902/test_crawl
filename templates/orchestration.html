@@ -16,12 +16,76 @@
 <div class="notice error">{{ error }}</div>
 {% endif %}
 
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <h2>등록된 스케줄러</h2>
+      <p>스케줄러 등록 시 저장한 로컬 기록을 기준으로 표시합니다. 최근 실행 상태는 앱 실행 상태 파일에서 읽습니다.</p>
+    </div>
+  </div>
+  {% if scheduler_error %}
+  <div class="notice error">스케줄러 조회 실패: {{ scheduler_error }}</div>
+  {% endif %}
+  {% if scheduler_rows %}
+  <div class="table-wrap flush">
+    <table class="scheduler-table">
+      <thead>
+        <tr>
+          <th>크롤러</th>
+          <th>등록 상태</th>
+          <th>실행 주기</th>
+          <th>최근 실행</th>
+          <th>메일</th>
+          <th>검색/필터</th>
+          <th>등록 기록</th>
+          <th>작업명</th>
+          <th>관리</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in scheduler_rows %}
+        <tr>
+          <td>
+            <strong>{{ row.config_name }}</strong>
+            {% if row.app_last_status %}
+            <div class="muted-text">최근 앱 상태: {{ row.app_last_status }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="status-pill">{{ "활성" if row.enabled else "설정 비활성" }}</span>
+          </td>
+          <td>
+            {{ row.interval.value }}
+            {% if row.interval.unit == "minutes" %}분{% elif row.interval.unit == "hours" %}시간{% else %}일{% endif %}
+          </td>
+          <td class="url">{{ row.app_last_run_at_display or "-" }}</td>
+          <td>{{ "발송 허용" if row.allow_email_send else "dry-run" }}</td>
+          <td>검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</td>
+          <td class="url">{{ row.registered_at_display or "-" }}</td>
+          <td class="url">{{ row.task_name }}</td>
+          <td>
+            <form method="post" action="/orchestration/schedulers/delete" data-confirm="선택한 Windows 스케줄러를 삭제할까요? 이 항목은 오케스트레이션 설정에서도 비활성화됩니다.">
+              <input type="hidden" name="task_name" value="{{ row.task_name }}">
+              <input type="hidden" name="job_id" value="{{ row.job_id }}">
+              <button class="danger" type="submit">삭제</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">현재 등록된 오케스트레이션 스케줄러가 없습니다.</div>
+  {% endif %}
+</section>
+
 <form method="post" class="orchestration-form">
   <section class="panel">
     <div class="panel-heading">
       <div>
         <h2>배치 대상</h2>
-        <p>선택한 항목 중 실행 예정 시간이 지난 크롤러만 실행합니다. 필요하면 이번 실행에서만 주기 제한을 무시할 수 있습니다.</p>
+        <p>선택한 항목은 항목별 Windows 작업으로 동시에 실행됩니다. 저장 시점 기준으로 다음 실행 시간이 계산됩니다.</p>
       </div>
       <div class="smtp-state {{ 'ready' if smtp_ready else 'dry' }}">
         {{ "SMTP 준비됨" if smtp_ready else "SMTP dry-run" }}
@@ -97,16 +161,16 @@
   </section>
 
   <section class="panel orchestration-run-options">
-    <h2>이번 실행 옵션</h2>
+    <h2>실행 옵션</h2>
     <label class="check-row">
       <input type="checkbox" name="force_due" value="1">
-      <span>실행 주기와 다음 실행 시간을 무시하고 선택한 항목을 지금 실행</span>
+      <span>설정 저장과 동시에 선택 항목을 실행하고, 저장 시점 기준으로 주기별 스케줄링</span>
     </label>
     <label class="check-row">
-      <input type="checkbox" name="allow_email_send" value="1">
+      <input type="checkbox" name="allow_email_send" value="1" {% if settings.allow_email_send %}checked{% endif %}>
       <span>키워드가 발견되면 실제 메일 발송 허용</span>
     </label>
-    <p>체크하지 않으면 SMTP 정보가 있어도 메일은 dry-run으로만 기록됩니다.</p>
+    <p>체크하지 않으면 수동 실행과 스케줄러 실행 모두 SMTP 정보가 있어도 dry-run으로만 기록됩니다.</p>
   </section>
 
   <div class="form-actions">

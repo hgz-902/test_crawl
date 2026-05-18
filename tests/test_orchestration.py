@@ -8,6 +8,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+from crawler_app import orchestration
 from crawler_app.orchestration import (
     DEFAULT_KEYWORDS,
     DEFAULT_RECIPIENTS,
@@ -116,6 +117,84 @@ class OrchestrationTests(unittest.TestCase):
             index = build_duplicate_index([Path(tmp_dir) / "outputs"])
 
             self.assertIn("existing | https://example.com/existing", index)
+
+    def test_duplicate_stop_snapshot_merge_preserves_existing_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "outputs" / "site"
+            snapshot_path = output_dir / "filter" / "workflow_records.json"
+            snapshot_path.parent.mkdir(parents=True)
+            existing_record = {"extracts": {"title": "Existing", "link": "https://example.com/existing"}}
+            repeated_existing_record = {
+                "extracts": {"title": "Existing", "link": "https://example.com/existing"},
+                "search_term": "second-term",
+            }
+            fresh_record = {"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}
+            snapshot_path.write_text(
+                json.dumps({"config_name": "site", "item_count": 2, "records": [existing_record, repeated_existing_record]}),
+                encoding="utf-8",
+            )
+
+            before = orchestration._read_workflow_snapshots(output_dir)
+            snapshot_path.write_text(
+                json.dumps({"config_name": "site", "item_count": 1, "records": [fresh_record]}),
+                encoding="utf-8",
+            )
+            orchestration._merge_or_restore_workflow_snapshots(output_dir, before)
+
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 3)
+            self.assertEqual([record["extracts"]["title"] for record in payload["records"]], ["Existing", "Existing", "Fresh"])
+
+    def test_duplicate_stop_snapshot_restore_keeps_existing_records_when_new_snapshot_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "outputs" / "site"
+            snapshot_path = output_dir / "filter" / "workflow_records.json"
+            snapshot_path.parent.mkdir(parents=True)
+            existing_record = {"extracts": {"title": "Existing", "link": "https://example.com/existing"}}
+            snapshot_path.write_text(
+                json.dumps({"config_name": "site", "item_count": 1, "records": [existing_record]}),
+                encoding="utf-8",
+            )
+
+            before = orchestration._read_workflow_snapshots(output_dir)
+            snapshot_path.write_text(json.dumps({"config_name": "site", "item_count": 0, "records": []}), encoding="utf-8")
+            orchestration._merge_or_restore_workflow_snapshots(output_dir, before)
+
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 1)
+            self.assertEqual(payload["records"][0]["extracts"]["title"], "Existing")
+
+    def test_run_batch_loads_local_dotenv_for_orchestration_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_dir = tmp_path / "configs"
+            config_dir.mkdir()
+            (config_dir / "site.json").write_text(
+                json.dumps(
+                    {
+                        "name": "site",
+                        "start_url": "https://example.com",
+                        "output_dir": str(tmp_path / "outputs" / "site"),
+                        "steps": [{"name": "open", "xpath": "//a[1]", "action": "click"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (tmp_path / ".env").write_text("ORCHESTRATION_DOTENV_PROOF=loaded\n", encoding="utf-8")
+            os.environ.pop("ORCHESTRATION_DOTENV_PROOF", None)
+
+            def fake_runner(config_path: Path, record_policy):
+                self.assertEqual(os.environ.get("ORCHESTRATION_DOTENV_PROOF"), "loaded")
+                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+
+            store = OrchestrationStateStore(
+                settings_path=tmp_path / "state" / "settings.json",
+                history_path=tmp_path / "state" / "history.json",
+            )
+            with patch.object(orchestration, "APP_ROOT", tmp_path):
+                batch = run_batch(["site"], store=store, config_dir=config_dir, runner=fake_runner, send_notifications=False)
+
+            self.assertEqual(batch.results[0].status, "succeeded")
 
     def test_batch_runner_duplicate_stops_one_job_and_continues_next(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -241,7 +320,7 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(batch.results[0].items_count, 0)
             self.assertEqual(batch.results[1].status, "succeeded")
 
-    def test_batch_runner_stops_same_job_duplicate_seen_during_run(self) -> None:
+    def test_batch_runner_skips_same_job_duplicate_seen_during_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             config_dir = tmp_path / "configs"
@@ -282,8 +361,55 @@ class OrchestrationTests(unittest.TestCase):
                 send_notifications=False,
             )
 
-            self.assertEqual(batch.results[0].status, "duplicate_stopped")
+            self.assertEqual(batch.results[0].status, "succeeded")
             self.assertEqual(batch.results[0].items_count, 1)
+            self.assertEqual(batch.results[0].metadata["same_run_duplicate_skipped_count"], 1)
+
+    def test_batch_runner_skips_when_another_batch_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = OrchestrationStateStore(
+                settings_path=tmp_path / "state" / "settings.json",
+                history_path=tmp_path / "state" / "history.json",
+            )
+            config_dir = tmp_path / "configs"
+            config_dir.mkdir()
+            (config_dir / "site.json").write_text(
+                json.dumps(
+                    {
+                        "name": "site",
+                        "start_url": "https://example.com",
+                        "output_dir": str(tmp_path / "outputs" / "site"),
+                        "steps": [{"name": "open", "xpath": "//a[1]", "action": "click"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            lock_path = store.job_lock_path("site")
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(
+                json.dumps({"pid": 12345, "created_at": orchestration.utc_timestamp()}),
+                encoding="utf-8",
+            )
+            calls: list[Path] = []
+
+            def fake_runner(config_path: Path, record_policy):
+                calls.append(config_path)
+                return {"success": True, "records": []}
+
+            batch = run_batch(
+                ["site"],
+                store=store,
+                config_dir=config_dir,
+                runner=fake_runner,
+                send_notifications=False,
+            )
+
+            self.assertEqual(batch.status, "completed")
+            self.assertEqual(batch.total, 1)
+            self.assertEqual(batch.results[0].status, "skipped_running")
+            self.assertEqual(calls, [])
+            self.assertEqual(store.load_history()[0]["results"][0]["status"], "skipped_running")
 
     def test_batch_runner_default_duplicate_scope_is_per_config_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -358,7 +484,9 @@ class OrchestrationTests(unittest.TestCase):
         )
         matches = [{"record": {"extracts": {"title": "SK title", "link": "https://example.com"}}, "keywords": ["sk"]}]
 
-        with patch.dict(os.environ, {"SMTP_HOST": "smtp.example.com"}, clear=True):
+        with patch.object(orchestration, "load_orchestration_env", lambda: None), patch.dict(
+            os.environ, {"SMTP_HOST": "smtp.example.com"}, clear=True
+        ):
             result = notify_keyword_matches(
                 matches,
                 settings={"recipients": ["to@example.com"], "sender": "from@example.com"},
@@ -372,7 +500,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_notify_keyword_matches_requires_explicit_send_permission(self) -> None:
         matches = [{"record": {"extracts": {"title": "SK title", "link": "https://example.com"}}, "keywords": ["sk"]}]
 
-        with patch.dict(
+        with patch.object(orchestration, "load_orchestration_env", lambda: None), patch.dict(
             os.environ,
             {
                 "SMTP_HOST": "smtp.example.com",
@@ -391,6 +519,33 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry_run")
         self.assertEqual(result["reason"], "real_send_not_allowed")
         self.assertNotIn("secret", json.dumps(result).casefold())
+
+    def test_notification_body_groups_site_topic_description_and_url(self) -> None:
+        job = RegisteredJob(
+            job_id="naver_news",
+            config_name="네이버뉴스",
+            config_path="configs/네이버뉴스.json",
+            output_dir="outputs/naver_news",
+        )
+        matches = [
+            {
+                "record": {
+                    "search_term": "최태원",
+                    "extracts": {
+                        "description": "SK 관련 기사 설명입니다.",
+                        "link": "https://example.com/article",
+                    },
+                },
+                "keywords": ["sk"],
+            }
+        ]
+
+        body = orchestration._notification_body(matches, job=job)
+
+        self.assertIn("Site: 네이버뉴스", body)
+        self.assertIn("네이버뉴스 > 최태원", body)
+        self.assertIn("desc: SK 관련 기사 설명입니다.", body)
+        self.assertIn("URL: https://example.com/article", body)
 
     def test_batch_runner_skips_not_due_job_and_force_runs_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

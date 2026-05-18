@@ -28,6 +28,19 @@ imsi/
 configs copy/
 $outDir/
 
+# Harness/session-local documents
+DECISION_RULING.md
+RUN_CONTEXT.md
+TASK_CONTRACT.md
+TASK_PLAN.md
+TASK_CLASSIFICATION.md
+GUI_QA_PLAN.md
+GUI_QA_RESULT.md
+ORCHESTRATION_ALPHA_STATE.md
+THREAT_MODEL.md
+SECURITY_TEST_CHECKLIST.md
+SOURCE_CHANGE_GUARDRAIL.md
+
 # Build artifacts
 build/
 dist/

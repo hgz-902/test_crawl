@@ -5,11 +5,17 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import re
 import smtplib
 import uuid
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - dependency is declared, fallback keeps imports safe.
+    load_dotenv = None
 
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
 from crawler_app.workflow import load_workflow_config, run_workflow_config
@@ -19,9 +25,13 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STATE_DIR = APP_ROOT / "orchestration_state"
 DEFAULT_SETTINGS_PATH = DEFAULT_STATE_DIR / "settings.json"
 DEFAULT_HISTORY_PATH = DEFAULT_STATE_DIR / "run_history.json"
+DEFAULT_JOB_STATE_DIR = DEFAULT_STATE_DIR / "jobs"
+DEFAULT_JOB_HISTORY_DIR = DEFAULT_STATE_DIR / "history"
+DEFAULT_JOB_LOCK_DIR = DEFAULT_STATE_DIR / "locks"
 DEFAULT_KEYWORDS = ["SK", "최태원"]
 DEFAULT_RECIPIENTS = ["bloodknihts@gmail.com", "superknihts@nate.com"]
 DEFAULT_SENDER = "bloodknihts@gmail.com"
+RUN_LOCK_STALE_AFTER = timedelta(hours=12)
 INTERVAL_UNITS = {"minutes", "hours", "days"}
 
 Runner = Callable[[Path, Callable[[dict[str, Any]], dict[str, Any]]], Any]
@@ -95,20 +105,75 @@ class OrchestrationStateStore:
         return normalized
 
     def load_history(self, limit: int | None = None) -> list[dict[str, Any]]:
-        payload = _read_json(self.history_path, default=[])
-        history = payload if isinstance(payload, list) else []
+        history = self._load_global_history() + self._load_job_histories()
+        history.sort(key=lambda entry: str(entry.get("finished_at") or entry.get("started_at") or ""))
         if limit is not None and limit >= 0:
             return history[-limit:]
         return history
 
     def append_history(self, entry: dict[str, Any]) -> None:
-        history = self.load_history()
+        history = self._load_global_history()
         history.append(entry)
         _write_json(self.history_path, history)
+
+    def load_job_state(self, job_id: str) -> dict[str, Any]:
+        return _read_json_object(self.job_state_path(job_id))
+
+    def save_job_state(self, job_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        normalized = {
+            "job_id": config_file_stem(job_id),
+            "last_run_at": _clean_optional_timestamp(state.get("last_run_at")),
+            "next_run_at": _clean_optional_timestamp(state.get("next_run_at")),
+            "last_status": str(state.get("last_status") or ""),
+            "updated_at": utc_timestamp(),
+        }
+        _write_json(self.job_state_path(job_id), normalized)
+        return normalized
+
+    def append_job_history(self, job_id: str, entry: dict[str, Any]) -> None:
+        path = self.job_history_path(job_id)
+        history = _read_json(path, default=[])
+        if not isinstance(history, list):
+            history = []
+        history.append(entry)
+        _write_json(path, history)
+
+    def job_state_path(self, job_id: str) -> Path:
+        base = DEFAULT_JOB_STATE_DIR if self.settings_path == DEFAULT_SETTINGS_PATH else self.settings_path.parent / "jobs"
+        return base / f"{config_file_stem(job_id)}.json"
+
+    def job_history_path(self, job_id: str) -> Path:
+        base = DEFAULT_JOB_HISTORY_DIR if self.history_path == DEFAULT_HISTORY_PATH else self.history_path.parent / "history"
+        return base / f"{config_file_stem(job_id)}.json"
+
+    def job_lock_path(self, job_id: str) -> Path:
+        base = DEFAULT_JOB_LOCK_DIR if self.settings_path == DEFAULT_SETTINGS_PATH else self.settings_path.parent / "locks"
+        return base / f"{config_file_stem(job_id)}.lock"
+
+    def _load_global_history(self) -> list[dict[str, Any]]:
+        payload = _read_json(self.history_path, default=[])
+        return payload if isinstance(payload, list) else []
+
+    def _load_job_histories(self) -> list[dict[str, Any]]:
+        base = DEFAULT_JOB_HISTORY_DIR if self.history_path == DEFAULT_HISTORY_PATH else self.history_path.parent / "history"
+        if not base.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        for path in base.glob("*.json"):
+            payload = _read_json(path, default=[])
+            if isinstance(payload, list):
+                entries.extend(entry for entry in payload if isinstance(entry, dict))
+        return entries
 
 
 def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def load_orchestration_env() -> None:
+    if load_dotenv is None:
+        return
+    load_dotenv(APP_ROOT / ".env", override=False)
 
 
 def default_sender() -> str:
@@ -148,6 +213,7 @@ def normalize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "keywords": keywords,
         "recipients": recipients,
         "sender": str(settings.get("sender") or default_sender()),
+        "allow_email_send": bool(settings.get("allow_email_send", False)),
         "jobs": normalized_jobs,
         "created_at": str(settings.get("created_at") or utc_timestamp()),
         "updated_at": str(settings.get("updated_at") or utc_timestamp()),
@@ -199,6 +265,19 @@ def sync_settings_jobs(settings: dict[str, Any], jobs: Iterable[RegisteredJob]) 
     return settings
 
 
+def apply_job_runtime_state(settings: dict[str, Any], store: OrchestrationStateStore) -> dict[str, Any]:
+    settings = normalize_settings(settings)
+    for job_id, job_settings in settings.get("jobs", {}).items():
+        state = store.load_job_state(job_id)
+        if not state:
+            continue
+        for key in ("last_run_at", "next_run_at", "last_status"):
+            value = state.get(key)
+            if value:
+                job_settings[key] = value
+    return settings
+
+
 def run_batch(
     selected_job_ids: Iterable[str],
     *,
@@ -209,47 +288,40 @@ def run_batch(
     send_notifications: bool = True,
     force_due: bool = False,
     allow_email_send: bool = False,
+    parallel: bool = False,
 ) -> BatchRunResult:
+    load_orchestration_env()
     store = store or OrchestrationStateStore()
-    settings = sync_settings_jobs(store.load_settings(), registered_config_jobs(config_dir))
+    config_jobs = registered_config_jobs(config_dir)
+    settings = apply_job_runtime_state(sync_settings_jobs(store.load_settings(), config_jobs), store)
     jobs_by_id = {job.job_id: job for job in registered_config_jobs(config_dir)}
     selected = [config_file_stem(job_id) for job_id in selected_job_ids]
     selected = [job_id for job_id in selected if job_id in jobs_by_id]
-
-    if snapshot_roots is not None:
-        shared_index = build_duplicate_index(list(snapshot_roots))
-        duplicate_indexes = {job_id: set(shared_index) for job_id in selected}
-    else:
-        duplicate_indexes = {
-            job_id: build_duplicate_index(_snapshot_roots_for_jobs([jobs_by_id[job_id]]))
-            for job_id in selected
-        }
     batch_id = uuid.uuid4().hex
     started_at = utc_timestamp()
-    results: list[JobRunResult] = []
 
-    for job_id in selected:
-        job = jobs_by_id[job_id]
-        due, due_metadata = _job_due_status(settings["jobs"].get(job_id, {}))
-        if not force_due and not due:
-            results.append(_skipped_not_due_result(job, due_metadata))
-            continue
-
-        duplicate_index = duplicate_indexes.setdefault(job_id, set())
-        result = run_job(
-            job,
+    def run_selected(job_id: str) -> JobRunResult:
+        return _run_selected_job(
+            job_id,
+            store=store,
+            jobs_by_id=jobs_by_id,
             settings=settings,
-            duplicate_index=duplicate_index,
             runner=runner,
+            snapshot_roots=snapshot_roots,
             send_notifications=send_notifications,
+            force_due=force_due,
             allow_email_send=allow_email_send,
         )
-        results.append(result)
-        for record in result.records:
-            key = duplicate_key_for_record(record)
-            if key:
-                duplicate_index.add(key)
-        _update_job_schedule_after_run(settings, job_id, result)
+
+    if parallel and len(selected) > 1:
+        indexed_results: dict[int, JobRunResult] = {}
+        with ThreadPoolExecutor(max_workers=len(selected)) as executor:
+            future_to_index = {executor.submit(run_selected, job_id): index for index, job_id in enumerate(selected)}
+            for future in as_completed(future_to_index):
+                indexed_results[future_to_index[future]] = future.result()
+        results = [indexed_results[index] for index in sorted(indexed_results)]
+    else:
+        results = [run_selected(job_id) for job_id in selected]
 
     finished_at = utc_timestamp()
     succeeded = sum(1 for result in results if result.status == "succeeded")
@@ -269,9 +341,141 @@ def run_batch(
         started_at=started_at,
         finished_at=finished_at,
     )
-    store.save_settings(settings)
-    store.append_history(batch_to_dict(batch))
     return batch
+
+
+def _run_selected_job(
+    job_id: str,
+    *,
+    store: OrchestrationStateStore,
+    jobs_by_id: dict[str, RegisteredJob],
+    settings: dict[str, Any],
+    runner: Runner | None,
+    snapshot_roots: Iterable[str | Path] | None,
+    send_notifications: bool,
+    force_due: bool,
+    allow_email_send: bool,
+) -> JobRunResult:
+    job = jobs_by_id[job_id]
+    job_settings = settings["jobs"].get(job_id, {})
+    due, due_metadata = _job_due_status(job_settings)
+    if not force_due and not due:
+        result = _skipped_not_due_result(job, due_metadata)
+        _append_job_result_history(store, result)
+        return result
+
+    lock_path = store.job_lock_path(job_id)
+    if not _acquire_run_lock(lock_path):
+        result = _skipped_running_result(job)
+        _append_job_result_history(store, result)
+        return result
+
+    try:
+        if snapshot_roots is not None:
+            duplicate_index = build_duplicate_index(list(snapshot_roots))
+        else:
+            duplicate_index = build_duplicate_index(_snapshot_roots_for_jobs([job]))
+        result = run_job(
+            job,
+            settings=settings,
+            duplicate_index=duplicate_index,
+            runner=runner,
+            send_notifications=send_notifications,
+            allow_email_send=allow_email_send,
+        )
+        _update_job_runtime_state(store, job_id, job_settings, result)
+        _append_job_result_history(store, result)
+        return result
+    finally:
+        _release_run_lock(lock_path)
+
+
+def _acquire_run_lock(lock_path: Path) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if _lock_is_stale(lock_path):
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+    payload = {
+        "pid": os.getpid(),
+        "created_at": utc_timestamp(),
+    }
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        fd = os.open(str(lock_path), flags)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return True
+
+
+def _release_run_lock(lock_path: Path) -> None:
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _lock_is_stale(lock_path: Path) -> bool:
+    payload = _read_json_object(lock_path)
+    created_at = _parse_timestamp(payload.get("created_at"))
+    if created_at is None:
+        return False
+    return datetime.now(timezone.utc) - created_at > RUN_LOCK_STALE_AFTER
+
+
+def _skipped_running_result(job: RegisteredJob) -> JobRunResult:
+    now = utc_timestamp()
+    return JobRunResult(
+        job_id=job.job_id,
+        config_name=job.config_name,
+        config_path=job.config_path,
+        status="skipped_running",
+        success=True,
+        items_count=0,
+        records=[],
+        notification={"status": "skipped", "reason": "already_running"},
+        started_at=now,
+        finished_at=now,
+        metadata={"reason": "already_running"},
+    )
+
+
+def _append_job_result_history(store: OrchestrationStateStore, result: JobRunResult) -> None:
+    batch = BatchRunResult(
+        batch_id=uuid.uuid4().hex,
+        status="failed" if result.status == "failed" else "completed",
+        total=1,
+        succeeded=1 if result.status == "succeeded" else 0,
+        failed=1 if result.status == "failed" else 0,
+        duplicate_stopped=1 if result.status == "duplicate_stopped" else 0,
+        skipped_not_due=1 if result.status == "skipped_not_due" else 0,
+        results=[result],
+        started_at=result.started_at,
+        finished_at=result.finished_at,
+    )
+    store.append_job_history(result.job_id, batch_to_dict(batch))
+
+
+def _update_job_runtime_state(
+    store: OrchestrationStateStore,
+    job_id: str,
+    job_settings: dict[str, Any],
+    result: JobRunResult,
+) -> None:
+    interval = normalize_interval(job_settings.get("interval"))
+    started = _parse_timestamp(result.started_at) or datetime.now(timezone.utc)
+    store.save_job_state(
+        job_id,
+        {
+            "last_run_at": started.isoformat(timespec="seconds"),
+            "next_run_at": (started + _interval_to_delta(interval)).isoformat(timespec="seconds"),
+            "last_status": result.status,
+        },
+    )
 
 
 def settings_for_registered_jobs(
@@ -279,9 +483,10 @@ def settings_for_registered_jobs(
     store: OrchestrationStateStore | None = None,
     config_dir: str | Path = CONFIG_DIR,
 ) -> tuple[dict[str, Any], list[RegisteredJob]]:
+    load_orchestration_env()
     store = store or OrchestrationStateStore()
     jobs = registered_config_jobs(config_dir)
-    settings = sync_settings_jobs(store.load_settings(), jobs)
+    settings = apply_job_runtime_state(sync_settings_jobs(store.load_settings(), jobs), store)
     return settings, jobs
 
 
@@ -297,15 +502,25 @@ def run_job(
     started_at = utc_timestamp()
     seen: set[str] = set()
     duplicate: dict[str, Any] = {}
+    same_run_duplicate_skipped_count = 0
 
     def record_policy(record: dict[str, Any]) -> dict[str, Any]:
+        nonlocal same_run_duplicate_skipped_count
         key = duplicate_key_for_record(record)
-        if key and (key in duplicate_index or key in seen):
+        if key and key in duplicate_index:
             duplicate.update({"key": key, "record": record})
             return {
                 "include": False,
                 "stop": True,
                 "reason": "duplicate_stopped",
+                "metadata": {"duplicate_key": key},
+            }
+        if key and key in seen:
+            same_run_duplicate_skipped_count += 1
+            return {
+                "include": False,
+                "stop": False,
+                "reason": "same_run_duplicate_skipped",
                 "metadata": {"duplicate_key": key},
             }
         if key:
@@ -316,6 +531,9 @@ def run_job(
         raw_result = (runner or default_workflow_runner)(Path(job.config_path), record_policy)
         normalized = normalize_runner_result(raw_result)
         records = normalized["records"]
+        metadata = dict(normalized.get("metadata", {}))
+        if same_run_duplicate_skipped_count:
+            metadata["same_run_duplicate_skipped_count"] = same_run_duplicate_skipped_count
         keyword_matches = records_matching_keywords(records, settings.get("keywords", []))
         notification = (
             notify_keyword_matches(
@@ -344,7 +562,7 @@ def run_job(
             error=normalized.get("error") if status == "failed" else None,
             started_at=started_at,
             finished_at=utc_timestamp(),
-            metadata=normalized.get("metadata", {}),
+            metadata=metadata,
         )
     except Exception as exc:
         return JobRunResult(
@@ -363,7 +581,12 @@ def run_job(
 
 def default_workflow_runner(config_path: Path, record_policy: Callable[[dict[str, Any]], dict[str, Any]]) -> Any:
     config = load_workflow_config(config_path)
-    return run_workflow_config(config, record_policy=record_policy)
+    snapshots = _read_workflow_snapshots(Path(config["output_dir"]))
+    result = run_workflow_config(config, record_policy=record_policy)
+    metadata = normalize_runner_result(result).get("metadata", {})
+    if metadata.get("record_policy_stop_reason") == "duplicate_stopped":
+        _merge_or_restore_workflow_snapshots(Path(config["output_dir"]), snapshots)
+    return result
 
 
 def normalize_runner_result(result: Any) -> dict[str, Any]:
@@ -485,6 +708,7 @@ def notify_keyword_matches(
     job: RegisteredJob | None = None,
     allow_send: bool = True,
 ) -> dict[str, Any]:
+    load_orchestration_env()
     recipients = _clean_string_list(settings.get("recipients")) or list(DEFAULT_RECIPIENTS)
     sender = os.environ.get("SMTP_FROM") or str(settings.get("sender") or DEFAULT_SENDER)
     result = {
@@ -555,6 +779,55 @@ def _snapshot_roots_for_jobs(jobs: Iterable[RegisteredJob]) -> list[Path]:
     return roots
 
 
+def _read_workflow_snapshots(output_dir: Path) -> dict[Path, dict[str, Any]]:
+    snapshots: dict[Path, dict[str, Any]] = {}
+    if not output_dir.exists():
+        return snapshots
+    for path in output_dir.rglob("workflow_records.json"):
+        payload = _read_json(path, default={})
+        if isinstance(payload, dict):
+            snapshots[path] = payload
+    return snapshots
+
+
+def _merge_or_restore_workflow_snapshots(output_dir: Path, before: dict[Path, dict[str, Any]]) -> None:
+    after_paths = set(output_dir.rglob("workflow_records.json")) if output_dir.exists() else set()
+    for path, old_payload in before.items():
+        if path not in after_paths:
+            _write_json(path, old_payload)
+            continue
+        new_payload = _read_json(path, default={})
+        if not isinstance(new_payload, dict):
+            _write_json(path, old_payload)
+            continue
+        merged_payload = dict(new_payload)
+        old_records = old_payload.get("records") if isinstance(old_payload.get("records"), list) else []
+        new_records = new_payload.get("records") if isinstance(new_payload.get("records"), list) else []
+        merged_payload["records"] = _merge_records_by_duplicate_key(old_records, new_records)
+        merged_payload["item_count"] = len(merged_payload["records"])
+        _write_json(path, merged_payload)
+
+
+def _merge_records_by_duplicate_key(
+    existing_records: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [record for record in existing_records if isinstance(record, dict)]
+    seen: set[str] = {
+        duplicate_key_for_record(record) or json.dumps(record, ensure_ascii=False, sort_keys=True)
+        for record in merged
+    }
+    for record in new_records:
+        if not isinstance(record, dict):
+            continue
+        key = duplicate_key_for_record(record) or json.dumps(record, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(record)
+    return merged
+
+
 def _job_due_status(job_settings: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     next_run_at = _parse_timestamp(job_settings.get("next_run_at"))
     now = datetime.now(timezone.utc)
@@ -580,17 +853,6 @@ def _skipped_not_due_result(job: RegisteredJob, metadata: dict[str, Any]) -> Job
         finished_at=now,
         metadata=metadata,
     )
-
-
-def _update_job_schedule_after_run(settings: dict[str, Any], job_id: str, result: JobRunResult) -> None:
-    jobs = settings.setdefault("jobs", {})
-    job_settings = jobs.setdefault(job_id, {"enabled": True, "interval": {"value": 1, "unit": "hours"}})
-    interval = normalize_interval(job_settings.get("interval"))
-    finished = _parse_timestamp(result.finished_at) or datetime.now(timezone.utc)
-    job_settings["last_run_at"] = finished.isoformat(timespec="seconds")
-    job_settings["next_run_at"] = (finished + _interval_to_delta(interval)).isoformat(timespec="seconds")
-    job_settings["last_status"] = result.status
-    job_settings["interval"] = interval
 
 
 def _interval_to_delta(interval: dict[str, Any]) -> timedelta:
@@ -623,16 +885,50 @@ def _clean_optional_timestamp(value: Any) -> str:
 
 def _notification_body(matches: list[dict[str, Any]], *, job: RegisteredJob | None) -> str:
     lines = []
+    site_name = job.config_name if job is not None else "Unknown site"
     if job is not None:
-        lines.append(f"Job: {job.config_name} ({job.job_id})")
+        lines.append(f"Site: {site_name}")
     lines.append(f"Matched records: {len(matches)}")
     for index, match in enumerate(matches[:20], start=1):
         record = match["record"]
-        title = title_candidate(record) or "(no title)"
+        topic = _record_topic_candidate(record, match)
+        description = description_candidate(record) or title_candidate(record) or "(no description)"
         url = url_candidate(record) or "(no url)"
-        keywords = ", ".join(match["keywords"])
-        lines.append(f"{index}. [{keywords}] {title} {url}")
+        lines.append(f"{index}. {site_name} > {topic}")
+        lines.append(f"   desc: {_truncate_notification_text(description)}")
+        lines.append(f"   URL: {url}")
     return "\n".join(lines)
+
+
+def description_candidate(record: dict[str, Any]) -> str:
+    extracts = record.get("extracts")
+    if isinstance(extracts, dict):
+        for key in ("description", "desc", "summary", "extract_description", "extract_summary", "body", "extract_body"):
+            value = _first_text(extracts.get(key))
+            if value:
+                return value
+
+    for key in ("description", "desc", "summary", "body"):
+        value = _first_text(record.get(key))
+        if value:
+            return value
+
+    return ""
+
+
+def _record_topic_candidate(record: dict[str, Any], match: dict[str, Any]) -> str:
+    search_term = _first_text(record.get("search_term"))
+    if search_term:
+        return search_term
+    keywords = _clean_string_list(match.get("keywords"))
+    return ", ".join(keywords) if keywords else "(no search/filter term)"
+
+
+def _truncate_notification_text(value: str, limit: int = 500) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

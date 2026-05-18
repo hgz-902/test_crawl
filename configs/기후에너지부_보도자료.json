@@ -4,31 +4,13 @@
   "output_dir": "outputs/mcee_10598",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "",
   "search_terms": [
     "0",
     "10",
-    "20",
-    "30",
-    "40",
-    "50",
-    "60",
-    "70",
-    "80",
-    "90",
-    "100",
-    "110",
-    "120",
-    "130",
-    "140",
-    "150",
-    "160",
-    "170",
-    "180",
-    "190",
-    "200"
+    "20"
   ],
   "filter_terms": [
     "석유",
@@ -55,7 +37,7 @@
       "xpath_2": "//*[@id=\"content_body\"]/div/table/tbody/tr[2]/td[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
+      "loop_limit": 4,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -76,7 +58,7 @@
       "loop_mode": "items",
       "action": "download",
       "wait_state": "attached",
-      "loop_limit": 20
+      "loop_limit": 4
     }
   ],
   "created_at": "2026-04-27T18:16:30+09:00",

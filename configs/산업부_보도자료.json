@@ -4,30 +4,13 @@
   "output_dir": "outputs/motir_news",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "",
   "search_terms": [
     "1",
     "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "11",
-    "12",
-    "13",
-    "14",
-    "15",
-    "16",
-    "17",
-    "18",
-    "19",
-    "20"
+    "3"
   ],
   "filter_terms": [
     "석유",
@@ -54,7 +37,7 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
+      "loop_limit": 4,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -76,7 +59,7 @@
       "action": "download",
       "attr": "href",
       "wait_state": "attached",
-      "loop_limit": 20
+      "loop_limit": 4
     }
   ],
   "created_at": "2026-04-28T18:13:20+09:00",
