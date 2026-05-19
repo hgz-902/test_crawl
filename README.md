@@ -178,8 +178,9 @@ The orchestration page supports:
 - Setting each selected crawler schedule as a five-field cron expression.
 - Editing keyword terms.
 - Editing notification recipients.
+- Switching between the `설정 LIST / 배치 config` tab and the `등록된 스케줄 / 스케줄 결과 보기` tab without leaving the page.
 - Saving local orchestration settings.
-- Running due crawler jobs manually, with an optional one-run force checkbox.
+- Running selected crawler jobs manually without changing scheduler registration.
 - Viewing recent run history, duplicate-stopped jobs, and mail dry-run/sent status.
 
 Settings and run history are stored in local runtime files:
@@ -210,13 +211,14 @@ Each enabled job stores:
 - `next_run_at`
 - `last_status`
 
-The UI stores orchestration settings in `orchestration_state/settings.json`, while runtime state is kept per crawler under `orchestration_state/jobs/<job_id>.json`. This avoids concurrent Windows scheduled jobs overwriting one shared status file. `next_run_at` is calculated from each row's cron expression when settings are saved and after a crawl starts.
+The UI stores orchestration settings in `orchestration_state/settings.json`, while runtime state is kept per crawler under `orchestration_state/jobs/<job_id>.json`. This avoids concurrent Windows scheduled jobs overwriting one shared status file. `next_run_at` is calculated from each row's cron expression when monitoring is started and after a crawl starts.
 
-The orchestration page keeps the existing save/run flow:
+The orchestration page separates settings, one-off runs, and background monitoring:
 
-- `설정 저장` validates the cron settings, saves JSON settings, then recreates this clone's Windows Task Scheduler tasks.
+- `설정 저장` validates the cron settings and saves JSON settings only. It does not create, update, delete, or run Windows Scheduler tasks.
 - `수동 실행` runs the currently selected jobs once with `force_due=True`. It does not change scheduler registration.
-- The saved `설정 저장과 동시에 선택 항목을 실행하고, 저장 시점 기준으로 주기별 스케줄링` option runs selected jobs immediately after the scheduler sync.
+- `모니터링 시작` validates the current settings, saves them, deletes/recreates this clone's managed Windows Scheduler tasks, and shows the registered schedule list.
+- `모니터링 종료` calls the checked-in `scripts/Stop-OrchestrationJobs.ps1` path, stops this clone's managed scheduled tasks, deletes their scheduler registrations, and clears the local scheduler registry. It preserves selected/enabled settings so `모니터링 시작` can recreate tasks from the saved JSON schedule. It never deletes `outputs/` or `workflow_records.json`.
 
 ### Keyword Mail Notification
 
@@ -244,7 +246,7 @@ If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and rec
 
 ### Windows Task Scheduler
 
-When `설정 저장` is pressed on Windows, the app synchronizes Windows Task Scheduler:
+When `모니터링 시작` is pressed on Windows, the app synchronizes Windows Task Scheduler:
 
 1. Deletes only tasks managed by this clone under `\CrawlerOrchestration\<project_namespace>\crawler_*`.
 2. Recreates one task per enabled crawler config.
@@ -257,6 +259,15 @@ When `설정 저장` is pressed on Windows, the app synchronizes Windows Task Sc
 4. Runs `scripts/Run-OrchestrationJob.ps1 -JobId <job_id>`, which loads local `.env` values into the scheduled process and executes that crawler through `crawler_app.scheduled_runner`.
 
 Unsupported cron forms are rejected before settings are saved to the scheduler. Each scheduled task uses its registered Windows trigger and runs with `force_due=True`; the trigger itself is the cadence source of truth. Different crawler tasks can run at the same time, while the same crawler is protected by a per-job lock under `orchestration_state/locks/<job_id>.lock`. Each crawler still follows the same item-level sequence: crawl, stop on a previous-run duplicate within the current search term, continue the next search term or next job, compare keywords, then send or dry-run email according to the saved setting.
+
+To stop this clone's monitoring jobs from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Stop-OrchestrationJobs.ps1 -ProjectRoot . -DeleteTasks
+```
+
+Use PowerShell `-WhatIf` with the script to preview the scoped task actions before stopping or deleting them.
+The web UI uses the same script path for `모니터링 종료`, so manual and UI stop behavior stay aligned.
 
 Secrets must stay out of git. Use Windows user environment variables or an ignored local `.env` file:
 

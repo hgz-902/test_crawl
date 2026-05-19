@@ -659,6 +659,10 @@ def run_job(
         metadata = dict(normalized.get("metadata", {}))
         if same_run_duplicate_skipped_count:
             metadata["same_run_duplicate_skipped_count"] = same_run_duplicate_skipped_count
+        metadata.setdefault("config_name", job.config_name)
+        metadata.setdefault("job_id", job.job_id)
+        metadata.setdefault("config_path", job.config_path)
+        metadata.setdefault("stage", metadata.get("stage") or metadata.get("step_name") or "workflow")
         keyword_matches = records_matching_keywords(records, settings.get("keywords", []))
         notification = (
             notify_keyword_matches(
@@ -705,7 +709,14 @@ def run_job(
             error=error_message,
             started_at=started_at,
             finished_at=utc_timestamp(),
-            metadata={"error_type": type(exc).__name__, "error": str(exc), "config_path": job.config_path},
+            metadata={
+                "config_name": job.config_name,
+                "job_id": job.job_id,
+                "config_path": job.config_path,
+                "stage": "workflow",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
         )
 
 

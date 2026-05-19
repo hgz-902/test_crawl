@@ -19,6 +19,7 @@ PROJECT_NAMESPACE = hashlib.sha1(str(APP_ROOT.resolve()).casefold().encode("utf-
 TASK_FOLDER = rf"\CrawlerOrchestration\{PROJECT_NAMESPACE}"
 TASK_PREFIX = "crawler_"
 RUNNER_SCRIPT = APP_ROOT / "scripts" / "Run-OrchestrationJob.ps1"
+STOP_SCRIPT = APP_ROOT / "scripts" / "Stop-OrchestrationJobs.ps1"
 DEFAULT_LAUNCHER_DIR = Path(os.environ.get("LOCALAPPDATA") or APP_ROOT / "runtime") / "CrawlerOrchestration" / PROJECT_NAMESPACE
 DEFAULT_SCHEDULER_REGISTRY_PATH = APP_ROOT / "orchestration_state" / "scheduler_registry.json"
 
@@ -54,6 +55,16 @@ class SchedulerTaskInfo:
 class SchedulerDeleteResult:
     status: str
     task_name: str
+    skipped_reason: str = ""
+
+
+@dataclass(slots=True)
+class SchedulerStopResult:
+    status: str
+    ended: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     skipped_reason: str = ""
 
 
@@ -134,7 +145,12 @@ def validate_windows_schedule_settings(settings: dict[str, Any], jobs: Iterable[
 
 def list_managed_tasks(*, command_runner: CommandRunner | None = None) -> list[str]:
     runner = command_runner or _run_command
-    result = _checked_run(runner, ["schtasks.exe", "/Query", "/FO", "CSV"])
+    result = runner(["schtasks.exe", "/Query", "/FO", "CSV"])
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        if not message or _is_task_not_found_message(message):
+            return []
+        raise RuntimeError(message or "Windows Task Scheduler command failed.")
     task_names: list[str] = []
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
@@ -150,7 +166,12 @@ def list_managed_task_details(*, command_runner: CommandRunner | None = None) ->
         if details:
             return details
     runner = command_runner or _run_command
-    result = _checked_run(runner, ["schtasks.exe", "/Query", "/FO", "CSV", "/V"])
+    result = runner(["schtasks.exe", "/Query", "/FO", "CSV", "/V"])
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        if not message or _is_task_not_found_message(message):
+            return []
+        raise RuntimeError(message or "Windows Task Scheduler command failed.")
     details: list[SchedulerTaskInfo] = []
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
@@ -177,7 +198,12 @@ def list_managed_task_details(*, command_runner: CommandRunner | None = None) ->
 
 
 def _basic_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
-    result = _checked_run(runner, ["schtasks.exe", "/Query", "/FO", "CSV"])
+    result = runner(["schtasks.exe", "/Query", "/FO", "CSV"])
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        if not message or _is_task_not_found_message(message):
+            return []
+        raise RuntimeError(message or "Windows Task Scheduler command failed.")
     details: list[SchedulerTaskInfo] = []
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
@@ -263,6 +289,100 @@ def delete_managed_task(
     _delete_launcher_for_task(normalized, Path(launcher_dir))
     remove_scheduler_registry_entry(normalized, registry_path=registry_path)
     return SchedulerDeleteResult(status="deleted", task_name=normalized)
+
+
+def stop_managed_tasks(
+    *,
+    delete_tasks: bool = False,
+    command_runner: CommandRunner | None = None,
+    is_windows: bool | None = None,
+    launcher_dir: str | Path = DEFAULT_LAUNCHER_DIR,
+    registry_path: str | Path = DEFAULT_SCHEDULER_REGISTRY_PATH,
+) -> SchedulerStopResult:
+    """Stop this project namespace's scheduled tasks, optionally deleting them."""
+    if is_windows is None:
+        is_windows = os.name == "nt"
+    if not is_windows:
+        return SchedulerStopResult(status="skipped", skipped_reason="not_windows")
+
+    runner = command_runner or _run_command
+    tasks = list_managed_tasks(command_runner=runner)
+    ended: list[str] = []
+    deleted: list[str] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+    for task_name in tasks:
+        end_result = runner(["schtasks.exe", "/End", "/TN", task_name])
+        if end_result.returncode == 0:
+            ended.append(task_name)
+        else:
+            message = (end_result.stderr or end_result.stdout or "").strip()
+            skipped.append(f"{task_name}: {message or 'not running'}")
+        if not delete_tasks:
+            continue
+        delete_result = runner(["schtasks.exe", "/Delete", "/TN", task_name, "/F"])
+        if delete_result.returncode == 0:
+            deleted.append(task_name)
+            _delete_launcher_for_task(task_name, Path(launcher_dir))
+            remove_scheduler_registry_entry(task_name, registry_path=registry_path)
+            continue
+        message = (delete_result.stderr or delete_result.stdout or "").strip()
+        if _is_task_not_found_message(message):
+            deleted.append(task_name)
+            _delete_launcher_for_task(task_name, Path(launcher_dir))
+            remove_scheduler_registry_entry(task_name, registry_path=registry_path)
+        else:
+            errors.append(f"{task_name}: {message or 'Windows Task Scheduler delete failed.'}")
+    if delete_tasks and not errors:
+        _write_scheduler_registry([], registry_path=registry_path)
+    return SchedulerStopResult(
+        status="failed" if errors else "stopped",
+        ended=ended,
+        deleted=deleted,
+        skipped=skipped,
+        errors=errors,
+    )
+
+
+def stop_managed_tasks_with_script(
+    *,
+    delete_tasks: bool = True,
+    project_root: str | Path = APP_ROOT,
+    command_runner: CommandRunner | None = None,
+    is_windows: bool | None = None,
+    registry_path: str | Path = DEFAULT_SCHEDULER_REGISTRY_PATH,
+) -> SchedulerStopResult:
+    """Run the checked-in stop script used by the UI's monitoring stop button."""
+    if is_windows is None:
+        is_windows = os.name == "nt"
+    if not is_windows:
+        return SchedulerStopResult(status="skipped", skipped_reason="not_windows")
+    runner = command_runner or _run_command
+    args = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(STOP_SCRIPT.resolve()),
+        "-ProjectRoot",
+        str(Path(project_root).resolve()),
+    ]
+    if delete_tasks:
+        args.append("-DeleteTasks")
+    result = runner(args)
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        return SchedulerStopResult(status="failed", errors=[message or "Stop-OrchestrationJobs.ps1 failed."])
+    if delete_tasks:
+        _write_scheduler_registry([], registry_path=registry_path)
+    stdout_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return SchedulerStopResult(
+        status="stopped",
+        ended=[line for line in stdout_lines if line.startswith("Stopped ")],
+        deleted=[line for line in stdout_lines if line.startswith("Deleted ")],
+        skipped=[line for line in stdout_lines if line.startswith("Skipped ") or line.startswith("No managed")],
+    )
 
 
 def load_scheduler_registry(

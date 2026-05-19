@@ -16,17 +16,37 @@
 <div class="notice error">{{ error }}</div>
 {% endif %}
 
-<form method="post" action="/orchestration" class="orchestration-form">
-  <section class="panel">
+<form id="orchestration-form" method="post" action="/orchestration" class="orchestration-form">
+  <section class="panel operation-panel">
     <div class="panel-heading">
       <div>
         <h2>운영 설정</h2>
-        <p>설정 저장 시 선택한 항목의 Windows Task Scheduler 작업을 저장된 cron 기준으로 재생성합니다.</p>
+        <p>설정 저장은 JSON만 갱신합니다. 모니터링 시작을 눌러야 Windows Scheduler가 재생성됩니다.</p>
       </div>
       <div class="smtp-state {{ 'ready' if smtp_ready else 'dry' }}">
         {{ "SMTP 준비됨" if smtp_ready else "SMTP dry-run" }}
       </div>
     </div>
+
+    <div class="operation-summary">
+      <div>
+        <strong>{{ jobs | length }}</strong>
+        <span>등록 config</span>
+      </div>
+      <div>
+        <strong>{{ jobs | selectattr("settings.enabled") | list | length }}</strong>
+        <span>선택 항목</span>
+      </div>
+      <div>
+        <strong>{{ scheduler_rows | length }}</strong>
+        <span>등록 스케줄</span>
+      </div>
+      <div>
+        <strong>{{ "real-send" if settings.allow_email_send else "dry-run" }}</strong>
+        <span>메일 모드</span>
+      </div>
+    </div>
+
     <div class="orchestration-settings">
       <div>
         <h2>키워드</h2>
@@ -42,27 +62,32 @@
         <p>SMTP 비밀번호는 `.env` 또는 환경변수에서만 읽습니다.</p>
       </div>
     </div>
+
     <div class="orchestration-run-options">
       <label class="check-row">
         <input type="checkbox" name="allow_email_send" value="1" {% if settings.allow_email_send %}checked{% endif %}>
         <span>키워드가 발견되면 실제 메일 발송 허용</span>
       </label>
       <p>체크하지 않으면 SMTP 정보가 있어도 dry-run으로만 기록됩니다.</p>
-      <label class="check-row">
-        <input type="checkbox" name="force_due" value="1">
-        <span>설정 저장과 동시에 선택 항목을 실행하고, 저장 시점 기준으로 주기별 스케줄링</span>
-      </label>
     </div>
-    <div class="form-actions">
+
+    <div class="form-actions operation-actions">
       <button type="submit" name="action" value="save">설정 저장</button>
       <button class="primary" type="submit" name="action" value="run" data-confirm="선택한 크롤러를 지금 한 번 실행할까요? 스케줄러는 변경하지 않습니다.">수동 실행</button>
+      <button type="submit" name="action" value="sync" data-confirm="현재 설정으로 이 프로젝트의 Windows 스케줄러를 재생성할까요?">모니터링 시작</button>
+      <button class="danger" type="submit" name="action" value="stop_monitoring" data-confirm="이 프로젝트가 관리하는 모니터링 작업을 종료하고 스케줄러를 삭제할까요? outputs와 workflow_records.json은 삭제하지 않습니다.">모니터링 종료</button>
     </div>
   </section>
 
-  <section class="panel">
+  <div class="tab-nav" role="tablist" aria-label="오케스트레이션 화면 구분" data-tabs>
+    <button type="button" role="tab" id="tab-config-list" aria-controls="config-list" aria-selected="true" class="tab-button is-active" data-tab-target="config-list">설정 LIST / 배치 config</button>
+    <button type="button" role="tab" id="tab-schedule-results" aria-controls="schedule-results" aria-selected="false" class="tab-button" data-tab-target="schedule-results">등록된 스케줄 / 스케줄 결과 보기</button>
+  </div>
+
+  <section id="config-list" class="panel tab-panel is-active" role="tabpanel" aria-labelledby="tab-config-list" data-tab-panel>
     <div class="panel-heading">
       <div>
-        <h2>크롤링 항목</h2>
+        <h2>설정 LIST / 배치 config</h2>
         <p>cron은 5개 필드 형식입니다. 예: `0 3 * * *` 매일 03시, `*/5 * * * *` 5분마다 실행.</p>
       </div>
     </div>
@@ -77,6 +102,7 @@
             <th>검색어</th>
             <th>필터</th>
             <th class="cron-col">Cron 주기</th>
+            <th>스케줄</th>
             <th>최근 실행</th>
             <th>다음 실행</th>
           </tr>
@@ -91,9 +117,6 @@
             <td>
               <strong>{{ job.config_name }}</strong>
               <div class="muted-text">{{ job.job_id }}</div>
-              {% if job_settings.get("last_status") %}
-              <div class="muted-text">최근 상태: {{ job_settings.get("last_status") }}</div>
-              {% endif %}
             </td>
             <td class="url">{{ job.output_dir }}</td>
             <td>{{ job.search_terms | length }}</td>
@@ -101,6 +124,7 @@
             <td class="cron-control">
               <input type="text" name="cron__{{ job.job_id }}" value="{{ job_settings.get('cron', '0 * * * *') }}" placeholder="*/5 * * * *">
             </td>
+            <td><span class="status-pill">{{ job.schedule_status }}</span></td>
             <td class="url">{{ job.last_run_at_display or "-" }}</td>
             <td class="url">{{ job.next_run_at_display or "스케줄러 기준" }}</td>
           </tr>
@@ -114,11 +138,11 @@
   </section>
 </form>
 
-<section class="panel">
+<section id="schedule-results" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-schedule-results" data-tab-panel hidden>
   <div class="panel-heading">
     <div>
-      <h2>모니터링 상태</h2>
-      <p>설정 저장으로 등록한 Windows Task Scheduler 작업과 최근 앱 실행 기록을 표시합니다.</p>
+      <h2>등록된 스케줄 / 스케줄 결과 보기</h2>
+      <p>현재 Windows Task Scheduler에 등록된 managed task와 최근 앱 실행 결과를 함께 표시합니다.</p>
     </div>
   </div>
   {% if scheduler_error %}
@@ -129,40 +153,47 @@
     <table class="scheduler-table">
       <thead>
         <tr>
+          <th>Task</th>
+          <th>Job ID</th>
           <th>크롤러</th>
-          <th>등록 상태</th>
           <th>Cron</th>
+          <th>상태</th>
           <th>최근 실행</th>
-          <th>메일</th>
-          <th>검색/필터</th>
-          <th>등록 시각</th>
-          <th>작업명</th>
+          <th>다음 실행</th>
+          <th>Last Result</th>
+          <th>Action</th>
+          <th>등록</th>
           <th>관리</th>
         </tr>
       </thead>
       <tbody>
         {% for row in scheduler_rows %}
         <tr>
+          <td class="url">{{ row.task_name }}</td>
+          <td class="url">{{ row.job_id or "-" }}</td>
           <td>
             <strong>{{ row.config_name }}</strong>
             {% if row.app_last_status %}
-            <div class="muted-text">최근 앱 상태: {{ row.app_last_status }}</div>
+            <div class="muted-text">앱 최근 상태: {{ row.app_last_status }}</div>
             {% endif %}
+            <div class="muted-text">검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</div>
           </td>
-          <td><span class="status-pill">{{ "활성" if row.enabled else "설정 비활성" }}</span></td>
           <td class="url">{{ row.cron or "-" }}</td>
-          <td class="url">{{ row.app_last_run_at_display or "-" }}</td>
-          <td>{{ "발송 허용" if row.allow_email_send else "dry-run" }}</td>
-          <td>검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</td>
+          <td><span class="status-pill">{{ row.scheduler_status or ("활성" if row.enabled else "설정 비활성") }}</span></td>
+          <td class="url">{{ row.scheduler_last_run_at_display or "-" }}</td>
+          <td class="url">{{ row.scheduler_next_run_at_display or "-" }}</td>
+          <td class="url" title="{{ row.scheduler_last_result or '' }}">{{ row.scheduler_last_result_display or "-" }}</td>
+          <td class="url">{{ row.task_action_path or "-" }}</td>
           <td class="url">{{ row.registered_at_display or "-" }}</td>
-          <td class="url">{{ row.task_name }}</td>
           <td>
+            {% if row.task_name %}
             <form method="post" action="/orchestration" data-confirm="선택한 Windows 스케줄러를 삭제할까요? 이 항목은 오케스트레이션 설정에서도 비활성화됩니다.">
               <input type="hidden" name="action" value="delete_scheduler">
               <input type="hidden" name="task_name" value="{{ row.task_name }}">
               <input type="hidden" name="job_id" value="{{ row.job_id }}">
               <button class="danger" type="submit">삭제</button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -172,10 +203,9 @@
   {% else %}
   <div class="empty">현재 등록된 오케스트레이션 스케줄러가 없습니다.</div>
   {% endif %}
-</section>
 
-{% if last_batch %}
-<section class="panel">
+  {% if last_batch %}
+  <div class="subsection-block">
   <h2>방금 실행한 결과</h2>
   <dl class="summary">
     <dt>Batch ID</dt><dd>{{ last_batch.batch_id }}</dd>
@@ -208,17 +238,17 @@
           <td class="url">{{ result.duplicate_key or "" }}</td>
           <td>{{ result.keyword_matches | length }}</td>
           <td>{{ result.notification.status if result.notification else "" }}</td>
-          <td class="url">{{ result.error or result.metadata.get("due_reason", "") }}</td>
+          <td class="url long-error">{{ result.error or result.metadata.get("error") or result.metadata.get("due_reason", "") }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-</section>
-{% endif %}
+  </div>
+  {% endif %}
 
-<section class="panel">
-  <h2>최근 실행 이력</h2>
+  <div class="subsection-block">
+  <h2>스케줄 결과 보기</h2>
   {% if history %}
   <div class="table-wrap flush">
     <table>
@@ -231,6 +261,7 @@
           <th>중복 중단</th>
           <th>주기 미도래</th>
           <th>실패</th>
+          <th>시작 시각</th>
           <th>종료 시각</th>
         </tr>
       </thead>
@@ -244,6 +275,7 @@
           <td>{{ entry.duplicate_stopped }}</td>
           <td>{{ entry.skipped_not_due or 0 }}</td>
           <td>{{ entry.failed }}</td>
+          <td>{{ entry.started_at_display or entry.started_at }}</td>
           <td>{{ entry.finished_at_display or entry.finished_at }}</td>
         </tr>
         {% endfor %}
@@ -253,5 +285,35 @@
   {% else %}
   <div class="empty">아직 배치 실행 이력이 없습니다.</div>
   {% endif %}
+  </div>
 </section>
+<script>
+(() => {
+  const tabs = Array.from(document.querySelectorAll("[data-tab-target]"));
+  const panels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+  if (!tabs.length || !panels.length) return;
+
+  function activate(targetId) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel) return;
+    tabs.forEach((tab) => {
+      const active = tab.dataset.tabTarget === targetId;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+      tab.tabIndex = active ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const active = panel.id === targetId;
+      panel.hidden = !active;
+      panel.classList.toggle("is-active", active);
+    });
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tabTarget || ""));
+  });
+  const initial = window.location.hash.replace("#", "");
+  activate(panels.some((panel) => panel.id === initial) ? initial : tabs[0].dataset.tabTarget || "");
+})();
+</script>
 {% endblock %}

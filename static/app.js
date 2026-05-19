@@ -72,6 +72,56 @@ function restoreScrollState() {
   }
 }
 
+function initOrchestrationTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-tab-target]"));
+  const panels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+  if (!tabs.length || !panels.length) return;
+
+  function activate(targetId, updateHash = true) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel) return;
+    tabs.forEach((tab) => {
+      const isActive = tab.dataset.tabTarget === targetId;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      tab.tabIndex = isActive ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.id === targetId;
+      panel.hidden = !isActive;
+      panel.classList.toggle("is-active", isActive);
+    });
+    if (updateHash) {
+      const url = new URL(window.location.href);
+      url.hash = targetId;
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tabTarget || ""));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = tabs.indexOf(tab);
+      let nextIndex = currentIndex;
+      if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = tabs.length - 1;
+      tabs[nextIndex].focus();
+      activate(tabs[nextIndex].dataset.tabTarget || "");
+    });
+  });
+
+  const hashTarget = window.location.hash.replace("#", "");
+  if (hashTarget && panels.some((panel) => panel.id === hashTarget)) {
+    activate(hashTarget, false);
+  } else {
+    activate(tabs[0].dataset.tabTarget || "", false);
+  }
+}
+
 function readValue(input) {
   if (input.type === "checkbox") return input.checked;
   if (input.type === "number") return Number(input.value || 0);
@@ -501,6 +551,7 @@ document.addEventListener("submit", (event) => {
 });
 
 renumberSteps();
+initOrchestrationTabs();
 if (!focusConfigRowFromQuery()) {
   restoreScrollState();
 }

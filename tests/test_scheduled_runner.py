@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import patch
+from io import StringIO
 import unittest
 
 from crawler_app import scheduled_runner
@@ -24,16 +25,19 @@ class ScheduledRunnerTests(unittest.TestCase):
             calls.append({"selected": list(selected), **kwargs})
             return type("Batch", (), {"failed": 0})()
 
+        stdout = StringIO()
         with patch.object(scheduled_runner, "OrchestrationStateStore", return_value=FakeStore()), patch.object(
             scheduled_runner, "run_batch", side_effect=fake_run_batch
         ), patch.object(
             scheduled_runner, "batch_to_dict", return_value={"status": "completed"}
-        ), patch("sys.argv", ["scheduled_runner", "--job-id", "disabled", "--allow-email-send"]):
+        ), patch("sys.argv", ["scheduled_runner", "--job-id", "disabled", "--allow-email-send"]), patch("sys.stdout", stdout):
             exit_code = scheduled_runner.main()
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(calls[0]["selected"], [])
         self.assertFalse(calls[0]["allow_email_send"])
+        self.assertIn("SCHEDULED_RUN_START", stdout.getvalue())
+        self.assertIn("SCHEDULED_RUN_SUMMARY", stdout.getvalue())
 
     def test_runner_uses_saved_email_permission_for_scheduled_runs(self) -> None:
         class FakeStore:
@@ -46,11 +50,12 @@ class ScheduledRunnerTests(unittest.TestCase):
             calls.append({"selected": list(selected), **kwargs})
             return type("Batch", (), {"failed": 0})()
 
+        stdout = StringIO()
         with patch.object(scheduled_runner, "OrchestrationStateStore", return_value=FakeStore()), patch.object(
             scheduled_runner, "run_batch", side_effect=fake_run_batch
         ), patch.object(
             scheduled_runner, "batch_to_dict", return_value={"status": "completed"}
-        ), patch("sys.argv", ["scheduled_runner", "--job-id", "enabled"]):
+        ), patch("sys.argv", ["scheduled_runner", "--job-id", "enabled"]), patch("sys.stdout", stdout):
             exit_code = scheduled_runner.main()
 
         self.assertEqual(exit_code, 0)

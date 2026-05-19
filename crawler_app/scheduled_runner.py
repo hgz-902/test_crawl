@@ -27,6 +27,17 @@ def main() -> int:
         selected = [job_id for job_id in args.job_ids if job_id in enabled_set]
     else:
         selected = enabled_job_ids
+    print(
+        "SCHEDULED_RUN_START "
+        + json.dumps(
+            {
+                "requested_job_ids": args.job_ids or [],
+                "selected_job_ids": selected,
+                "allow_email_send": bool(settings.get("allow_email_send", False)),
+            },
+            ensure_ascii=False,
+        )
+    )
     batch = run_batch(
         selected,
         store=store,
@@ -34,7 +45,37 @@ def main() -> int:
         allow_email_send=bool(settings.get("allow_email_send", False)),
         parallel=True,
     )
-    print(json.dumps(batch_to_dict(batch), ensure_ascii=False, indent=2))
+    payload = batch_to_dict(batch)
+    print(
+        "SCHEDULED_RUN_SUMMARY "
+        + json.dumps(
+            {
+                "batch_id": payload.get("batch_id"),
+                "started_at": payload.get("started_at"),
+                "finished_at": payload.get("finished_at"),
+                "status": payload.get("status"),
+                "total": payload.get("total"),
+                "succeeded": payload.get("succeeded"),
+                "failed": payload.get("failed"),
+                "duplicate_stopped": payload.get("duplicate_stopped"),
+                "skipped_not_due": payload.get("skipped_not_due"),
+                "results": [
+                    {
+                        "job_id": result.get("job_id"),
+                        "config_name": result.get("config_name"),
+                        "status": result.get("status"),
+                        "items_count": result.get("items_count"),
+                        "duplicate_stopped": result.get("duplicate_stopped"),
+                        "error": result.get("error"),
+                    }
+                    for result in payload.get("results", [])
+                    if isinstance(result, dict)
+                ],
+            },
+            ensure_ascii=False,
+        )
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 1 if batch.failed else 0
 
 

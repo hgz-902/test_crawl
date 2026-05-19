@@ -9,6 +9,7 @@ from unittest.mock import patch
 from crawler_app.orchestration import RegisteredJob
 from crawler_app.windows_scheduler import (
     SchedulerCommandResult,
+    STOP_SCRIPT,
     TASK_FOLDER,
     _powershell_task_details,
     build_task_action,
@@ -17,6 +18,8 @@ from crawler_app.windows_scheduler import (
     list_managed_task_details,
     list_managed_tasks,
     managed_task_name,
+    stop_managed_tasks,
+    stop_managed_tasks_with_script,
     sync_windows_scheduled_tasks,
     _windows_command_encoding,
     write_task_launcher,
@@ -174,6 +177,75 @@ class WindowsSchedulerTests(unittest.TestCase):
             self.assertEqual([entry["task_name"] for entry in remaining], [f"{TASK_FOLDER}\\crawler_other"])
             self.assertIn("찾을 수", result.skipped_reason)
 
+    def test_stop_managed_tasks_deletes_only_project_namespace_tasks(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(args: list[str]) -> SchedulerCommandResult:
+            calls.append(args)
+            if args[:3] == ["schtasks.exe", "/Query", "/FO"]:
+                return SchedulerCommandResult(
+                    0,
+                    '"TaskName","Next Run Time","Status"\n'
+                    f'"{TASK_FOLDER}\\crawler_abc","2026-05-18 01:00:00","Ready"\n'
+                    '"\\Other\\crawler_abc","2026-05-18 01:00:00","Ready"\n',
+                    "",
+                )
+            if args[:3] == ["schtasks.exe", "/End", "/TN"]:
+                return SchedulerCommandResult(1, "", "The task is not currently running.")
+            return SchedulerCommandResult(0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            registry_path = Path(tmp_dir) / "registry.json"
+            registry_path.write_text(
+                json.dumps({"tasks": [{"task_name": f"{TASK_FOLDER}\\crawler_abc", "job_id": "sample"}]}),
+                encoding="utf-8",
+            )
+            result = stop_managed_tasks(
+                delete_tasks=True,
+                command_runner=fake_runner,
+                is_windows=True,
+                registry_path=registry_path,
+                launcher_dir=Path(tmp_dir),
+            )
+
+            remaining = json.loads(registry_path.read_text(encoding="utf-8"))["tasks"]
+
+        self.assertEqual(result.status, "stopped")
+        self.assertEqual(result.deleted, [f"{TASK_FOLDER}\\crawler_abc"])
+        self.assertEqual(remaining, [])
+        self.assertFalse(any("\\Other\\crawler_abc" in call for call in calls))
+
+    def test_stop_managed_tasks_skips_non_windows_without_side_effects(self) -> None:
+        result = stop_managed_tasks(is_windows=False, command_runner=lambda args: SchedulerCommandResult(0, "", ""))
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.skipped_reason, "not_windows")
+
+    def test_stop_managed_tasks_with_script_invokes_checked_in_stop_script(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_runner(args: list[str]) -> SchedulerCommandResult:
+            calls.append(args)
+            return SchedulerCommandResult(0, "Deleted managed tasks", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            registry_path = Path(tmp_dir) / "registry.json"
+            registry_path.write_text(json.dumps({"tasks": [{"task_name": f"{TASK_FOLDER}\\crawler_abc"}]}), encoding="utf-8")
+            result = stop_managed_tasks_with_script(
+                delete_tasks=True,
+                project_root=Path(tmp_dir),
+                command_runner=fake_runner,
+                is_windows=True,
+                registry_path=registry_path,
+            )
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "stopped")
+        self.assertEqual(registry["tasks"], [])
+        self.assertEqual(calls[0][0:4], ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass"])
+        self.assertIn(str(STOP_SCRIPT.resolve()), calls[0])
+        self.assertIn("-DeleteTasks", calls[0])
+
     def test_sync_deletes_existing_tasks_and_creates_one_task_per_enabled_job(self) -> None:
         calls: list[list[str]] = []
 
@@ -300,6 +372,17 @@ class WindowsSchedulerTests(unittest.TestCase):
         self.assertIn("-RedirectStandardError", script_text)
         self.assertIn("Python process finished. exit_code=$exitCode", script_text)
         self.assertIn("Scheduled orchestration task finished. exit_code=$exitCode", script_text)
+
+    def test_stop_script_scopes_to_project_namespace_and_never_mentions_outputs_cleanup(self) -> None:
+        script_text = (RUNNER_SCRIPT.parent / "Stop-OrchestrationJobs.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Get-ProjectNamespace", script_text)
+        self.assertIn("\\CrawlerOrchestration\\$namespace\\", script_text)
+        self.assertIn("Stop-ScheduledTask", script_text)
+        self.assertIn("Unregister-ScheduledTask", script_text)
+        self.assertIn("scheduler_registry.json", script_text)
+        self.assertNotIn("outputs", script_text)
+        self.assertNotIn("workflow_records.json", script_text)
 
 
 if __name__ == "__main__":
