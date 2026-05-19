@@ -8,16 +8,18 @@ import csv
 import hashlib
 import io
 import json
+import locale
 import os
 import subprocess
 
-from crawler_app.orchestration import APP_ROOT, RegisteredJob, normalize_interval
+from crawler_app.orchestration import APP_ROOT, RegisteredJob, normalize_cron_expression, normalize_interval
 
 
-TASK_FOLDER = r"\CrawlerOrchestration"
+PROJECT_NAMESPACE = hashlib.sha1(str(APP_ROOT.resolve()).casefold().encode("utf-8")).hexdigest()[:12]
+TASK_FOLDER = rf"\CrawlerOrchestration\{PROJECT_NAMESPACE}"
 TASK_PREFIX = "crawler_"
 RUNNER_SCRIPT = APP_ROOT / "scripts" / "Run-OrchestrationJob.ps1"
-DEFAULT_LAUNCHER_DIR = Path(os.environ.get("LOCALAPPDATA") or APP_ROOT / "runtime") / "CrawlerOrchestration"
+DEFAULT_LAUNCHER_DIR = Path(os.environ.get("LOCALAPPDATA") or APP_ROOT / "runtime") / "CrawlerOrchestration" / PROJECT_NAMESPACE
 DEFAULT_SCHEDULER_REGISTRY_PATH = APP_ROOT / "orchestration_state" / "scheduler_registry.json"
 
 
@@ -69,6 +71,7 @@ def sync_windows_scheduled_tasks(
     registry_path: str | Path = DEFAULT_SCHEDULER_REGISTRY_PATH,
 ) -> SchedulerSyncResult:
     """Replace this app's Windows scheduled tasks with the current UI settings."""
+    validate_windows_schedule_settings(settings, jobs)
     if is_windows is None:
         is_windows = os.name == "nt"
     if not is_windows:
@@ -89,7 +92,7 @@ def sync_windows_scheduled_tasks(
         job_settings = job_settings_by_id.get(job.job_id)
         if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
             continue
-        schedule_args = _schedule_args(job_settings.get("interval"))
+        schedule_args = _schedule_args_from_job_settings(job_settings)
         launcher_path = write_task_launcher(
             project_root,
             job.job_id,
@@ -114,6 +117,19 @@ def sync_windows_scheduled_tasks(
 
     write_scheduler_registry(settings, jobs, registry_path=registry_path)
     return SchedulerSyncResult(status="synced", deleted=deleted, created=created)
+
+
+def validate_windows_schedule_settings(settings: dict[str, Any], jobs: Iterable[RegisteredJob]) -> None:
+    """Validate enabled job cron expressions before mutating Windows Task Scheduler."""
+    job_settings_by_id = settings.get("jobs") if isinstance(settings.get("jobs"), dict) else {}
+    for job in jobs:
+        job_settings = job_settings_by_id.get(job.job_id)
+        if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
+            continue
+        try:
+            _schedule_args_from_job_settings(job_settings)
+        except ValueError as exc:
+            raise ValueError(f"{job.config_name} cron 설정을 Windows Task Scheduler로 변환할 수 없습니다: {exc}") from exc
 
 
 def list_managed_tasks(*, command_runner: CommandRunner | None = None) -> list[str]:
@@ -179,8 +195,9 @@ def _basic_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
 
 
 def _powershell_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
+    task_path = TASK_FOLDER if TASK_FOLDER.endswith("\\") else TASK_FOLDER + "\\"
     script = (
-        "Get-ScheduledTask -TaskPath '\\CrawlerOrchestration\\' -ErrorAction SilentlyContinue | "
+        f"Get-ScheduledTask -TaskPath '{task_path}' -ErrorAction SilentlyContinue | "
         "Sort-Object TaskName | ForEach-Object { "
         "$info = Get-ScheduledTaskInfo -TaskPath $_.TaskPath -TaskName $_.TaskName; "
         "[PSCustomObject]@{"
@@ -191,7 +208,12 @@ def _powershell_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
         "LastResult=[string]$info.LastTaskResult"
         "} } | ConvertTo-Json -Compress"
     )
-    result = _checked_run(runner, ["powershell.exe", "-NoProfile", "-Command", script])
+    result = runner(["powershell.exe", "-NoProfile", "-Command", script])
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        if not message or _is_task_not_found_message(message):
+            return []
+        raise RuntimeError(message or "Windows Task Scheduler command failed.")
     try:
         payload = json.loads(result.stdout) if result.stdout.strip() else []
     except json.JSONDecodeError:
@@ -234,7 +256,7 @@ def delete_managed_task(
     result = runner(["schtasks.exe", "/Delete", "/TN", normalized, "/F"])
     if result.returncode != 0:
         message = (result.stderr or result.stdout or "").strip()
-        if "cannot find" in message.casefold() or "not exist" in message.casefold():
+        if _is_task_not_found_message(message):
             remove_scheduler_registry_entry(normalized, registry_path=registry_path)
             return SchedulerDeleteResult(status="not_found", task_name=normalized, skipped_reason=message)
         raise RuntimeError(message or "Windows Task Scheduler delete failed.")
@@ -280,6 +302,7 @@ def write_scheduler_registry(
                 "search_terms_count": len(job.search_terms),
                 "filter_terms_count": len(job.filter_terms),
                 "interval": normalize_interval(job_settings.get("interval")),
+                "cron": normalize_cron_expression(job_settings.get("cron") or ""),
                 "allow_email_send": allow_email_send,
                 "registered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             }
@@ -388,6 +411,126 @@ def _schedule_args(interval: Any) -> list[str]:
     return ["/SC", "DAILY", "/MO", value, "/ST", start_time]
 
 
+def _schedule_args_from_job_settings(job_settings: dict[str, Any]) -> list[str]:
+    cron_expr = str(job_settings.get("cron") or "").strip()
+    if cron_expr:
+        return cron_to_schtasks_args(cron_expr)
+    return _schedule_args(job_settings.get("interval"))
+
+
+def cron_to_schtasks_args(cron_expr: str) -> list[str]:
+    parts = [part.strip() for part in str(cron_expr or "").split() if part.strip()]
+    if len(parts) != 5:
+        raise ValueError("cron must have 5 fields like '*/5 * * * *' or '0 3 * * *'.")
+    minute, hour, day_of_month, month, day_of_week = parts
+    if month != "*":
+        raise ValueError("month field is not supported. Use '*' for month.")
+
+    if minute == "*" and hour == "*" and day_of_month == "*" and day_of_week == "*":
+        return ["/SC", "MINUTE", "/MO", "1", "/ST", _format_time(datetime.now().hour, datetime.now().minute)]
+
+    if minute.startswith("*/") and hour == "*" and day_of_month == "*" and day_of_week == "*":
+        step = _parse_step(minute, "minute")
+        return ["/SC", "MINUTE", "/MO", str(step), "/ST", _format_time(datetime.now().hour, 0)]
+
+    if minute.startswith("*/"):
+        raise ValueError("minute intervals are supported only when hour, day-of-month, and day-of-week are '*'.")
+    minute_value = _parse_single_number(minute, "minute", 0, 59)
+    if day_of_month != "*" and day_of_week != "*":
+        raise ValueError("cron day-of-month and day-of-week cannot both be specific in this scheduler.")
+
+    if minute_value is None:
+        raise ValueError("minute field must be a number, or */N for all-day minute intervals.")
+
+    if hour.startswith("*/") and day_of_month == "*" and day_of_week == "*":
+        step = _parse_step(hour, "hour")
+        return ["/SC", "HOURLY", "/MO", str(step), "/ST", _format_time(datetime.now().hour, minute_value)]
+
+    if hour.startswith("*/"):
+        raise ValueError("hour intervals are supported only when day-of-month and day-of-week are '*'.")
+    hour_value = _parse_single_number(hour, "hour", 0, 23, allow_any=True)
+
+    if hour == "*" and day_of_month == "*" and day_of_week == "*":
+        return ["/SC", "HOURLY", "/MO", "1", "/ST", _format_time(datetime.now().hour, minute_value)]
+
+    if hour_value is None:
+        raise ValueError("hour field must be '*' or a number.")
+
+    if day_of_month == "*" and day_of_week == "*":
+        return ["/SC", "DAILY", "/MO", "1", "/ST", _format_time(hour_value, minute_value)]
+
+    if day_of_week != "*":
+        weekdays = _parse_weekdays(day_of_week)
+        return ["/SC", "WEEKLY", "/MO", "1", "/D", ",".join(weekdays), "/ST", _format_time(hour_value, minute_value)]
+
+    if day_of_month.startswith("*/"):
+        day_step = _parse_step(day_of_month, "day-of-month")
+        return ["/SC", "DAILY", "/MO", str(day_step), "/ST", _format_time(hour_value, minute_value)]
+
+    day_value = _parse_single_number(day_of_month, "day_of_month", 1, 31)
+    if day_value is None:
+        raise ValueError("day-of-month field must be '*' or a number between 1 and 31.")
+    return ["/SC", "MONTHLY", "/MO", "1", "/D", str(day_value), "/ST", _format_time(hour_value, minute_value)]
+
+
+def _parse_single_number(value: str, field_name: str, min_value: int, max_value: int, allow_any: bool = False) -> int | None:
+    if value == "*":
+        return None if allow_any else None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} field must be a number.") from exc
+    if parsed < min_value or parsed > max_value:
+        raise ValueError(f"{field_name} field must be between {min_value} and {max_value}.")
+    return parsed
+
+
+def _parse_step(value: str, field_name: str) -> int:
+    if not value.startswith("*/"):
+        raise ValueError(f"{field_name} interval must use */N format.")
+    try:
+        parsed = int(value[2:])
+    except ValueError as exc:
+        raise ValueError(f"{field_name} interval must be a number in */N.") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field_name} interval must be greater than 0.")
+    return parsed
+
+
+def _parse_weekdays(value: str) -> list[str]:
+    mapping = {
+        "0": "SUN",
+        "7": "SUN",
+        "1": "MON",
+        "2": "TUE",
+        "3": "WED",
+        "4": "THU",
+        "5": "FRI",
+        "6": "SAT",
+        "SUN": "SUN",
+        "MON": "MON",
+        "TUE": "TUE",
+        "WED": "WED",
+        "THU": "THU",
+        "FRI": "FRI",
+        "SAT": "SAT",
+    }
+    weekdays: list[str] = []
+    for token in [item.strip().upper() for item in value.split(",") if item.strip()]:
+        mapped = mapping.get(token)
+        if mapped is None:
+            raise ValueError("day-of-week field must be 0-7 or SUN..SAT (comma separated).")
+        if mapped not in weekdays:
+            weekdays.append(mapped)
+    if not weekdays:
+        raise ValueError("day-of-week field is empty.")
+    return weekdays
+
+
+def _format_time(hour: int, minute: int) -> str:
+    return f"{hour:02d}:{minute:02d}"
+
+
 def _interval_delta(unit: str, value: int) -> timedelta:
     if unit == "minutes":
         return timedelta(minutes=value)
@@ -397,8 +540,33 @@ def _interval_delta(unit: str, value: int) -> timedelta:
 
 
 def _run_command(args: list[str]) -> SchedulerCommandResult:
-    completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    completed = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding=_windows_command_encoding(),
+        errors="replace",
+        check=False,
+    )
     return SchedulerCommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _windows_command_encoding() -> str:
+    if os.name == "nt" and hasattr(locale, "getencoding"):
+        return locale.getencoding() or "utf-8"
+    return locale.getpreferredencoding(False) or "utf-8"
+
+
+def _is_task_not_found_message(message: str) -> bool:
+    normalized = message.casefold()
+    return (
+        "cannot find" in normalized
+        or "not exist" in normalized
+        or "not found" in normalized
+        or "찾을 수" in message
+        or "찾을수" in message
+        or "없습니다" in message
+    )
 
 
 def _checked_run(runner: CommandRunner, args: list[str]) -> SchedulerCommandResult:

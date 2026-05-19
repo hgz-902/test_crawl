@@ -1102,6 +1102,154 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
 
+    def test_parser_duplicate_stop_applies_to_current_search_term_only(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["first", "second"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        duplicate_item = {
+            "post_id": "dup",
+            "title": "Duplicate",
+            "link": "https://example.com/dup",
+            "originallink": "https://example.com/dup",
+            "description": "old",
+        }
+        fresh_item = {
+            "post_id": "fresh",
+            "title": "Fresh",
+            "link": "https://example.com/fresh",
+            "originallink": "https://example.com/fresh",
+            "description": "new",
+        }
+
+        def fake_fetch(source_url: str, *, timeout: float, item_limit: int | None = None):
+            if "first" in source_url:
+                return [duplicate_item], source_url
+            return [fresh_item], source_url
+
+        def policy(record: dict[str, object]) -> dict[str, object]:
+            title = ((record.get("extracts") or {}).get("title") if isinstance(record.get("extracts"), dict) else "")
+            if title == "Duplicate":
+                return {"include": False, "stop": True, "reason": "duplicate_stopped", "metadata": {"duplicate_key": "duplicate"}}
+            return {"include": True, "stop": False}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "naver")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config, record_policy=policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual([record["extracts"]["title"] for record in execution.records], ["Fresh"])
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+
+    def test_duplicate_stop_without_new_records_is_not_no_items_error(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        duplicate_item = {
+            "title": "Duplicate",
+            "link": "https://example.com/dup",
+            "originallink": "https://example.com/dup",
+        }
+
+        def policy(record: dict[str, object]) -> dict[str, object]:
+            return {"include": False, "stop": True, "reason": "duplicate_stopped", "metadata": {"duplicate_key": "duplicate"}}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "naver")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", return_value=([duplicate_item], "https://example.com/api")):
+                execution = run_workflow_config(config, record_policy=policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.records, [])
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertNotIn("error_type", execution.diagnostics)
+
+    def test_filter_split_removes_unclassified_root_parser_outputs(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "filter_terms": ["match"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        api_items = [
+            {
+                "post_id": "match",
+                "title": "Match",
+                "link": "https://example.com/match",
+                "originallink": "https://example.com/match",
+                "description": "match keyword",
+            },
+            {
+                "post_id": "other",
+                "title": "Other",
+                "link": "https://example.com/other",
+                "originallink": "https://example.com/other",
+                "description": "plain",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "naver"
+            config["output_dir"] = str(output_dir)
+            output_dir.mkdir(parents=True)
+            operator_note = output_dir / "operator-note.txt"
+            operator_note.write_text("keep me", encoding="utf-8")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", return_value=(api_items, "https://example.com/api")):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            root_files = [path for path in output_dir.rglob("*") if path.is_file() and "filter" not in path.parts and "nonfilter" not in path.parts]
+            self.assertEqual(root_files, [operator_note])
+            self.assertTrue(list((output_dir / "filter" / "001_SK").rglob("naver_news_api.json")))
+            self.assertTrue(list((output_dir / "nonfilter" / "001_SK").rglob("naver_news_api.json")))
+
+    def test_filter_split_removes_generated_files_excluded_by_record_policy(self) -> None:
+        config = {
+            "name": "signal",
+            "output_dir": "outputs/signal",
+            "filter_terms": [],
+            "steps": [{"name": "extract_title", "action": "extract", "attr": "text"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            old_cwd = Path.cwd()
+            os.chdir(tmp_path)
+            try:
+                output_dir = Path("outputs") / "signal"
+                generated_dir = output_dir / "001_SK" / "texts" / "20260519"
+                generated_dir.mkdir(parents=True)
+                generated_file = generated_dir / "duplicate.txt"
+                generated_file.write_text("duplicate", encoding="utf-8")
+                operator_note = output_dir / "operator-note.txt"
+                operator_note.parent.mkdir(parents=True, exist_ok=True)
+                operator_note.write_text("keep me", encoding="utf-8")
+                execution = WorkflowExecution(
+                    config_name="signal",
+                    output_dir=output_dir,
+                    records=[],
+                    generated_files=[str(generated_file)],
+                )
+
+                _apply_workflow_result_filters(execution, config)
+                self.assertFalse(generated_file.exists())
+                self.assertFalse((output_dir / "001_SK").exists())
+                self.assertTrue(operator_note.exists())
+            finally:
+                os.chdir(old_cwd)
+
     def test_run_workflow_config_parses_daum_news_api_without_playwright(self) -> None:
         config = {
             "name": "daum",

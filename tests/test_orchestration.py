@@ -16,6 +16,8 @@ from crawler_app.orchestration import (
     RegisteredJob,
     build_duplicate_index,
     duplicate_key_for_record,
+    next_cron_run,
+    normalize_cron_expression,
     normalize_interval,
     notify_keyword_matches,
     records_matching_keywords,
@@ -263,6 +265,38 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(batch.results[1].status, "succeeded")
             self.assertEqual(batch.results[1].items_count, 1)
             self.assertEqual(store.load_history()[0]["duplicate_stopped"], 1)
+
+    def test_run_batch_preserves_exact_korean_job_id_before_legacy_normalization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_dir = tmp_path / "configs"
+            config_dir.mkdir()
+            (config_dir / "시그널.json").write_text(
+                json.dumps(
+                    {
+                        "name": "시그널",
+                        "start_url": "https://example.com/signal",
+                        "output_dir": str(tmp_path / "outputs" / "signal"),
+                        "steps": [{"name": "open", "xpath": "//a[1]", "action": "click"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            calls: list[str] = []
+
+            def fake_runner(config_path: Path, record_policy):
+                calls.append(config_path.name)
+                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+
+            store = OrchestrationStateStore(
+                settings_path=tmp_path / "state" / "settings.json",
+                history_path=tmp_path / "state" / "history.json",
+            )
+            batch = run_batch(["시그널"], store=store, config_dir=config_dir, runner=fake_runner, send_notifications=False)
+
+            self.assertEqual(batch.total, 1)
+            self.assertEqual(calls, ["시그널.json"])
 
     def test_batch_runner_continues_when_first_record_is_duplicate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -611,6 +645,16 @@ class OrchestrationTests(unittest.TestCase):
     def test_normalize_interval_guards_unit_and_value(self) -> None:
         self.assertEqual(normalize_interval({"value": "0", "unit": "weeks"}), {"value": 1, "unit": "hours"})
         self.assertEqual(normalize_interval({"value": "2", "unit": "days"}), {"value": 2, "unit": "days"})
+
+    def test_normalize_cron_expression_and_next_run(self) -> None:
+        self.assertEqual(normalize_cron_expression("*/5 * * * *"), "*/5 * * * *")
+        self.assertEqual(normalize_cron_expression("0 9 * * MON"), "0 9 * * MON")
+        next_run = next_cron_run("0 3 * * *", after=datetime(2026, 5, 18, 2, 59, tzinfo=timezone.utc))
+        self.assertEqual(next_run, datetime(2026, 5, 18, 3, 0, tzinfo=timezone.utc))
+        monday = next_cron_run("0 9 * * MON", after=datetime(2026, 5, 18, 8, 59, tzinfo=timezone.utc))
+        self.assertEqual(monday, datetime(2026, 5, 18, 9, 0, tzinfo=timezone.utc))
+        with self.assertRaises(ValueError):
+            normalize_cron_expression("* * *")
 
 
 if __name__ == "__main__":

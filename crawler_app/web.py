@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import json
+import uuid
 from urllib.parse import quote_plus, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -26,7 +27,9 @@ from crawler_app.logging_utils import configure_logger, log_result
 from crawler_app.orchestration import (
     OrchestrationStateStore,
     batch_to_dict,
+    next_cron_run,
     normalize_interval,
+    normalize_cron_expression,
     run_batch,
     settings_for_registered_jobs,
 )
@@ -35,6 +38,7 @@ from crawler_app.windows_scheduler import (
     load_scheduler_registry,
     managed_task_name,
     sync_windows_scheduled_tasks,
+    validate_windows_schedule_settings,
 )
 from crawler_app.workflow import preview_workflow_config
 from crawlers.configurable_crawler import ConfigurableCrawler
@@ -46,6 +50,8 @@ STATIC_DIR = BASE_DIR / "static"
 LOG_DIR = BASE_DIR / "logs"
 ORCHESTRATION_STORE = OrchestrationStateStore()
 DISPLAY_TIMEZONE = timezone(timedelta(hours=9), "KST")
+ORCHESTRATION_FLASH_COOKIE = "crawler_orchestration_flash"
+ORCHESTRATION_FLASH_DIR = BASE_DIR / "orchestration_state" / "flash"
 
 app = FastAPI(title="Crawler Config Manager")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -64,30 +70,55 @@ async def index(request: Request) -> HTMLResponse:
 @app.get("/orchestration", response_class=HTMLResponse)
 async def orchestration_page(request: Request) -> HTMLResponse:
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
+    flash = _consume_orchestration_flash(request)
     scheduler_rows, scheduler_error = _scheduler_context(settings, jobs)
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "orchestration.html",
         {
-            "jobs": jobs,
+            "jobs": _display_jobs(jobs, settings),
             "settings": settings,
-            "history": ORCHESTRATION_STORE.load_history(limit=10),
-            "last_batch": None,
-            "message": None,
-            "error": None,
+            "history": _display_history(ORCHESTRATION_STORE.load_history(limit=10)),
+            "last_batch": flash.get("last_batch"),
+            "message": flash.get("message"),
+            "error": flash.get("error"),
             "smtp_ready": _smtp_ready(),
             "scheduler_rows": scheduler_rows,
             "scheduler_error": scheduler_error,
         },
     )
+    if flash:
+        response.delete_cookie(ORCHESTRATION_FLASH_COOKIE)
+    return response
+
+
+@app.post("/orchestration", response_class=HTMLResponse)
+async def orchestration_action_route(request: Request) -> Response:
+    _assert_same_origin_post(request)
+    form = await request.form()
+    action = str(form.get("action") or "").strip()
+    if action == "save":
+        return await save_orchestration_route(request)
+    if action == "run":
+        return await run_orchestration_route(request)
+    if action == "sync":
+        return await sync_orchestration_scheduler_route(request)
+    if action == "delete_scheduler":
+        return await delete_orchestration_scheduler_route(request)
+
+    return _redirect_orchestration(error="알 수 없는 오케스트레이션 작업입니다.")
 
 
 @app.post("/orchestration/save", response_class=HTMLResponse)
-async def save_orchestration_route(request: Request) -> HTMLResponse:
+async def save_orchestration_route(request: Request) -> Response:
     _assert_same_origin_post(request)
     form = await request.form()
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
-    updated = _settings_from_form(form, jobs, settings, reset_next_run=True)
+    try:
+        updated = _settings_from_form(form, jobs, settings, reset_next_run=True)
+        validate_windows_schedule_settings(updated, jobs)
+    except ValueError as exc:
+        return _redirect_orchestration(error=f"Cron 설정 오류: {exc}")
     saved = ORCHESTRATION_STORE.save_settings(updated)
     _persist_job_schedule_state(saved, jobs)
     scheduler_message = ""
@@ -117,35 +148,21 @@ async def save_orchestration_route(request: Request) -> HTMLResponse:
     message = f"오케스트레이션 설정을 저장했습니다.{scheduler_message}"
     if batch_dict:
         message += " 즉시 실행을 완료했습니다."
-    scheduler_rows, scheduler_error = _scheduler_context(saved, jobs)
-    return templates.TemplateResponse(
-        request,
-        "orchestration.html",
-        {
-            "jobs": jobs,
-            "settings": saved,
-            "history": ORCHESTRATION_STORE.load_history(limit=10),
-            "last_batch": batch_dict,
-            "message": message if not error else None,
-            "error": error,
-            "smtp_ready": _smtp_ready(),
-            "scheduler_rows": scheduler_rows,
-            "scheduler_error": scheduler_error,
-        },
-        status_code=status_code,
-    )
+    return _redirect_orchestration(message=message if not error else None, error=error, last_batch=batch_dict)
 
 
 @app.post("/orchestration/run", response_class=HTMLResponse)
-async def run_orchestration_route(request: Request) -> HTMLResponse:
+async def run_orchestration_route(request: Request) -> Response:
     _assert_same_origin_post(request)
     form = await request.form()
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
-    updated = _settings_from_form(form, jobs, settings, reset_next_run=False)
+    try:
+        updated = _settings_from_form(form, jobs, settings, reset_next_run=False)
+    except ValueError as exc:
+        return _redirect_orchestration(error=f"Cron 설정 오류: {exc}")
     saved = ORCHESTRATION_STORE.save_settings(updated)
     _persist_job_schedule_state(saved, jobs)
     selected = [job.job_id for job in jobs if saved["jobs"].get(job.job_id, {}).get("enabled")]
-    force_due = _truthy(form.get("force_due"))
     allow_email_send = bool(saved.get("allow_email_send", False))
     error = None
     batch_dict: dict[str, Any] | None = None
@@ -162,27 +179,38 @@ async def run_orchestration_route(request: Request) -> HTMLResponse:
     except Exception as exc:
         error = str(exc)
 
-    scheduler_rows, scheduler_error = _scheduler_context(saved, jobs)
-    return templates.TemplateResponse(
-        request,
-        "orchestration.html",
-        {
-            "jobs": jobs,
-            "settings": saved,
-            "history": ORCHESTRATION_STORE.load_history(limit=10),
-            "last_batch": batch_dict,
-            "message": "수동 배치 실행이 완료되었습니다." if batch_dict else None,
-            "error": error,
-            "smtp_ready": _smtp_ready(),
-            "scheduler_rows": scheduler_rows,
-            "scheduler_error": scheduler_error,
-        },
-        status_code=500 if error else 200,
+    return _redirect_orchestration(
+        message="수동 실행을 완료했습니다. 스케줄러 설정은 변경하지 않았습니다." if batch_dict else None,
+        error=error,
+        last_batch=batch_dict,
     )
 
 
+@app.post("/orchestration/schedulers/sync", response_class=HTMLResponse)
+async def sync_orchestration_scheduler_route(request: Request) -> Response:
+    _assert_same_origin_post(request)
+    form = await request.form()
+    settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
+    try:
+        updated = _settings_from_form(form, jobs, settings, reset_next_run=False)
+        validate_windows_schedule_settings(updated, jobs)
+        saved = ORCHESTRATION_STORE.save_settings(updated)
+        _persist_job_schedule_state(saved, jobs)
+        scheduler_result = await asyncio.to_thread(sync_windows_scheduled_tasks, saved, jobs)
+        if scheduler_result.status == "synced":
+            message = f"모니터링을 시작했습니다. Windows Task Scheduler 작업을 재생성했습니다(생성 {len(scheduler_result.created)}개 / 삭제 {len(scheduler_result.deleted)}개)."
+        else:
+            message = f"Windows Task Scheduler 동기화를 건너뛰었습니다({scheduler_result.skipped_reason})."
+        error = None
+        status_code = 200
+    except Exception as exc:
+        message = None
+        error = f"모니터링 시작 실패: {exc}"
+    return _redirect_orchestration(message=message, error=error)
+
+
 @app.post("/orchestration/schedulers/delete", response_class=HTMLResponse)
-async def delete_orchestration_scheduler_route(request: Request) -> HTMLResponse:
+async def delete_orchestration_scheduler_route(request: Request) -> Response:
     _assert_same_origin_post(request)
     form = await request.form()
     task_name = str(form.get("task_name") or "")
@@ -190,7 +218,6 @@ async def delete_orchestration_scheduler_route(request: Request) -> HTMLResponse
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
     message = None
     error = None
-    status_code = 200
     try:
         result = await asyncio.to_thread(delete_managed_task, task_name)
         if job_id and job_id in settings.get("jobs", {}):
@@ -208,28 +235,10 @@ async def delete_orchestration_scheduler_route(request: Request) -> HTMLResponse
         if result.status == "deleted":
             message = "선택한 스케줄러를 삭제했습니다."
         else:
-            message = f"선택한 스케줄러가 이미 없습니다({result.skipped_reason})."
+            message = None
     except Exception as exc:
         error = f"스케줄러 삭제 실패: {exc}"
-        status_code = 500
-
-    scheduler_rows, scheduler_error = _scheduler_context(settings, jobs)
-    return templates.TemplateResponse(
-        request,
-        "orchestration.html",
-        {
-            "jobs": jobs,
-            "settings": settings,
-            "history": ORCHESTRATION_STORE.load_history(limit=10),
-            "last_batch": None,
-            "message": message if not error else None,
-            "error": error,
-            "smtp_ready": _smtp_ready(),
-            "scheduler_rows": scheduler_rows,
-            "scheduler_error": scheduler_error,
-        },
-        status_code=status_code,
-    )
+    return _redirect_orchestration(message=message if not error else None, error=error)
 
 
 @app.get("/configs/new", response_class=HTMLResponse)
@@ -380,6 +389,50 @@ def _safe_json(value: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _redirect_orchestration(
+    *,
+    message: str | None = None,
+    error: str | None = None,
+    last_batch: dict[str, Any] | None = None,
+) -> RedirectResponse:
+    response = RedirectResponse(url="/orchestration", status_code=303)
+    payload = {key: value for key, value in {"message": message, "error": error, "last_batch": last_batch}.items() if value}
+    if payload:
+        flash_id = uuid.uuid4().hex
+        ORCHESTRATION_FLASH_DIR.mkdir(parents=True, exist_ok=True)
+        (ORCHESTRATION_FLASH_DIR / f"{flash_id}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        response.set_cookie(
+            ORCHESTRATION_FLASH_COOKIE,
+            flash_id,
+            max_age=300,
+            httponly=True,
+            samesite="lax",
+        )
+    return response
+
+
+def _consume_orchestration_flash(request: Request) -> dict[str, Any]:
+    flash_id = str(request.cookies.get(ORCHESTRATION_FLASH_COOKIE) or "")
+    if len(flash_id) != 32 or any(char not in "0123456789abcdef" for char in flash_id):
+        return {}
+    path = ORCHESTRATION_FLASH_DIR / f"{flash_id}.json"
+    payload: dict[str, Any] = {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            payload = loaded
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    return payload
+
+
 def _settings_from_form(form: Any, jobs: list[Any], current: dict[str, Any], *, reset_next_run: bool) -> dict[str, Any]:
     enabled = set(form.getlist("enabled_jobs"))
     schedule_base = datetime.now(timezone.utc)
@@ -395,26 +448,53 @@ def _settings_from_form(form: Any, jobs: list[Any], current: dict[str, Any], *, 
         previous = current.get("jobs", {}).get(job.job_id, {})
         if not isinstance(previous, dict):
             previous = {}
-        interval = normalize_interval(
-            {
-                "value": form.get(f"interval_value__{job.job_id}"),
-                "unit": form.get(f"interval_unit__{job.job_id}"),
-            }
-        )
+        previous_cron = normalize_cron_expression(previous.get("cron") or "")
+        cron_expr = normalize_cron_expression(form.get(f"cron__{job.job_id}") or previous_cron)
+        interval = normalize_interval(previous.get("interval"))
         previous_interval = normalize_interval(previous.get("interval"))
         next_run_at = str(previous.get("next_run_at") or "")
         if reset_next_run and job.job_id in enabled:
-            next_run_at = (schedule_base + _interval_delta(interval)).isoformat(timespec="seconds")
-        elif next_run_at and interval != previous_interval:
+            next_run_at = next_cron_run(cron_expr, after=schedule_base).isoformat(timespec="seconds")
+        elif next_run_at and (interval != previous_interval or cron_expr != previous_cron):
             next_run_at = ""
         updated["jobs"][job.job_id] = {
             "enabled": job.job_id in enabled,
+            "cron": cron_expr,
             "interval": interval,
             "last_run_at": str(previous.get("last_run_at") or ""),
             "next_run_at": next_run_at,
             "last_status": str(previous.get("last_status") or ""),
         }
     return updated
+
+
+def _render_orchestration_response(
+    request: Request,
+    *,
+    settings: dict[str, Any],
+    jobs: list[Any],
+    error: str | None = None,
+    message: str | None = None,
+    last_batch: dict[str, Any] | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    scheduler_rows, scheduler_error = _scheduler_context(settings, jobs)
+    return templates.TemplateResponse(
+        request,
+        "orchestration.html",
+        {
+            "jobs": _display_jobs(jobs, settings),
+            "settings": settings,
+            "history": _display_history(ORCHESTRATION_STORE.load_history(limit=10)),
+            "last_batch": last_batch,
+            "message": message,
+            "error": error,
+            "smtp_ready": _smtp_ready(),
+            "scheduler_rows": scheduler_rows,
+            "scheduler_error": scheduler_error,
+        },
+        status_code=status_code,
+    )
 
 
 def _persist_job_schedule_state(settings: dict[str, Any], jobs: list[Any]) -> None:
@@ -461,6 +541,29 @@ def _scheduler_context(settings: dict[str, Any], jobs: list[Any]) -> tuple[list[
     return _scheduler_rows(settings, jobs, registry_entries), ""
 
 
+def _display_jobs(jobs: list[Any], settings: dict[str, Any]) -> list[dict[str, Any]]:
+    displayed: list[dict[str, Any]] = []
+    settings_jobs = settings.get("jobs", {}) if isinstance(settings.get("jobs"), dict) else {}
+    for job in jobs:
+        job_settings = settings_jobs.get(job.job_id, {})
+        if not isinstance(job_settings, dict):
+            job_settings = {}
+        displayed.append(
+            {
+                "job_id": job.job_id,
+                "config_name": job.config_name,
+                "config_path": job.config_path,
+                "output_dir": job.output_dir,
+                "search_terms": list(job.search_terms),
+                "filter_terms": list(job.filter_terms),
+                "settings": job_settings,
+                "last_run_at_display": _format_display_time(job_settings.get("last_run_at")),
+                "next_run_at_display": _format_display_time(job_settings.get("next_run_at")),
+            }
+        )
+    return displayed
+
+
 def _scheduler_rows(settings: dict[str, Any], jobs: list[Any], registry_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     jobs_by_id = {job.job_id: job for job in jobs}
     rows: list[dict[str, Any]] = []
@@ -477,6 +580,7 @@ def _scheduler_rows(settings: dict[str, Any], jobs: list[Any], registry_entries:
                 "output_dir": job.output_dir if job is not None else str(entry.get("output_dir") or ""),
                 "search_terms_count": len(job.search_terms) if job is not None else int(entry.get("search_terms_count") or 0),
                 "filter_terms_count": len(job.filter_terms) if job is not None else int(entry.get("filter_terms_count") or 0),
+                "cron": str(job_settings.get("cron") or entry.get("cron") or ""),
                 "interval": interval or normalize_interval(entry.get("interval")),
                 "enabled": bool(job_settings.get("enabled")) if isinstance(job_settings, dict) else False,
                 "registered_at": str(entry.get("registered_at") or ""),
@@ -488,6 +592,18 @@ def _scheduler_rows(settings: dict[str, Any], jobs: list[Any], registry_entries:
             }
         )
     return rows
+
+
+def _display_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    displayed: list[dict[str, Any]] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        row = dict(entry)
+        row["finished_at_display"] = _format_display_time(row.get("finished_at"))
+        row["started_at_display"] = _format_display_time(row.get("started_at"))
+        displayed.append(row)
+    return displayed
 
 
 def _format_display_time(value: Any) -> str:
@@ -518,3 +634,4 @@ def _assert_same_origin_post(request: Request) -> None:
     request_host = request.url.netloc.lower()
     if parsed.netloc.lower() != request_host:
         raise HTTPException(status_code=403, detail="Cross-origin orchestration posts are not allowed.")
+

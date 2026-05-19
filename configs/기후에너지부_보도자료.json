@@ -4,7 +4,7 @@
   "output_dir": "outputs/mcee_10598",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [
@@ -62,5 +62,5 @@
     }
   ],
   "created_at": "2026-04-27T18:16:30+09:00",
-  "updated_at": "2026-05-18T15:54:47+09:00"
+  "updated_at": "2026-05-19T11:06:07+09:00"
 }

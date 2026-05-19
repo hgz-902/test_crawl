@@ -33,6 +33,7 @@ DEFAULT_RECIPIENTS = ["bloodknihts@gmail.com", "superknihts@nate.com"]
 DEFAULT_SENDER = "bloodknihts@gmail.com"
 RUN_LOCK_STALE_AFTER = timedelta(hours=12)
 INTERVAL_UNITS = {"minutes", "hours", "days"}
+DEFAULT_CRON_EXPRESSION = "0 * * * *"
 
 Runner = Callable[[Path, Callable[[dict[str, Any]], dict[str, Any]]], Any]
 
@@ -201,8 +202,10 @@ def normalize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         job_id = config_file_stem(str(raw_job_id))
         if not isinstance(raw_job, dict):
             raw_job = {}
+        cron = normalize_cron_expression(raw_job.get("cron") or _legacy_interval_to_cron(raw_job.get("interval")))
         normalized_jobs[job_id] = {
             "enabled": bool(raw_job.get("enabled", False)),
+            "cron": cron,
             "interval": normalize_interval(raw_job.get("interval")),
             "last_run_at": _clean_optional_timestamp(raw_job.get("last_run_at")),
             "next_run_at": _clean_optional_timestamp(raw_job.get("next_run_at")),
@@ -236,6 +239,111 @@ def normalize_interval(interval: Any) -> dict[str, Any]:
     return {"value": value, "unit": unit}
 
 
+def normalize_cron_expression(value: Any) -> str:
+    cron = str(value or "").strip()
+    if not cron:
+        return DEFAULT_CRON_EXPRESSION
+    fields = cron.split()
+    if len(fields) != 5:
+        raise ValueError("Cron expression must contain exactly five fields: minute hour day month weekday.")
+    for field, minimum, maximum, label in (
+        (fields[0], 0, 59, "minute"),
+        (fields[1], 0, 23, "hour"),
+        (fields[2], 1, 31, "day"),
+        (fields[3], 1, 12, "month"),
+        (fields[4], 0, 7, "weekday"),
+    ):
+        _validate_cron_field(field, minimum, maximum, label)
+    return " ".join(fields)
+
+
+def next_cron_run(cron: Any, *, after: datetime | None = None) -> datetime:
+    expression = normalize_cron_expression(cron)
+    minute_field, hour_field, day_field, month_field, weekday_field = expression.split()
+    base = after or datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    candidate = base.astimezone(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    deadline = candidate + timedelta(days=366)
+    while candidate <= deadline:
+        weekday = (candidate.weekday() + 1) % 7
+        if (
+            _cron_field_matches(minute_field, candidate.minute)
+            and _cron_field_matches(hour_field, candidate.hour)
+            and _cron_field_matches(day_field, candidate.day)
+            and _cron_field_matches(month_field, candidate.month)
+            and (_cron_field_matches(weekday_field, weekday) or (weekday == 0 and _cron_field_matches(weekday_field, 7)))
+        ):
+            return candidate
+        candidate += timedelta(minutes=1)
+    raise ValueError(f"Could not resolve next run time within one year for cron expression: {expression}")
+
+
+def _legacy_interval_to_cron(interval: Any) -> str:
+    normalized = normalize_interval(interval)
+    value = int(normalized["value"])
+    unit = normalized["unit"]
+    if unit == "minutes":
+        return f"*/{value} * * * *" if value > 1 else "* * * * *"
+    if unit == "hours":
+        return f"0 */{value} * * *" if value > 1 else "0 * * * *"
+    return f"0 0 */{value} * *" if value > 1 else "0 0 * * *"
+
+
+def _validate_cron_field(field: str, minimum: int, maximum: int, label: str) -> None:
+    for part in field.split(","):
+        if not part:
+            raise ValueError(f"Invalid empty {label} cron field.")
+        if part == "*":
+            continue
+        if part.startswith("*/"):
+            _validate_cron_number(part[2:], 1, maximum, label)
+            continue
+        if label == "weekday" and _weekday_name_to_number(part) is not None:
+            continue
+        _validate_cron_number(part, minimum, maximum, label)
+
+
+def _validate_cron_number(value: str, minimum: int, maximum: int, label: str) -> None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {label} cron value: {value!r}") from exc
+    if number < minimum or number > maximum:
+        raise ValueError(f"Invalid {label} cron value {number}; expected {minimum}-{maximum}.")
+
+
+def _cron_field_matches(field: str, value: int) -> bool:
+    for part in field.split(","):
+        if part == "*":
+            return True
+        if part.startswith("*/"):
+            step = int(part[2:])
+            if value % step == 0:
+                return True
+            continue
+        weekday_number = _weekday_name_to_number(part)
+        if weekday_number is not None:
+            if weekday_number == value:
+                return True
+            continue
+        if int(part) == value:
+            return True
+    return False
+
+
+def _weekday_name_to_number(value: str) -> int | None:
+    return {
+        "SUN": 0,
+        "MON": 1,
+        "TUE": 2,
+        "WED": 3,
+        "THU": 4,
+        "FRI": 5,
+        "SAT": 6,
+    }.get(str(value or "").strip().upper())
+
+
 def registered_config_jobs(config_dir: str | Path = CONFIG_DIR) -> list[RegisteredJob]:
     jobs: list[RegisteredJob] = []
     for summary in list_configs(config_dir):
@@ -258,9 +366,12 @@ def sync_settings_jobs(settings: dict[str, Any], jobs: Iterable[RegisteredJob]) 
     for job in jobs:
         configured_jobs.setdefault(
             job.job_id,
-            {"enabled": False, "interval": {"value": 1, "unit": "hours"}},
+            {"enabled": False, "interval": {"value": 1, "unit": "hours"}, "cron": DEFAULT_CRON_EXPRESSION},
         )
         configured_jobs[job.job_id]["interval"] = normalize_interval(configured_jobs[job.job_id].get("interval"))
+        configured_jobs[job.job_id]["cron"] = normalize_cron_expression(
+            configured_jobs[job.job_id].get("cron") or _legacy_interval_to_cron(configured_jobs[job.job_id].get("interval"))
+        )
         configured_jobs[job.job_id]["enabled"] = bool(configured_jobs[job.job_id].get("enabled", False))
     return settings
 
@@ -295,8 +406,7 @@ def run_batch(
     config_jobs = registered_config_jobs(config_dir)
     settings = apply_job_runtime_state(sync_settings_jobs(store.load_settings(), config_jobs), store)
     jobs_by_id = {job.job_id: job for job in registered_config_jobs(config_dir)}
-    selected = [config_file_stem(job_id) for job_id in selected_job_ids]
-    selected = [job_id for job_id in selected if job_id in jobs_by_id]
+    selected = _resolve_selected_job_ids(selected_job_ids, jobs_by_id)
     batch_id = uuid.uuid4().hex
     started_at = utc_timestamp()
 
@@ -342,6 +452,21 @@ def run_batch(
         finished_at=finished_at,
     )
     return batch
+
+
+def _resolve_selected_job_ids(selected_job_ids: Iterable[str], jobs_by_id: dict[str, RegisteredJob]) -> list[str]:
+    selected: list[str] = []
+    normalized_lookup = {config_file_stem(job_id): job_id for job_id in jobs_by_id}
+    for raw_job_id in selected_job_ids:
+        job_id = str(raw_job_id)
+        if job_id in jobs_by_id:
+            selected.append(job_id)
+            continue
+        normalized = config_file_stem(job_id)
+        resolved = normalized_lookup.get(normalized)
+        if resolved:
+            selected.append(resolved)
+    return selected
 
 
 def _run_selected_job(
@@ -466,13 +591,13 @@ def _update_job_runtime_state(
     job_settings: dict[str, Any],
     result: JobRunResult,
 ) -> None:
-    interval = normalize_interval(job_settings.get("interval"))
     started = _parse_timestamp(result.started_at) or datetime.now(timezone.utc)
+    cron = job_settings.get("cron") or _legacy_interval_to_cron(job_settings.get("interval"))
     store.save_job_state(
         job_id,
         {
             "last_run_at": started.isoformat(timespec="seconds"),
-            "next_run_at": (started + _interval_to_delta(interval)).isoformat(timespec="seconds"),
+            "next_run_at": next_cron_run(cron, after=started).isoformat(timespec="seconds"),
             "last_status": result.status,
         },
     )
@@ -513,7 +638,7 @@ def run_job(
                 "include": False,
                 "stop": True,
                 "reason": "duplicate_stopped",
-                "metadata": {"duplicate_key": key},
+                "metadata": {"duplicate_key": key, "stop_scope": "search_term"},
             }
         if key and key in seen:
             same_run_duplicate_skipped_count += 1
@@ -565,6 +690,10 @@ def run_job(
             metadata=metadata,
         )
     except Exception as exc:
+        error_message = (
+            f"{job.config_name} ({job.job_id}) failed during orchestration run "
+            f"for config {job.config_path}: {type(exc).__name__}: {exc}"
+        )
         return JobRunResult(
             job_id=job.job_id,
             config_name=job.config_name,
@@ -573,9 +702,10 @@ def run_job(
             success=False,
             items_count=0,
             records=[],
-            error=str(exc),
+            error=error_message,
             started_at=started_at,
             finished_at=utc_timestamp(),
+            metadata={"error_type": type(exc).__name__, "error": str(exc), "config_path": job.config_path},
         )
 
 

@@ -241,6 +241,10 @@ td {
   width: 190px;
 }
 
+.cron-col {
+  width: 210px;
+}
+
 .orchestration-table {
   border-collapse: separate;
   border-spacing: 0;
@@ -310,9 +314,20 @@ td {
 
 .interval-control input,
 .interval-control select,
+.cron-control input,
 .orchestration-settings textarea,
 .orchestration-settings input {
   width: 100%;
+}
+
+.orchestration-table thead tr::after,
+.orchestration-table tbody tr::after {
+  display: none;
+}
+
+.orchestration-table th,
+.orchestration-table td {
+  border-bottom: 1px solid var(--line);
 }
 
 .orchestration-settings {

@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from crawler_app.orchestration import RegisteredJob
 from crawler_app.windows_scheduler import (
     SchedulerCommandResult,
+    TASK_FOLDER,
+    _powershell_task_details,
     build_task_action,
+    cron_to_schtasks_args,
     delete_managed_task,
     list_managed_task_details,
     list_managed_tasks,
     managed_task_name,
     sync_windows_scheduled_tasks,
+    _windows_command_encoding,
     write_task_launcher,
     RUNNER_SCRIPT,
 )
@@ -24,19 +30,19 @@ class WindowsSchedulerTests(unittest.TestCase):
             return SchedulerCommandResult(
                 0,
                 '"TaskName","Next Run Time","Status"\n'
-                '"\\CrawlerOrchestration\\crawler_abc","2026-05-18 01:00:00","Ready"\n'
+                    f'"{TASK_FOLDER}\\crawler_abc","2026-05-18 01:00:00","Ready"\n'
                 '"\\Other\\crawler_abc","2026-05-18 01:00:00","Ready"\n',
                 "",
             )
 
-        self.assertEqual(list_managed_tasks(command_runner=fake_runner), ["\\CrawlerOrchestration\\crawler_abc"])
+        self.assertEqual(list_managed_tasks(command_runner=fake_runner), [f"{TASK_FOLDER}\\crawler_abc"])
 
     def test_list_managed_task_details_includes_scheduler_runtime_fields(self) -> None:
         def fake_runner(args: list[str]) -> SchedulerCommandResult:
             return SchedulerCommandResult(
                 0,
                 '"HostName","TaskName","Next Run Time","Status","Last Run Time","Last Result","Task To Run","Schedule Type","Repeat: Every"\n'
-                '"HOST","\\CrawlerOrchestration\\crawler_abc","2026-05-18 15:04:00","Ready","2026-05-18 14:49:00","0","powershell.exe -File launcher.ps1","Minute","0 Hour(s), 15 Minute(s)"\n'
+                f'"HOST","{TASK_FOLDER}\\crawler_abc","2026-05-18 15:04:00","Ready","2026-05-18 14:49:00","0","powershell.exe -File launcher.ps1","Minute","0 Hour(s), 15 Minute(s)"\n'
                 '"HOST","\\Other\\crawler_abc","2026-05-18 15:04:00","Ready","N/A","0","cmd","Minute","15"\n',
                 "",
             )
@@ -44,7 +50,7 @@ class WindowsSchedulerTests(unittest.TestCase):
         details = list_managed_task_details(command_runner=fake_runner)
 
         self.assertEqual(len(details), 1)
-        self.assertEqual(details[0].task_name, "\\CrawlerOrchestration\\crawler_abc")
+        self.assertEqual(details[0].task_name, f"{TASK_FOLDER}\\crawler_abc")
         self.assertEqual(details[0].status, "Ready")
         self.assertEqual(details[0].last_result, "0")
         self.assertEqual(details[0].repeat_every, "0 Hour(s), 15 Minute(s)")
@@ -59,14 +65,14 @@ class WindowsSchedulerTests(unittest.TestCase):
             return SchedulerCommandResult(
                 0,
                 '"TaskName","Next Run Time","Status"\n'
-                '"\\CrawlerOrchestration\\crawler_abc","2026-05-18 15:04:00","Ready"\n',
+                    f'"{TASK_FOLDER}\\crawler_abc","2026-05-18 15:04:00","Ready"\n',
                 "",
             )
 
         details = list_managed_task_details(command_runner=fake_runner)
 
         self.assertEqual(len(details), 1)
-        self.assertEqual(details[0].task_name, "\\CrawlerOrchestration\\crawler_abc")
+        self.assertEqual(details[0].task_name, f"{TASK_FOLDER}\\crawler_abc")
         self.assertEqual(details[0].next_run_time, "2026-05-18 15:04:00")
         self.assertEqual(calls[0], ["schtasks.exe", "/Query", "/FO", "CSV", "/V"])
         self.assertEqual(calls[1], ["schtasks.exe", "/Query", "/FO", "CSV"])
@@ -76,7 +82,7 @@ class WindowsSchedulerTests(unittest.TestCase):
             if args[:2] == ["powershell.exe", "-NoProfile"]:
                 return SchedulerCommandResult(
                     0,
-                    '[{"TaskName":"\\\\CrawlerOrchestration\\\\crawler_abc","NextRunTime":"2026-05-18 15:04:00","Status":"Ready","LastRunTime":"2026-05-18 14:49:00","LastResult":"0"}]',
+                    f'[{{"TaskName":"{TASK_FOLDER.replace(chr(92), chr(92) + chr(92))}\\\\crawler_abc","NextRunTime":"2026-05-18 15:04:00","Status":"Ready","LastRunTime":"2026-05-18 14:49:00","LastResult":"0"}}]',
                     "",
                 )
             return SchedulerCommandResult(0, '"WrongHeader","Status"\n"value","Ready"\n', "")
@@ -84,8 +90,28 @@ class WindowsSchedulerTests(unittest.TestCase):
         details = list_managed_task_details(command_runner=fake_runner)
 
         self.assertEqual(len(details), 1)
-        self.assertEqual(details[0].task_name, "\\CrawlerOrchestration\\crawler_abc")
+        self.assertEqual(details[0].task_name, f"{TASK_FOLDER}\\crawler_abc")
         self.assertEqual(details[0].last_result, "0")
+
+    def test_powershell_task_details_returns_empty_when_task_folder_is_missing(self) -> None:
+        def fake_runner(args: list[str]) -> SchedulerCommandResult:
+            return SchedulerCommandResult(1, "", "")
+
+        self.assertEqual(_powershell_task_details(fake_runner), [])
+
+    def test_powershell_task_details_raises_for_real_command_error(self) -> None:
+        def fake_runner(args: list[str]) -> SchedulerCommandResult:
+            return SchedulerCommandResult(1, "", "Access is denied.")
+
+        with self.assertRaises(RuntimeError):
+            _powershell_task_details(fake_runner)
+
+    def test_windows_command_encoding_uses_ansi_locale_on_windows(self) -> None:
+        with patch("crawler_app.windows_scheduler.os.name", "nt"), patch(
+            "crawler_app.windows_scheduler.locale.getencoding",
+            return_value="cp949",
+        ):
+            self.assertEqual(_windows_command_encoding(), "cp949")
 
     def test_delete_managed_task_deletes_only_managed_task_and_launcher(self) -> None:
         calls: list[list[str]] = []
@@ -100,7 +126,7 @@ class WindowsSchedulerTests(unittest.TestCase):
             launcher.write_text("launcher", encoding="utf-8")
 
             result = delete_managed_task(
-                "\\CrawlerOrchestration\\crawler_abc",
+                f"{TASK_FOLDER}\\crawler_abc",
                 command_runner=fake_runner,
                 launcher_dir=launcher_dir,
                 registry_path=launcher_dir / "registry.json",
@@ -116,6 +142,38 @@ class WindowsSchedulerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             delete_managed_task("\\Other\\crawler_abc", command_runner=lambda args: SchedulerCommandResult(0, "", ""))
 
+    def test_delete_managed_task_clears_registry_when_windows_task_is_missing(self) -> None:
+        def fake_runner(args: list[str]) -> SchedulerCommandResult:
+            if args[:3] == ["schtasks.exe", "/Delete", "/TN"]:
+                return SchedulerCommandResult(1, "", "오류: 지정된 파일을 찾을 수 없습니다.")
+            return SchedulerCommandResult(0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            registry_path = Path(tmp_dir) / "registry.json"
+            registry_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"task_name": f"{TASK_FOLDER}\\crawler_abc", "job_id": "sample"},
+                            {"task_name": f"{TASK_FOLDER}\\crawler_other", "job_id": "other"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            result = delete_managed_task(
+                f"{TASK_FOLDER}\\crawler_abc",
+                command_runner=fake_runner,
+                registry_path=registry_path,
+            )
+
+            remaining = json.loads(registry_path.read_text(encoding="utf-8"))["tasks"]
+            self.assertEqual(result.status, "not_found")
+            self.assertEqual([entry["task_name"] for entry in remaining], [f"{TASK_FOLDER}\\crawler_other"])
+            self.assertIn("찾을 수", result.skipped_reason)
+
     def test_sync_deletes_existing_tasks_and_creates_one_task_per_enabled_job(self) -> None:
         calls: list[list[str]] = []
 
@@ -125,7 +183,7 @@ class WindowsSchedulerTests(unittest.TestCase):
                 return SchedulerCommandResult(
                     0,
                     '"TaskName","Next Run Time","Status"\n'
-                    '"\\CrawlerOrchestration\\crawler_old","2026-05-18 01:00:00","Ready"\n',
+                f'"{TASK_FOLDER}\\crawler_old","2026-05-18 01:00:00","Ready"\n',
                     "",
                 )
             return SchedulerCommandResult(0, "", "")
@@ -136,7 +194,7 @@ class WindowsSchedulerTests(unittest.TestCase):
             config_path="configs/sample.json",
             output_dir="outputs/sample",
         )
-        settings = {"jobs": {"sample": {"enabled": True, "interval": {"value": 15, "unit": "minutes"}}}}
+        settings = {"jobs": {"sample": {"enabled": True, "cron": "*/15 * * * *", "interval": {"value": 15, "unit": "minutes"}}}}
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             result = sync_windows_scheduled_tasks(
@@ -149,7 +207,7 @@ class WindowsSchedulerTests(unittest.TestCase):
             )
 
         self.assertEqual(result.status, "synced")
-        self.assertEqual(result.deleted, ["\\CrawlerOrchestration\\crawler_old"])
+        self.assertEqual(result.deleted, [f"{TASK_FOLDER}\\crawler_old"])
         expected_task = managed_task_name("sample")
         self.assertEqual(result.created, [expected_task])
         self.assertTrue(any(call[:3] == ["schtasks.exe", "/Delete", "/TN"] for call in calls))
@@ -159,6 +217,17 @@ class WindowsSchedulerTests(unittest.TestCase):
         self.assertIn("MINUTE", create_call)
         self.assertIn("/MO", create_call)
         self.assertIn("15", create_call)
+
+    def test_cron_to_schtasks_args_supports_common_forms(self) -> None:
+        self.assertEqual(cron_to_schtasks_args("*/5 * * * *")[:4], ["/SC", "MINUTE", "/MO", "5"])
+        self.assertEqual(cron_to_schtasks_args("0 */2 * * *")[:4], ["/SC", "HOURLY", "/MO", "2"])
+        self.assertEqual(cron_to_schtasks_args("0 3 * * *"), ["/SC", "DAILY", "/MO", "1", "/ST", "03:00"])
+        self.assertEqual(cron_to_schtasks_args("0 0 */2 * *"), ["/SC", "DAILY", "/MO", "2", "/ST", "00:00"])
+        self.assertEqual(cron_to_schtasks_args("0 9 * * MON"), ["/SC", "WEEKLY", "/MO", "1", "/D", "MON", "/ST", "09:00"])
+
+    def test_cron_to_schtasks_args_rejects_invalid_expression(self) -> None:
+        with self.assertRaises(ValueError):
+            cron_to_schtasks_args("not cron")
 
     def test_build_task_action_points_to_launcher_without_secret_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

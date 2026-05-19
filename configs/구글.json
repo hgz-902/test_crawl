@@ -10,7 +10,33 @@
   "search_terms": [
     "Chey Tae-won",
     "Tony Chey",
-    "SK"
+    "SK",
+    "SK Innovation",
+    "SK E&S",
+    "SK Energy",
+    "SK Geocentric",
+    "SK Earthon",
+    "SK Enmove",
+    "SK IETechnology",
+    "SK On",
+    "Tangguh(BP Tangguh, TG LNG),",
+    "SKK Migas",
+    "LNG",
+    "LNG Shortage",
+    "Barossa",
+    "Woodford",
+    "Darwin Terminal",
+    "Quynh Lap",
+    "Nghi Son",
+    "Ca Na LNG",
+    "Quảng Trị LNG",
+    "Ca Mau LNG",
+    "Ganyu LNG",
+    "PassKey",
+    "Plug Power",
+    "KCE",
+    "Key Capture Energy",
+    "Evercharge"
   ],
   "filter_terms": [],
   "steps": [
@@ -22,5 +48,5 @@
     }
   ],
   "created_at": "2026-04-28T13:12:25+09:00",
-  "updated_at": "2026-05-14T16:35:39+09:00"
+  "updated_at": "2026-05-19T11:04:49+09:00"
 }
