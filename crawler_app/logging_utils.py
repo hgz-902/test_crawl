@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from crawler_app.base import CrawlResult
+from crawler_app.runtime_maintenance import cleanup_runtime_files
 
 
 def configure_logger(log_dir: Path) -> logging.Logger:
@@ -53,3 +54,7 @@ def log_result(log_dir: Path, result: CrawlResult) -> None:
         if isinstance(record, dict)
     ]
     append_jsonl(log_dir, "crawl_results.jsonl", payload)
+    try:
+        cleanup_runtime_files(app_root=log_dir.parent)
+    except Exception:
+        return

@@ -1190,11 +1190,7 @@ def _save_filtered_parser_outputs(
             items=matched_items,
             filter_terms=filter_terms,
         )
-        for record in matched_by_term.get(search_term_index, []):
-            record["output_file"] = str(matched_path)
-            for step in record.get("steps") or []:
-                if isinstance(step, dict):
-                    step["output_file"] = str(matched_path)
+        _assign_parser_record_output_files(matched_by_term.get(search_term_index, []), matched_path)
         matched_files.append(str(matched_path))
         run["output_file"] = str(matched_path)
         if nonfilter_root is not None:
@@ -1215,6 +1211,7 @@ def _save_filtered_parser_outputs(
                     items=nonfilter_items,
                     filter_terms=filter_terms,
                 )
+                _assign_parser_record_output_files(nonfilter_by_term.get(search_term_index, []), nonfilter_path)
                 nonfilter_files.append(str(nonfilter_path))
 
     execution.extracted_files = matched_files
@@ -1285,6 +1282,30 @@ def _save_parser_items(
             filter_terms=filter_terms,
         )
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
+
+
+def _assign_parser_record_output_files(records: list[dict[str, Any]], manifest_path: Path) -> None:
+    item_files = _parser_manifest_item_files(manifest_path)
+    for index, record in enumerate(records):
+        output_path = manifest_path
+        if index < len(item_files):
+            candidate = Path(item_files[index])
+            output_path = candidate if candidate.is_absolute() else manifest_path.parent / candidate
+        record["output_file"] = str(output_path)
+        for step in record.get("steps") or []:
+            if isinstance(step, dict):
+                step["output_file"] = str(output_path)
+
+
+def _parser_manifest_item_files(manifest_path: Path) -> list[str]:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_files = payload.get("item_files") if isinstance(payload, dict) else None
+    if not isinstance(raw_files, list):
+        return []
+    return [str(value) for value in raw_files if str(value or "").strip()]
 
 
 def _split_records_by_filter_terms(
@@ -1479,11 +1500,7 @@ def _run_parser_workflow(
             final_url=final_url,
             items=accepted_items,
         )
-        for record in accepted_records:
-            record["output_file"] = str(output_path)
-            for step in record.get("steps") or []:
-                if isinstance(step, dict):
-                    step["output_file"] = str(output_path)
+        _assign_parser_record_output_files(accepted_records, output_path)
         execution.extracted_files.append(str(output_path))
         execution.diagnostics.setdefault("search_term_runs", []).append(
             {

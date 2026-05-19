@@ -1,13 +1,14 @@
 {
   "name": "시그널",
-  "start_url": "https://signal.sedaily.com/search?word={search_term}",
+  "start_url": "https://signal.sedaily.com/deal",
   "output_dir": "outputs/signal",
   "timeout_ms": 30000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "시그널은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 소스코드 수정 없이 검색 결과 목록의 기사 링크를 열고 제목과 본문을 추출한다.",
-  "search_terms": [
+  "notes": "시그널은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 Deal 최신 목록을 수집한 뒤 필터 목록 키워드로 분리한다. 소스코드 수정 없이 최신 기사 목록의 기사 링크를 열고 제목과 본문을 추출한다.",
+  "search_terms": [],
+  "filter_terms": [
     "최태원",
     "SK",
     "SK이노베이션",
@@ -21,15 +22,14 @@
     "SK온",
     "대한상의"
   ],
-  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"l-left-scroll-in\"]/div/div/div/ul/li[1]/div/dl/dt/a",
-      "xpath_2": "//*[@id=\"l-left-scroll-in\"]/div/div/div/ul/li[2]/div/dl/dt/a",
+      "xpath": "//*[@id=\"l-left-scroll-in\"]/div[1]/ul[1]/li[1]/a[1]",
+      "xpath_2": "//*[@id=\"l-left-scroll-in\"]/div[1]/ul[1]/li[2]/a[1]",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
+      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -52,5 +52,5 @@
     }
   ],
   "created_at": "2026-05-15T00:00:00+09:00",
-  "updated_at": "2026-05-19T11:05:33+09:00"
+  "updated_at": "2026-05-19T18:13:04+09:00"
 }

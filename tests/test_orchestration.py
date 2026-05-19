@@ -24,6 +24,7 @@ from crawler_app.orchestration import (
     registered_config_jobs,
     run_batch,
 )
+from crawler_app.runtime_maintenance import RuntimeRetentionPolicy
 
 
 class OrchestrationTests(unittest.TestCase):
@@ -641,6 +642,55 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(calls, ["site"])
             self.assertEqual(forced.results[0].status, "succeeded")
             self.assertTrue(store.load_settings()["jobs"]["site"]["next_run_at"])
+
+    def test_run_batch_trims_job_history_after_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config_dir = tmp_path / "configs"
+            config_dir.mkdir()
+            (config_dir / "site.json").write_text(
+                json.dumps(
+                    {
+                        "name": "site",
+                        "start_url": "https://example.com",
+                        "output_dir": str(tmp_path / "outputs" / "site"),
+                        "steps": [{"name": "open", "xpath": "//a[1]", "action": "click"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store = OrchestrationStateStore(
+                settings_path=tmp_path / "state" / "settings.json",
+                history_path=tmp_path / "state" / "history.json",
+            )
+            job_history = store.job_history_path("site")
+            job_history.parent.mkdir(parents=True)
+            job_history.write_text(json.dumps([{"batch_id": str(index)} for index in range(35)]), encoding="utf-8")
+
+            def fake_runner(config_path: Path, record_policy):
+                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+
+            with patch.object(
+                orchestration,
+                "cleanup_runtime_files",
+                wraps=lambda **kwargs: __import__("crawler_app.runtime_maintenance", fromlist=["cleanup_runtime_files"]).cleanup_runtime_files(
+                    policy=RuntimeRetentionPolicy(job_history_entries=30),
+                    **kwargs,
+                ),
+            ):
+                run_batch(
+                    ["site"],
+                    store=store,
+                    config_dir=config_dir,
+                    runner=fake_runner,
+                    snapshot_roots=[],
+                    send_notifications=False,
+                    force_due=True,
+                )
+
+            payload = json.loads(job_history.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload), 30)
+            self.assertEqual(payload[-1]["results"][0]["status"], "succeeded")
 
     def test_normalize_interval_guards_unit_and_value(self) -> None:
         self.assertEqual(normalize_interval({"value": "0", "unit": "weeks"}), {"value": 1, "unit": "hours"})

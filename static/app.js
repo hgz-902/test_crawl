@@ -122,6 +122,43 @@ function initOrchestrationTabs() {
   }
 }
 
+function initSchedulerDetailsLazyLoad() {
+  const container = document.querySelector("[data-scheduler-status-url]");
+  if (!container) return;
+  const statusUrl = container.dataset.schedulerStatusUrl;
+  if (!statusUrl) return;
+
+  fetch(statusUrl, { headers: { Accept: "application/json" } })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      if (!payload || !Array.isArray(payload.scheduler_rows)) return;
+      for (const row of payload.scheduler_rows) {
+        const taskName = row.task_name || "";
+        if (!taskName) continue;
+        const tr = document.querySelector(`[data-scheduler-task="${CSS.escape(taskName)}"]`);
+        if (!tr) continue;
+        for (const field of [
+          "scheduler_status",
+          "scheduler_last_run_at_display",
+          "scheduler_next_run_at_display",
+          "scheduler_last_result_display",
+          "task_action_path",
+        ]) {
+          const cell = tr.querySelector(`[data-scheduler-field="${field}"]`);
+          if (!cell) continue;
+          cell.textContent = row[field] || "-";
+          if (field === "scheduler_last_result_display") cell.title = row.scheduler_last_result || "";
+        }
+      }
+    })
+    .catch(() => {
+      // Scheduler detail refresh is deliberately non-blocking; the registry view remains usable.
+    });
+}
+
 function readValue(input) {
   if (input.type === "checkbox") return input.checked;
   if (input.type === "number") return Number(input.value || 0);
@@ -552,6 +589,7 @@ document.addEventListener("submit", (event) => {
 
 renumberSteps();
 initOrchestrationTabs();
+initSchedulerDetailsLazyLoad();
 if (!focusConfigRowFromQuery()) {
   restoreScrollState();
 }

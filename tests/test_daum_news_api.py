@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,8 @@ from crawler_app.daum_news_api import (
     parse_daum_web_search_items,
     save_daum_news_api_items,
 )
+
+KST = timezone(timedelta(hours=9))
 
 
 class _FakeResponse:
@@ -151,7 +154,7 @@ class DaumNewsApiTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fetch_daum_news_api_items("https://example.com/v2/search/web?query=x")
 
-    def test_save_daum_news_api_items_writes_provider_payload(self) -> None:
+    def test_save_daum_news_api_items_writes_provider_payload_and_item_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "daum"
             manifest = save_daum_news_api_items(
@@ -168,6 +171,39 @@ class DaumNewsApiTests(unittest.TestCase):
             self.assertEqual(payload["source_provider"], "kakao_daum_web_search")
             self.assertEqual(payload["allowed_domains"], ["news.daum.net", "v.daum.net"])
             self.assertEqual(payload["items"][0]["title"], "A")
+            self.assertEqual(len(payload["item_files"]), 1)
+            self.assertTrue(payload["item_files"][0].startswith(f"items/{datetime.now(KST).strftime('%Y%m%d')}/item_"))
+            item_path = output_dir / payload["item_files"][0]
+            self.assertTrue(item_path.exists())
+            item_payload = json.loads(item_path.read_text(encoding="utf-8"))
+            self.assertEqual(item_payload["title"], "A")
+            self.assertEqual(item_payload["search_term"], "SK")
+            self.assertEqual(item_payload["item_index"], 1)
+
+    def test_save_daum_news_api_items_reuses_stable_item_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "daum"
+            item = {"post_id": "https://v.daum.net/v/1", "title": "A", "detail_url": "https://v.daum.net/v/1"}
+            first = save_daum_news_api_items(
+                output_dir,
+                search_term="SK",
+                api_url="https://dapi.kakao.com/v2/search/web?query=SK",
+                final_url="https://dapi.kakao.com/v2/search/web?query=SK",
+                items=[item],
+            )
+            second = save_daum_news_api_items(
+                output_dir,
+                search_term="SK",
+                api_url="https://dapi.kakao.com/v2/search/web?query=SK",
+                final_url="https://dapi.kakao.com/v2/search/web?query=SK",
+                items=[item],
+            )
+
+            self.assertEqual(first, second)
+            payload = json.loads(second.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["item_files"]), 1)
+            date_dirs = [path for path in (output_dir / "items").iterdir() if path.is_dir()]
+            self.assertEqual([path.name for path in date_dirs], [datetime.now(KST).strftime("%Y%m%d")])
 
 
 if __name__ == "__main__":

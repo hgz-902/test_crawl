@@ -138,7 +138,7 @@
   </section>
 </form>
 
-<section id="schedule-results" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-schedule-results" data-tab-panel hidden>
+<section id="schedule-results" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-schedule-results" data-tab-panel data-scheduler-status-url="/orchestration/schedulers/status" hidden>
   <div class="panel-heading">
     <div>
       <h2>등록된 스케줄 / 스케줄 결과 보기</h2>
@@ -148,6 +148,9 @@
   {% if scheduler_error %}
   <div class="notice error">스케줄러 조회 실패: {{ scheduler_error }}</div>
   {% endif %}
+
+  <div class="subsection-block">
+  <h2>등록된 스케줄 영역</h2>
   {% if scheduler_rows %}
   <div class="table-wrap flush">
     <table class="scheduler-table">
@@ -168,7 +171,7 @@
       </thead>
       <tbody>
         {% for row in scheduler_rows %}
-        <tr>
+        <tr data-scheduler-task="{{ row.task_name }}">
           <td class="url">{{ row.task_name }}</td>
           <td class="url">{{ row.job_id or "-" }}</td>
           <td>
@@ -179,11 +182,11 @@
             <div class="muted-text">검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</div>
           </td>
           <td class="url">{{ row.cron or "-" }}</td>
-          <td><span class="status-pill">{{ row.scheduler_status or ("활성" if row.enabled else "설정 비활성") }}</span></td>
-          <td class="url">{{ row.scheduler_last_run_at_display or "-" }}</td>
-          <td class="url">{{ row.scheduler_next_run_at_display or "-" }}</td>
-          <td class="url" title="{{ row.scheduler_last_result or '' }}">{{ row.scheduler_last_result_display or "-" }}</td>
-          <td class="url">{{ row.task_action_path or "-" }}</td>
+          <td><span class="status-pill" data-scheduler-field="scheduler_status">{{ row.scheduler_status or ("활성" if row.enabled else "설정 비활성") }}</span></td>
+          <td class="url" data-scheduler-field="scheduler_last_run_at_display">{{ row.scheduler_last_run_at_display or "-" }}</td>
+          <td class="url" data-scheduler-field="scheduler_next_run_at_display">{{ row.scheduler_next_run_at_display or "-" }}</td>
+          <td class="url" data-scheduler-field="scheduler_last_result_display" title="{{ row.scheduler_last_result or '' }}">{{ row.scheduler_last_result_display or "-" }}</td>
+          <td class="url" data-scheduler-field="task_action_path">{{ row.task_action_path or "-" }}</td>
           <td class="url">{{ row.registered_at_display or "-" }}</td>
           <td>
             {% if row.task_name %}
@@ -203,6 +206,51 @@
   {% else %}
   <div class="empty">현재 등록된 오케스트레이션 스케줄러가 없습니다.</div>
   {% endif %}
+  </div>
+
+  <div class="subsection-block">
+  <h2>저장된 모니터링 설정</h2>
+  <p class="muted-text">설정 저장 또는 모니터링 종료 후에도 남아 있는 desired settings입니다. 실제 Windows 등록 여부는 위 등록된 스케줄 영역에서 별도로 확인합니다.</p>
+  {% if saved_schedule_rows %}
+  <div class="table-wrap flush">
+    <table class="scheduler-table">
+      <thead>
+        <tr>
+          <th>크롤러</th>
+          <th>Job ID</th>
+          <th>Cron</th>
+          <th>저장 상태</th>
+          <th>최근 실행</th>
+          <th>다음 실행</th>
+          <th>검색/필터</th>
+          <th>출력 경로</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in saved_schedule_rows %}
+        <tr>
+          <td>
+            <strong>{{ row.config_name }}</strong>
+            {% if row.last_status %}
+            <div class="muted-text">앱 최근 상태: {{ row.last_status }}</div>
+            {% endif %}
+          </td>
+          <td class="url">{{ row.job_id }}</td>
+          <td class="url">{{ row.cron or "-" }}</td>
+          <td><span class="status-pill">{{ row.saved_status }}</span></td>
+          <td class="url">{{ row.last_run_at_display or "-" }}</td>
+          <td class="url">{{ row.next_run_at_display or "스케줄러 기준" }}</td>
+          <td>검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</td>
+          <td class="url">{{ row.output_dir }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">저장된 enabled 모니터링 설정이 없습니다.</div>
+  {% endif %}
+  </div>
 
   {% if last_batch %}
   <div class="subsection-block">

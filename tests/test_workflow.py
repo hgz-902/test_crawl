@@ -1294,6 +1294,16 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["extracts"]["title"], "다음 뉴스")
             self.assertEqual(Path(execution.extracted_files[0]).name, "daum_news_api.json")
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            record_output = Path(execution.records[0]["output_file"])
+            self.assertEqual(record_output.parent.parent.name, "items")
+            self.assertRegex(record_output.parent.name, r"^\d{8}$")
+            self.assertTrue(record_output.exists())
+            workflow_records = Path(config["output_dir"]) / "filter" / "workflow_records.json"
+            snapshot = json.loads(workflow_records.read_text(encoding="utf-8"))
+            self.assertEqual(len(snapshot["records"]), 1)
+            snapshot_output = Path(snapshot["records"][0]["output_file"])
+            self.assertEqual(snapshot_output.parent.parent.name, "items")
+            self.assertRegex(snapshot_output.parent.name, r"^\d{8}$")
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {
@@ -1353,6 +1363,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(len(execution.extracted_files), 1)
             self.assertTrue(Path(execution.extracted_files[0]).exists())
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1396,6 +1408,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("001_default", saved_path.parts)
             self.assertEqual(saved_path.name, "google_news_rss.json")
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
 
     def test_run_workflow_config_record_policy_stops_parser_after_kept_record(self) -> None:
         config = {
@@ -1578,6 +1592,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("nonfilter", nonfilter_path.parts)
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
 
             matched_payload = matched_path.read_text(encoding="utf-8")
             nonfilter_payload = nonfilter_path.read_text(encoding="utf-8")

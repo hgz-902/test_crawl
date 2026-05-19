@@ -318,8 +318,52 @@ class WebLoggingTests(unittest.TestCase):
             response = client.get("/orchestration")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("저장된 모니터링 설정", response.text)
+        self.assertIn("Sample", response.text)
+        self.assertIn("저장됨", response.text)
         self.assertIn("현재 등록된 오케스트레이션 스케줄러가 없습니다", response.text)
+        self.assertLess(response.text.index("등록된 스케줄 영역"), response.text.index("저장된 모니터링 설정"))
         self.assertNotIn(web.managed_task_name("sample"), response.text)
+
+    def test_orchestration_page_does_not_block_on_scheduler_detail_lookup(self) -> None:
+        settings = {"keywords": [], "recipients": [], "sender": "", "jobs": {}}
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [])
+        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+            web, "load_scheduler_registry", return_value=[]
+        ), patch.object(
+            web, "list_managed_task_details", side_effect=AssertionError("scheduler detail lookup should be lazy")
+        ):
+            response = client.get("/orchestration")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("크롤링 오케스트레이션", response.text)
+
+    def test_orchestration_scheduler_status_endpoint_loads_scheduler_details(self) -> None:
+        settings = {"keywords": [], "recipients": [], "sender": "", "jobs": {}}
+        detail = type(
+            "Detail",
+            (),
+            {
+                "task_name": web.managed_task_name("sample"),
+                "status": "Ready",
+                "last_run_time": "11/30/1999 00:00:00",
+                "next_run_time": "",
+                "last_result": "267011",
+                "task_to_run": "powershell.exe",
+            },
+        )()
+        with TestClient(web.app) as client, patch.object(
+            web, "settings_for_registered_jobs", return_value=(settings, [])
+        ), patch.object(web, "load_scheduler_registry", return_value=[]), patch.object(
+            web, "list_managed_task_details", return_value=[detail]
+        ):
+            response = client.get("/orchestration/schedulers/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["scheduler_rows"][0]["scheduler_last_run_at_display"], "")
+        self.assertEqual(payload["scheduler_rows"][0]["scheduler_last_result_display"], "-")
 
     def test_orchestration_templates_do_not_contain_known_mojibake_markers(self) -> None:
         markers = ("?ㅼ", "理", "諛", "湲", "以묐", "醫", "遺?")
@@ -626,6 +670,12 @@ class WebLoggingTests(unittest.TestCase):
         ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=lambda payload: payload), patch.object(
             web, "sync_windows_scheduled_tasks"
         ) as sync_tasks, patch.object(web, "run_batch") as run_batch_mock, patch.object(
+            web.ORCHESTRATION_STORE, "save_job_state"
+        ) as save_job_state, patch.object(
+            web, "stop_managed_tasks_with_script"
+        ) as stop_tasks, patch.object(
+            web, "delete_managed_task"
+        ) as delete_task, patch.object(
             web.ORCHESTRATION_STORE, "load_history", return_value=[]
         ):
             response = client.post(
@@ -643,6 +693,9 @@ class WebLoggingTests(unittest.TestCase):
         self.assertIn("스케줄러와 크롤링 실행은 변경하지 않았습니다", response.text)
         sync_tasks.assert_not_called()
         run_batch_mock.assert_not_called()
+        save_job_state.assert_not_called()
+        stop_tasks.assert_not_called()
+        delete_task.assert_not_called()
 
     def test_orchestration_save_ignores_scheduler_sync_failure_because_save_only_writes_settings(self) -> None:
         fake_job = type(
@@ -728,6 +781,9 @@ class WebLoggingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         sync_tasks.assert_called_once()
+        saved_settings = sync_tasks.call_args.args[0]
+        self.assertTrue(saved_settings["jobs"]["sample"]["enabled"])
+        self.assertEqual(saved_settings["jobs"]["sample"]["cron"], "*/5 * * * *")
         self.assertIn("모니터링을 시작했습니다", response.text)
 
     def test_orchestration_monitoring_start_rejects_unsupported_cron_before_save(self) -> None:
@@ -803,27 +859,96 @@ class WebLoggingTests(unittest.TestCase):
             "allow_email_send": False,
             "jobs": {"sample": {"enabled": True, "cron": "*/5 * * * *", "next_run_at": "2026-05-18T01:00:00+00:00"}},
         }
-        saved_payloads: list[dict[str, object]] = []
-
-        def fake_save(payload: dict[str, object]) -> dict[str, object]:
-            saved_payloads.append(payload)
-            return payload
-
         stop_result = type("StopResult", (), {"status": "stopped", "ended": ["task"], "deleted": ["task"], "skipped": [], "errors": [], "skipped_reason": ""})()
         with TestClient(web.app) as client, patch.object(
             web, "settings_for_registered_jobs", return_value=(settings, [fake_job])
-        ), patch.object(web.ORCHESTRATION_STORE, "save_settings", side_effect=fake_save), patch.object(
+        ), patch.object(web.ORCHESTRATION_STORE, "save_settings") as save_settings, patch.object(
             web.ORCHESTRATION_STORE, "save_job_state", return_value={}
-        ), patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
+        ) as save_job_state, patch.object(web.ORCHESTRATION_STORE, "load_history", return_value=[]), patch.object(
             web, "stop_managed_tasks_with_script", return_value=stop_result
         ) as stop_tasks:
             response = client.post("/orchestration", data={"action": "stop_monitoring"})
 
         self.assertEqual(response.status_code, 200)
         stop_tasks.assert_called_once_with(delete_tasks=True)
-        self.assertTrue(saved_payloads[0]["jobs"]["sample"]["enabled"])
-        self.assertEqual(saved_payloads[0]["jobs"]["sample"]["next_run_at"], "")
+        save_settings.assert_not_called()
+        save_job_state.assert_called_once()
+        saved_state = save_job_state.call_args.args[1]
+        self.assertEqual(saved_state["next_run_at"], "")
         self.assertIn("모니터링을 종료했습니다", response.text)
+        self.assertIn("저장된 모니터링 설정", response.text)
+        self.assertIn("Sample", response.text)
+
+    def test_monitoring_stop_then_start_reuses_saved_settings(self) -> None:
+        fake_job = type(
+            "FakeJob",
+            (),
+            {
+                "job_id": "sample",
+                "config_name": "Sample",
+                "config_path": "configs/sample.json",
+                "output_dir": "outputs/sample",
+                "search_terms": [],
+                "filter_terms": [],
+            },
+        )()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = web.OrchestrationStateStore(
+                settings_path=Path(tmp_dir) / "state" / "settings.json",
+                history_path=Path(tmp_dir) / "state" / "history.json",
+            )
+            store.save_settings(
+                {
+                    "keywords": ["SK"],
+                    "recipients": ["to@example.com"],
+                    "sender": "from@example.com",
+                    "allow_email_send": False,
+                    "jobs": {"sample": {"enabled": True, "cron": "*/5 * * * *", "interval": {"value": 5, "unit": "minutes"}}},
+                }
+            )
+            history_file = store.history_path
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            history_file.write_text("[]\n", encoding="utf-8")
+            workflow_records = Path(tmp_dir) / "outputs" / "sample" / "filter" / "workflow_records.json"
+            workflow_records.parent.mkdir(parents=True)
+            workflow_records.write_text('{"records":[]}\n', encoding="utf-8")
+            stop_result = type("StopResult", (), {"status": "stopped", "ended": ["task"], "deleted": ["task"], "skipped": [], "errors": [], "skipped_reason": ""})()
+            sync_result = type("SyncResult", (), {"status": "synced", "created": ["task"], "deleted": [], "skipped_reason": ""})()
+            sync_payloads: list[dict[str, object]] = []
+
+            def fake_sync(settings_payload, jobs):
+                sync_payloads.append(settings_payload)
+                return sync_result
+
+            with TestClient(web.app) as client, patch.object(web, "ORCHESTRATION_STORE", store), patch.object(
+                web, "settings_for_registered_jobs", side_effect=lambda **kwargs: (store.load_settings(), [fake_job])
+            ), patch.object(web, "stop_managed_tasks_with_script", return_value=stop_result), patch.object(
+                web, "sync_windows_scheduled_tasks", side_effect=fake_sync
+            ):
+                stop_response = client.post("/orchestration", data={"action": "stop_monitoring"})
+                settings_after_stop = store.load_settings()
+                start_response = client.post(
+                    "/orchestration/schedulers/sync",
+                    data={
+                        "enabled_jobs": "sample",
+                        "cron__sample": settings_after_stop["jobs"]["sample"]["cron"],
+                        "keywords": "\n".join(settings_after_stop["keywords"]),
+                        "recipients": "\n".join(settings_after_stop["recipients"]),
+                        "sender": settings_after_stop["sender"],
+                    },
+                )
+                history_exists_after_stop = history_file.exists()
+                workflow_records_exists_after_stop = workflow_records.exists()
+
+        self.assertEqual(stop_response.status_code, 200)
+        self.assertEqual(start_response.status_code, 200)
+        self.assertTrue(history_exists_after_stop)
+        self.assertTrue(workflow_records_exists_after_stop)
+        self.assertTrue(settings_after_stop["jobs"]["sample"]["enabled"])
+        self.assertEqual(settings_after_stop["jobs"]["sample"]["cron"], "*/5 * * * *")
+        self.assertEqual(len(sync_payloads), 1)
+        self.assertTrue(sync_payloads[0]["jobs"]["sample"]["enabled"])
+        self.assertEqual(sync_payloads[0]["jobs"]["sample"]["cron"], "*/5 * * * *")
 
     def test_scheduler_display_normalizes_never_run_time_and_last_result_code(self) -> None:
         fake_job = type(
@@ -864,12 +989,13 @@ class WebLoggingTests(unittest.TestCase):
         ), patch.object(web, "load_scheduler_registry", return_value=registry), patch.object(
             web, "list_managed_task_details", return_value=[detail]
         ):
-            response = client.get("/orchestration")
+            response = client.get("/orchestration/schedulers/status")
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("11/30/1999", response.text)
-        self.assertNotIn(">267011<", response.text)
-        self.assertIn("2026-05-19 15:10:00", response.text)
+        payload = response.json()
+        self.assertEqual(payload["scheduler_rows"][0]["scheduler_last_run_at_display"], "")
+        self.assertEqual(payload["scheduler_rows"][0]["scheduler_last_result_display"], "-")
+        self.assertEqual(payload["scheduler_rows"][0]["scheduler_next_run_at_display"], "2026-05-19 15:10:00")
 
     def test_orchestration_run_passes_force_due_and_email_permission(self) -> None:
         fake_job = type(

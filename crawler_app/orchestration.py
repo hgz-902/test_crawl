@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - dependency is declared, fallba
     load_dotenv = None
 
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
+from crawler_app.runtime_maintenance import cleanup_runtime_files
 from crawler_app.workflow import load_workflow_config, run_workflow_config
 
 
@@ -451,7 +452,19 @@ def run_batch(
         started_at=started_at,
         finished_at=finished_at,
     )
+    _cleanup_runtime_after_run(store)
     return batch
+
+
+def _cleanup_runtime_after_run(store: OrchestrationStateStore) -> None:
+    try:
+        cleanup_runtime_files(
+            app_root=APP_ROOT,
+            state_dir=store.settings_path.parent,
+            history_path=store.history_path,
+        )
+    except Exception:
+        return
 
 
 def _resolve_selected_job_ids(selected_job_ids: Iterable[str], jobs_by_id: dict[str, RegisteredJob]) -> list[str]:

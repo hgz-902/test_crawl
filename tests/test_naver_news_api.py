@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +14,8 @@ from crawler_app.naver_news_api import (
     fetch_naver_news_api_items,
     save_naver_news_api_items,
 )
+
+KST = timezone(timedelta(hours=9))
 
 
 class _FakeResponse:
@@ -169,31 +171,42 @@ class NaverNewsApiTests(unittest.TestCase):
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(payload["item_count"], 2)
             self.assertEqual(len(payload["item_files"]), 2)
-            self.assertEqual(manifest.parent.parent.name, "items")
-            self.assertEqual(manifest.parent.name, f"{date.today():%Y%m%d}_1")
+            self.assertEqual(manifest, output_dir / "naver_news_api.json")
+            self.assertEqual(payload["source_provider"], "naver_news_api")
+            date_label = datetime.now(KST).strftime("%Y%m%d")
             for file_path in payload["item_files"]:
-                self.assertTrue(str(file_path).startswith("item_"))
+                self.assertTrue(str(file_path).startswith(f"items/{date_label}/item_"))
                 loaded = json.loads((manifest.parent / file_path).read_text(encoding="utf-8"))
                 self.assertIn("post_id", loaded)
+                self.assertIn("item_index", loaded)
                 self.assertNotIn("detail_body", loaded)
 
-    def test_save_naver_news_api_items_allocates_next_daily_run_directory(self) -> None:
+    def test_save_naver_news_api_items_reuses_stable_item_paths_without_daily_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "naver" / "002_SK"
-            today = date.today().strftime("%Y%m%d")
-            (output_dir / "items" / f"{today}_1").mkdir(parents=True)
-            (output_dir / "items" / f"{today}_2").mkdir(parents=True)
+            items = [{"post_id": "1", "title": "A"}]
 
-            manifest = save_naver_news_api_items(
+            first = save_naver_news_api_items(
                 output_dir,
                 search_term="SK",
                 api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
                 final_url="https://openapi.naver.com/v1/search/news.json?query=SK",
-                items=[{"post_id": "1", "title": "A"}],
+                items=items,
+            )
+            second = save_naver_news_api_items(
+                output_dir,
+                search_term="SK",
+                api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                final_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                items=items,
             )
 
-            self.assertEqual(manifest.parent, output_dir / "items" / f"{today}_3")
-            self.assertTrue((manifest.parent / "item_0001.json").exists())
+            self.assertEqual(first, second)
+            payload = json.loads(second.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["item_files"]), 1)
+            self.assertTrue((output_dir / payload["item_files"][0]).exists())
+            date_dirs = [path for path in (output_dir / "items").iterdir() if path.is_dir()]
+            self.assertEqual([path.name for path in date_dirs], [datetime.now(KST).strftime("%Y%m%d")])
 
 
 if __name__ == "__main__":

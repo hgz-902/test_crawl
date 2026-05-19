@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+import hashlib
 import json
 import os
 import re
@@ -20,6 +22,7 @@ DAUM_WEB_SEARCH_MAX_SIZE = 50
 DEFAULT_PAGE_LIMIT = 1
 DEFAULT_PAGE_SIZE = 50
 DEFAULT_NEWS_DOMAINS = ("news.daum.net", "v.daum.net")
+KST = timezone(timedelta(hours=9))
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
@@ -130,6 +133,24 @@ def save_daum_news_api_items(
     allowed_domains: tuple[str, ...] = DEFAULT_NEWS_DOMAINS,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    date_label = _korean_date_label()
+    items_dir = output_dir / "items" / date_label
+    items_dir.mkdir(parents=True, exist_ok=True)
+
+    item_files: list[str] = []
+    for index, item in enumerate(items, start=1):
+        item_name = _stable_item_file_name(item)
+        item_path = items_dir / item_name
+        item_payload = dict(item)
+        item_payload.setdefault("search_term", search_term)
+        item_payload.setdefault("item_index", index)
+        item_payload.setdefault("source_provider", "kakao_daum_web_search")
+        item_payload.setdefault("api_url", api_url)
+        item_payload.setdefault("final_url", final_url)
+        item_payload.setdefault("allowed_domains", list(allowed_domains))
+        item_path.write_text(json.dumps(item_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        item_files.append(f"items/{date_label}/{item_name}")
+
     payload = {
         "search_term": search_term,
         "api_url": api_url,
@@ -139,11 +160,30 @@ def save_daum_news_api_items(
         "source_provider": "kakao_daum_web_search",
         "source_note": "Filtered to Daum News domains (news.daum.net, v.daum.net).",
         "allowed_domains": list(allowed_domains),
+        "item_files": item_files,
         "items": items,
     }
     output_path = output_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _stable_item_file_name(item: dict[str, Any]) -> str:
+    identity = _item_identity(item)
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return f"item_{digest}.json"
+
+
+def _korean_date_label() -> str:
+    return datetime.now(KST).strftime("%Y%m%d")
+
+
+def _item_identity(item: dict[str, Any]) -> str:
+    for key in ("post_id", "detail_url", "originallink", "link", "guid", "title"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return json.dumps(item, ensure_ascii=False, sort_keys=True)
 
 
 def _headers() -> dict[str, str]:
