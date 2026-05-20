@@ -1470,6 +1470,29 @@ def _save_workflow_record_snapshot(
     if existing_payload:
         existing_records = existing_payload.get("records") if isinstance(existing_payload.get("records"), list) else []
         records = _merge_workflow_record_snapshot_records(existing_records, records)
+    if file_name == "workflow_records.json":
+        allowed_record_keys = (
+            "record_key",
+            "success",
+            "extracts",
+            "downloaded_files",
+            "extracted_files",
+            "error",
+            "start_url",
+            "final_url",
+        )
+        filtered_records: list[dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            filtered_record = {key: record[key] for key in allowed_record_keys if key in record}
+            extracts = filtered_record.get("extracts")
+            if isinstance(extracts, dict):
+                detail_url = str(extracts.get("detail_url") or "").strip()
+                if detail_url:
+                    filtered_record["final_url"] = detail_url
+            filtered_records.append(filtered_record)
+        records = filtered_records
     payload = {
         "config_name": config.get("name"),
         "search_terms": _config_search_terms(config),
