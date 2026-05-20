@@ -17,6 +17,7 @@ from lxml import html as lxml_html
 import requests
 
 from crawler_app.daum_news_api import DAUM_NEWS_API_ATTR, fetch_daum_news_api_items, save_daum_news_api_items
+from crawler_app.duplicate_keys import duplicate_keys_for_record
 from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
@@ -1054,15 +1055,35 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
 
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
-    raw_records = list(execution.records)
+    source_records = list(execution.records)
+    raw_records, duplicate_skipped = _dedupe_execution_records(source_records)
+    if execution.diagnostics.get("record_policy_stopped") and not raw_records:
+        execution.diagnostics["filter_terms"] = filter_terms
+        execution.diagnostics["raw_record_count"] = len(source_records)
+        execution.diagnostics["deduped_record_count"] = 0
+        execution.diagnostics["matched_record_count"] = 0
+        execution.diagnostics["nonfilter_record_count"] = 0
+        execution.diagnostics["filter_output_skipped"] = "duplicate_stopped_without_new_records"
+        execution.records = []
+        execution.downloaded_files = []
+        execution.extracted_files = []
+        return
     raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
+    raw_generated_files.extend(_collect_record_files(source_records, "downloaded_files"))
+    raw_generated_files.extend(_collect_record_files(source_records, "extracted_files"))
+    raw_generated_files.extend(_collect_record_output_files(source_records))
+    if duplicate_skipped:
+        execution.diagnostics["same_run_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + duplicate_skipped
+        )
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
     filter_enabled = bool(filter_terms)
     matched_root = _result_category_root(execution.output_dir, "filter")
     nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
 
     execution.diagnostics["filter_terms"] = filter_terms
-    execution.diagnostics["raw_record_count"] = len(raw_records)
+    execution.diagnostics["raw_record_count"] = len(source_records)
+    execution.diagnostics["deduped_record_count"] = len(raw_records)
     execution.diagnostics["matched_record_count"] = len(matched_records)
     execution.diagnostics["nonfilter_record_count"] = len(nonfilter_records)
     execution.diagnostics["filter_enabled"] = filter_enabled
@@ -1325,6 +1346,21 @@ def _split_records_by_filter_terms(
     return matched, nonfilter
 
 
+def _dedupe_execution_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    skipped = 0
+    for record in records:
+        keys = duplicate_keys_for_record(record)
+        if any(key in seen for key in keys):
+            skipped += 1
+            continue
+        for key in keys:
+            seen.add(key)
+        deduped.append(record)
+    return deduped, skipped
+
+
 def _record_matches_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> bool:
     blob = _record_filter_blob(record)
     if not blob:
@@ -1396,6 +1432,17 @@ def _collect_record_files(records: list[dict[str, Any]], key: str) -> list[str]:
     return collected
 
 
+def _collect_record_output_files(records: list[dict[str, Any]]) -> list[str]:
+    collected: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        value = str(record.get("output_file") or "")
+        if value and value not in seen:
+            seen.add(value)
+            collected.append(value)
+    return collected
+
+
 def _group_records_by_search_term(records: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for record in records:
@@ -1418,6 +1465,11 @@ def _save_workflow_record_snapshot(
     file_name: str,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / file_name
+    existing_payload = _read_existing_workflow_record_snapshot(output_path)
+    if existing_payload:
+        existing_records = existing_payload.get("records") if isinstance(existing_payload.get("records"), list) else []
+        records = _merge_workflow_record_snapshot_records(existing_records, records)
     payload = {
         "config_name": config.get("name"),
         "search_terms": _config_search_terms(config),
@@ -1425,9 +1477,57 @@ def _save_workflow_record_snapshot(
         "item_count": len(records),
         "records": records,
     }
-    output_path = output_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _read_existing_workflow_record_snapshot(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _merge_workflow_record_snapshot_records(
+    existing_records: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [record for record in existing_records if isinstance(record, dict)]
+    seen = {key for record in merged for key in duplicate_keys_for_record(record)}
+    for record in new_records:
+        if not isinstance(record, dict):
+            continue
+        keys = duplicate_keys_for_record(record)
+        if any(key in seen for key in keys):
+            continue
+        for key in keys:
+            seen.add(key)
+        merged.append(record)
+    return merged
+
+
+def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
+    index: set[str] = set()
+    if not output_dir.exists():
+        return index
+    for file_name in ("workflow_records.json", "parser_records.json"):
+        for path in output_dir.rglob(file_name):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            records = payload.get("records") if isinstance(payload, dict) else []
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                for key in duplicate_keys_for_record(record):
+                    index.add(key)
+    return index
 
 
 def _run_parser_workflow(
@@ -1449,6 +1549,9 @@ def _run_parser_workflow(
     effective_terms = search_terms or [None]
     total_items = 0
     item_limit = _step_loop_limit(parser_step)
+    existing_duplicate_index = set() if record_policy is not None else _build_existing_workflow_duplicate_index(execution.output_dir)
+    same_run_seen: set[str] = set()
+    same_run_duplicate_skipped_count = 0
     for search_term_index, search_term in enumerate(effective_terms):
         term_output_dir = _search_term_output_dir(
             execution.output_dir,
@@ -1483,7 +1586,25 @@ def _run_parser_workflow(
                 final_url=final_url,
                 output_file="",
             )
-            include, stop, reason, metadata = _record_policy_decision(record_policy, record)
+            if record_policy is None:
+                keys = duplicate_keys_for_record(record)
+                duplicate_key = next((key for key in keys if key in existing_duplicate_index), "")
+                if duplicate_key:
+                    stop_exc = WorkflowRecordPolicyStop(
+                        reason="duplicate_stopped",
+                        metadata={"duplicate_key": duplicate_key, "stop_scope": "search_term"},
+                        records=accepted_records,
+                    )
+                    break
+                same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
+                if same_run_duplicate_key:
+                    same_run_duplicate_skipped_count += 1
+                    continue
+                for key in keys:
+                    same_run_seen.add(key)
+                include, stop, reason, metadata = True, False, "record_policy_stopped", {}
+            else:
+                include, stop, reason, metadata = _record_policy_decision(record_policy, record)
             if include:
                 accepted_items.append(item)
                 accepted_records.append(record)
@@ -1492,16 +1613,18 @@ def _run_parser_workflow(
                 break
 
         total_items += len(accepted_items)
-        output_path = _save_parser_items(
-            parser_name=parser_name,
-            output_dir=term_output_dir,
-            search_term=search_term,
-            source_url=source_url,
-            final_url=final_url,
-            items=accepted_items,
-        )
-        _assign_parser_record_output_files(accepted_records, output_path)
-        execution.extracted_files.append(str(output_path))
+        output_path: Path | None = None
+        if accepted_items:
+            output_path = _save_parser_items(
+                parser_name=parser_name,
+                output_dir=term_output_dir,
+                search_term=search_term,
+                source_url=source_url,
+                final_url=final_url,
+                items=accepted_items,
+            )
+            _assign_parser_record_output_files(accepted_records, output_path)
+            execution.extracted_files.append(str(output_path))
         execution.diagnostics.setdefault("search_term_runs", []).append(
             {
                 "search_term_index": search_term_index,
@@ -1511,7 +1634,7 @@ def _run_parser_workflow(
                 "rss_url": source_url,
                 "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
                 "final_url": final_url,
-                "output_file": str(output_path),
+                "output_file": str(output_path) if output_path is not None else "",
                 "fetched_item_count": len(items),
             }
         )
@@ -1521,6 +1644,10 @@ def _run_parser_workflow(
             continue
 
     execution.diagnostics["parser_item_count"] = total_items
+    if same_run_duplicate_skipped_count:
+        execution.diagnostics["same_run_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+        )
 
 
 def _build_parser_record(

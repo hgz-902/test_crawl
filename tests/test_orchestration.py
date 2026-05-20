@@ -24,6 +24,7 @@ from crawler_app.orchestration import (
     registered_config_jobs,
     run_batch,
 )
+from crawler_app.duplicate_keys import duplicate_keys_for_record
 from crawler_app.runtime_maintenance import RuntimeRetentionPolicy
 
 
@@ -80,58 +81,100 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(jobs[0].config_name, "My Site")
             self.assertEqual(jobs[0].output_dir, "outputs/my_site")
 
-    def test_duplicate_key_prefers_title_and_url_across_record_shapes(self) -> None:
-        parser_record = {
-            "extracts": {
-                "title": " SK Group News ",
-                "originallink": "https://news.example.com/a",
-            },
-            "final_url": "https://rss.example.com",
-        }
-        general_record = {
-            "extracts": {
-                "extract_title": "SK Group News",
-            },
-            "final_url": "https://news.example.com/a",
-        }
-        title_only_record = {"steps": [{"action": "parser", "value": "Only Title"}], "extracts": {}}
+    def test_duplicate_key_uses_detail_url_for_parser_records(self) -> None:
+        for parser_name, provider in (
+            ("naver", "naver_news_api"),
+            ("daum", "kakao_daum_web_search"),
+            ("google", "google_news_rss"),
+        ):
+            with self.subTest(parser_name=parser_name):
+                parser_record = {
+                    "parser_name": parser_name,
+                    "extracts": {
+                        "title": "Ignored title",
+                        "source_provider": provider,
+                        "detail_url": " https://news.example.com/a/?x=1#section ",
+                    },
+                    "final_url": f"https://api.example.com/{parser_name}?query=SK",
+                }
 
-        self.assertEqual(duplicate_key_for_record(parser_record), duplicate_key_for_record(general_record))
-        self.assertEqual(duplicate_key_for_record(title_only_record), "only title")
+                self.assertEqual(duplicate_key_for_record(parser_record), "https://news.example.com/a?x=1")
+
+    def test_google_duplicate_keys_check_detail_url_then_description(self) -> None:
+        google_record = {
+            "parser_name": "google",
+            "extracts": {
+                "title": "Ignored",
+                "detail_url": "https://news.google.com/rss/articles/abc?oc=5",
+                "description": " Same article summary \n with spacing ",
+            },
+        }
+
+        self.assertEqual(
+            duplicate_keys_for_record(google_record),
+            [
+                "https://news.google.com/rss/articles/abc?oc=5",
+                "google_description:same article summary with spacing",
+            ],
+        )
+
+    def test_duplicate_key_uses_final_url_for_general_records_and_ignores_title(self) -> None:
+        same_title_first = {"extracts": {"title": "Same"}, "final_url": "https://news.example.com/first"}
+        same_title_second = {"extracts": {"title": "Same"}, "final_url": "https://news.example.com/second"}
+        different_title_same_url = {"extracts": {"title": "Different"}, "final_url": "https://news.example.com/first#fragment"}
+        title_only_record = {"extracts": {"title": "Only Title"}}
+
+        self.assertNotEqual(duplicate_key_for_record(same_title_first), duplicate_key_for_record(same_title_second))
+        self.assertEqual(duplicate_key_for_record(same_title_first), duplicate_key_for_record(different_title_same_url))
+        self.assertEqual(duplicate_key_for_record(title_only_record), "")
 
     def test_build_duplicate_index_reads_workflow_record_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            snapshot_dir = Path(tmp_dir) / "outputs" / "site" / "filter"
-            snapshot_dir.mkdir(parents=True)
-            (snapshot_dir / "workflow_records.json").write_text(
+            filter_dir = Path(tmp_dir) / "outputs" / "site" / "filter"
+            nonfilter_dir = Path(tmp_dir) / "outputs" / "site" / "nonfilter"
+            filter_dir.mkdir(parents=True)
+            nonfilter_dir.mkdir(parents=True)
+            (filter_dir / "workflow_records.json").write_text(
                 json.dumps(
                     {
                         "records": [
                             {
-                                "extracts": {"title": "Existing", "link": "https://example.com/existing"},
-                                "final_url": "https://rss.example.com",
+                                "parser_name": "google",
+                                "extracts": {
+                                    "title": "Existing",
+                                    "detail_url": "https://example.com/parser",
+                                    "description": "Existing google summary",
+                                },
+                                "final_url": "https://news.google.com/rss/search?q=SK",
                             }
                         ]
                     }
                 ),
                 encoding="utf-8",
             )
+            (nonfilter_dir / "workflow_records.json").write_text(
+                json.dumps({"records": [{"extracts": {"title": "Existing"}, "final_url": "https://example.com/general"}]}),
+                encoding="utf-8",
+            )
 
             index = build_duplicate_index([Path(tmp_dir) / "outputs"])
 
-            self.assertIn("existing | https://example.com/existing", index)
+            self.assertIn("https://example.com/parser", index)
+            self.assertIn("google_description:", " ".join(index))
+            self.assertIn("https://example.com/general", index)
 
     def test_duplicate_stop_snapshot_merge_preserves_existing_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "outputs" / "site"
             snapshot_path = output_dir / "filter" / "workflow_records.json"
             snapshot_path.parent.mkdir(parents=True)
-            existing_record = {"extracts": {"title": "Existing", "link": "https://example.com/existing"}}
+            existing_record = {"extracts": {"title": "Existing"}, "final_url": "https://example.com/existing"}
             repeated_existing_record = {
-                "extracts": {"title": "Existing", "link": "https://example.com/existing"},
+                "extracts": {"title": "Existing"},
+                "final_url": "https://example.com/existing",
                 "search_term": "second-term",
             }
-            fresh_record = {"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}
+            fresh_record = {"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"}
             snapshot_path.write_text(
                 json.dumps({"config_name": "site", "item_count": 2, "records": [existing_record, repeated_existing_record]}),
                 encoding="utf-8",
@@ -153,7 +196,7 @@ class OrchestrationTests(unittest.TestCase):
             output_dir = Path(tmp_dir) / "outputs" / "site"
             snapshot_path = output_dir / "filter" / "workflow_records.json"
             snapshot_path.parent.mkdir(parents=True)
-            existing_record = {"extracts": {"title": "Existing", "link": "https://example.com/existing"}}
+            existing_record = {"extracts": {"title": "Existing"}, "final_url": "https://example.com/existing"}
             snapshot_path.write_text(
                 json.dumps({"config_name": "site", "item_count": 1, "records": [existing_record]}),
                 encoding="utf-8",
@@ -188,7 +231,7 @@ class OrchestrationTests(unittest.TestCase):
 
             def fake_runner(config_path: Path, record_policy):
                 self.assertEqual(os.environ.get("ORCHESTRATION_DOTENV_PROOF"), "loaded")
-                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+                return {"success": True, "records": [{"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"}]}
 
             store = OrchestrationStateStore(
                 settings_path=tmp_path / "state" / "settings.json",
@@ -219,7 +262,7 @@ class OrchestrationTests(unittest.TestCase):
 
             snapshot_dir = tmp_path / "snapshots" / "filter"
             snapshot_dir.mkdir(parents=True)
-            duplicate_record = {"extracts": {"title": "Duplicate", "link": "https://example.com/dup"}}
+            duplicate_record = {"extracts": {"title": "Duplicate"}, "final_url": "https://example.com/dup"}
             (snapshot_dir / "workflow_records.json").write_text(
                 json.dumps({"records": [duplicate_record]}),
                 encoding="utf-8",
@@ -229,11 +272,11 @@ class OrchestrationTests(unittest.TestCase):
                 calls.append(config_path.stem)
                 if config_path.stem == "first":
                     records = [
-                        {"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}},
+                        {"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"},
                         duplicate_record,
                     ]
                 else:
-                    records = [{"extracts": {"title": "Second Fresh", "link": "https://example.com/second"}}]
+                    records = [{"extracts": {"title": "Second Fresh"}, "final_url": "https://example.com/second"}]
 
                 accepted = []
                 for record in records:
@@ -288,7 +331,7 @@ class OrchestrationTests(unittest.TestCase):
 
             def fake_runner(config_path: Path, record_policy):
                 calls.append(config_path.name)
-                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+                return {"success": True, "records": [{"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"}]}
 
             store = OrchestrationStateStore(
                 settings_path=tmp_path / "state" / "settings.json",
@@ -317,7 +360,7 @@ class OrchestrationTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-            duplicate_record = {"extracts": {"title": "Duplicate", "link": "https://example.com/dup"}}
+            duplicate_record = {"extracts": {"title": "Duplicate"}, "final_url": "https://example.com/dup"}
             snapshot_dir = tmp_path / "snapshots" / "filter"
             snapshot_dir.mkdir(parents=True)
             (snapshot_dir / "workflow_records.json").write_text(json.dumps({"records": [duplicate_record]}), encoding="utf-8")
@@ -326,7 +369,7 @@ class OrchestrationTests(unittest.TestCase):
             def fake_runner(config_path: Path, record_policy):
                 calls.append(config_path.stem)
                 records = [duplicate_record] if config_path.stem == "first" else [
-                    {"extracts": {"title": "Second", "link": "https://example.com/second"}}
+                    {"extracts": {"title": "Second"}, "final_url": "https://example.com/second"}
                 ]
                 accepted = []
                 for record in records:
@@ -371,7 +414,7 @@ class OrchestrationTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            repeated = {"extracts": {"title": "Repeated", "link": "https://example.com/repeated"}}
+            repeated = {"extracts": {"title": "Repeated"}, "final_url": "https://example.com/repeated"}
 
             def fake_runner(config_path: Path, record_policy):
                 accepted = []
@@ -466,7 +509,7 @@ class OrchestrationTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-            duplicate_record = {"extracts": {"title": "Shared", "link": "https://example.com/shared"}}
+            duplicate_record = {"extracts": {"title": "Shared"}, "final_url": "https://example.com/shared"}
             first_snapshot = first_output / "filter"
             first_snapshot.mkdir(parents=True)
             (first_snapshot / "workflow_records.json").write_text(
@@ -614,7 +657,7 @@ class OrchestrationTests(unittest.TestCase):
 
             def fake_runner(config_path: Path, record_policy):
                 calls.append(config_path.stem)
-                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+                return {"success": True, "records": [{"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"}]}
 
             skipped = run_batch(
                 ["site"],
@@ -668,7 +711,7 @@ class OrchestrationTests(unittest.TestCase):
             job_history.write_text(json.dumps([{"batch_id": str(index)} for index in range(35)]), encoding="utf-8")
 
             def fake_runner(config_path: Path, record_policy):
-                return {"success": True, "records": [{"extracts": {"title": "Fresh", "link": "https://example.com/fresh"}}]}
+                return {"success": True, "records": [{"extracts": {"title": "Fresh"}, "final_url": "https://example.com/fresh"}]}
 
             with patch.object(
                 orchestration,

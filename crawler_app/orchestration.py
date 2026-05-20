@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - dependency is declared, fallba
     load_dotenv = None
 
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
+from crawler_app.duplicate_keys import duplicate_key_for_record, duplicate_keys_for_record
 from crawler_app.runtime_maintenance import cleanup_runtime_files
 from crawler_app.workflow import load_workflow_config, run_workflow_config
 
@@ -644,24 +645,26 @@ def run_job(
 
     def record_policy(record: dict[str, Any]) -> dict[str, Any]:
         nonlocal same_run_duplicate_skipped_count
-        key = duplicate_key_for_record(record)
-        if key and key in duplicate_index:
-            duplicate.update({"key": key, "record": record})
+        keys = duplicate_keys_for_record(record)
+        duplicate_key = next((key for key in keys if key in duplicate_index), "")
+        if duplicate_key:
+            duplicate.update({"key": duplicate_key, "record": record})
             return {
                 "include": False,
                 "stop": True,
                 "reason": "duplicate_stopped",
-                "metadata": {"duplicate_key": key, "stop_scope": "search_term"},
+                "metadata": {"duplicate_key": duplicate_key, "stop_scope": "search_term"},
             }
-        if key and key in seen:
+        same_run_duplicate_key = next((key for key in keys if key in seen), "")
+        if same_run_duplicate_key:
             same_run_duplicate_skipped_count += 1
             return {
                 "include": False,
                 "stop": False,
                 "reason": "same_run_duplicate_skipped",
-                "metadata": {"duplicate_key": key},
+                "metadata": {"duplicate_key": same_run_duplicate_key},
             }
-        if key:
+        for key in keys:
             seen.add(key)
         return {"include": True, "stop": False}
 
@@ -803,21 +806,10 @@ def url_candidate(record: dict[str, Any]) -> str:
     return ""
 
 
-def duplicate_key_for_record(record: dict[str, Any]) -> str:
-    title = _normalize_key_part(title_candidate(record))
-    url = _normalize_key_part(url_candidate(record))
-    if title and url:
-        return f"{title} | {url}"
-    if title:
-        return title
-    return url
-
-
 def build_duplicate_index(snapshot_roots: Iterable[str | Path]) -> set[str]:
     index: set[str] = set()
     for record in iter_snapshot_records(snapshot_roots):
-        key = duplicate_key_for_record(record)
-        if key:
+        for key in duplicate_keys_for_record(record):
             index.add(key)
     return index
 
@@ -967,17 +959,15 @@ def _merge_records_by_duplicate_key(
     new_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     merged = [record for record in existing_records if isinstance(record, dict)]
-    seen: set[str] = {
-        duplicate_key_for_record(record) or json.dumps(record, ensure_ascii=False, sort_keys=True)
-        for record in merged
-    }
+    seen: set[str] = {key for record in merged for key in duplicate_keys_for_record(record)}
     for record in new_records:
         if not isinstance(record, dict):
             continue
-        key = duplicate_key_for_record(record) or json.dumps(record, ensure_ascii=False, sort_keys=True)
-        if key in seen:
+        keys = duplicate_keys_for_record(record)
+        if any(key in seen for key in keys):
             continue
-        seen.add(key)
+        for key in keys:
+            seen.add(key)
         merged.append(record)
     return merged
 
@@ -1112,10 +1102,6 @@ def _clean_string_list(value: Any) -> list[str]:
     else:
         raw_values = []
     return [str(item).strip() for item in raw_values if str(item).strip()]
-
-
-def _normalize_key_part(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
 
 def _first_text(value: Any) -> str:

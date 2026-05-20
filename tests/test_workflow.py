@@ -1479,6 +1479,348 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(saved_payload["item_count"], 1)
             self.assertEqual([item["title"] for item in saved_payload["items"]], ["Fresh"])
 
+    def test_run_workflow_config_skips_parser_same_run_duplicate_detail_url_across_terms(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["트럼프", "이란"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "%ED%8A%B8%EB%9F%BC%ED%94%84" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "first",
+                            "title": "First title",
+                            "detail_url": "https://example.com/shared#fragment",
+                            "link": "https://example.com/shared#fragment",
+                        },
+                        {
+                            "post_id": "unique-1",
+                            "title": "Unique 1",
+                            "detail_url": "https://example.com/unique-1",
+                            "link": "https://example.com/unique-1",
+                        },
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "same-url-new-title",
+                        "title": "Changed title should still duplicate",
+                        "detail_url": " https://example.com/shared/ ",
+                        "link": " https://example.com/shared/ ",
+                    },
+                    {
+                        "post_id": "unique-2",
+                        "title": "First title",
+                        "detail_url": "https://example.com/unique-2",
+                        "link": "https://example.com/unique-2",
+                    },
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(execution.records), 3)
+            self.assertEqual(execution.diagnostics["same_run_duplicate_skipped_count"], 1)
+            detail_urls = [record["extracts"]["detail_url"].strip().split("#", 1)[0].rstrip("/") for record in execution.records]
+            self.assertEqual(detail_urls.count("https://example.com/shared"), 1)
+            workflow_records = list(Path(config["output_dir"]).rglob("workflow_records.json"))
+            self.assertEqual(len(workflow_records), 1)
+            payload = json.loads(workflow_records[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 3)
+            saved_details = [record["extracts"]["detail_url"].strip().split("#", 1)[0].rstrip("/") for record in payload["records"]]
+            self.assertEqual(saved_details.count("https://example.com/shared"), 1)
+
+    def test_run_workflow_config_skips_google_same_run_duplicate_description_after_detail_url(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["one", "two"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "one" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "first",
+                            "title": "First source",
+                            "detail_url": "https://news.google.com/rss/articles/source-a?oc=5",
+                            "link": "https://news.google.com/rss/articles/source-a?oc=5",
+                            "description": "Same underlying article",
+                        }
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "different-detail-same-description",
+                        "title": "Portal copy",
+                        "detail_url": "https://news.google.com/rss/articles/source-b?oc=5",
+                        "link": "https://news.google.com/rss/articles/source-b?oc=5",
+                        "description": "  same underlying ARTICLE  ",
+                    },
+                    {
+                        "post_id": "new-description",
+                        "title": "Another",
+                        "detail_url": "https://news.google.com/rss/articles/source-c?oc=5",
+                        "link": "https://news.google.com/rss/articles/source-c?oc=5",
+                        "description": "Different article",
+                    },
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.diagnostics["same_run_duplicate_skipped_count"], 1)
+            details = [record["extracts"]["detail_url"] for record in execution.records]
+            self.assertEqual(
+                details,
+                [
+                    "https://news.google.com/rss/articles/source-a?oc=5",
+                    "https://news.google.com/rss/articles/source-c?oc=5",
+                ],
+            )
+            item_files = [path for path in Path(config["output_dir"]).rglob("*.json") if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_files), 2)
+
+    def test_run_workflow_config_stops_current_parser_term_on_previous_workflow_record_duplicate(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["첫검색", "둘검색"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+        fetch_calls: list[str] = []
+
+        def fake_fetch(source_url: str, **kwargs):
+            fetch_calls.append(source_url)
+            if "%EC%B2%AB%EA%B2%80%EC%83%89" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "old",
+                            "title": "Previously saved",
+                            "detail_url": "https://example.com/old",
+                            "link": "https://example.com/old",
+                        },
+                        {
+                            "post_id": "should-not-save",
+                            "title": "After duplicate",
+                            "detail_url": "https://example.com/after-duplicate",
+                            "link": "https://example.com/after-duplicate",
+                        },
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "new",
+                        "title": "New after stopped term",
+                        "detail_url": "https://example.com/new",
+                        "link": "https://example.com/new",
+                    }
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            previous_snapshot_dir = output_dir / "filter"
+            previous_snapshot_dir.mkdir(parents=True)
+            (previous_snapshot_dir / "workflow_records.json").write_text(
+                json.dumps(
+                    {
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {"title": "Old title", "detail_url": "https://example.com/old"},
+                                "final_url": "https://news.google.com/rss/search?q=old",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(fetch_calls), 2)
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(execution.diagnostics["record_policy_stop_metadata"]["stop_scope"], "search_term")
+            self.assertEqual([record["extracts"]["detail_url"] for record in execution.records], ["https://example.com/new"])
+            item_files = list(output_dir.rglob("*.json"))
+            item_file_names = [path.name for path in item_files if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_file_names), 1)
+            self.assertFalse(any("after-duplicate" in path.read_text(encoding="utf-8") for path in item_files))
+            previous_payload = json.loads((previous_snapshot_dir / "workflow_records.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [record["extracts"]["detail_url"] for record in previous_payload["records"]],
+                ["https://example.com/old", "https://example.com/new"],
+            )
+
+    def test_run_workflow_config_preserves_existing_snapshot_when_duplicate_first_record_saves_nothing(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+        rss_items = [
+            {
+                "post_id": "old",
+                "title": "Already saved",
+                "detail_url": "https://example.com/old",
+                "link": "https://example.com/old",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            snapshot_dir = output_dir / "filter"
+            snapshot_dir.mkdir(parents=True)
+            snapshot_path = snapshot_dir / "workflow_records.json"
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "item_count": 1,
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {"title": "Old", "detail_url": "https://example.com/old"},
+                                "final_url": "https://news.google.com/rss/search?q=SK",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "crawler_app.workflow.fetch_google_news_rss_items",
+                return_value=(rss_items, "https://news.google.com/rss/search?q=SK&hl=ko&gl=KR&ceid=KR:ko"),
+            ):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.records, [])
+            self.assertEqual(execution.diagnostics["filter_output_skipped"], "duplicate_stopped_without_new_records")
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 1)
+            self.assertEqual(payload["records"][0]["extracts"]["detail_url"], "https://example.com/old")
+            self.assertEqual(list(output_dir.rglob("GOOGLE_*.json")), [])
+
+    def test_run_workflow_config_stops_google_term_on_previous_description_duplicate(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK", "next"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "SK" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "same-desc",
+                            "title": "Different source",
+                            "detail_url": "https://news.google.com/rss/articles/new-detail?oc=5",
+                            "link": "https://news.google.com/rss/articles/new-detail?oc=5",
+                            "description": "Same article desc",
+                        }
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "next",
+                        "title": "Next term continues",
+                        "detail_url": "https://news.google.com/rss/articles/next?oc=5",
+                        "link": "https://news.google.com/rss/articles/next?oc=5",
+                        "description": "Next article",
+                    }
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            snapshot_dir = output_dir / "filter"
+            snapshot_dir.mkdir(parents=True)
+            (snapshot_dir / "workflow_records.json").write_text(
+                json.dumps(
+                    {
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {
+                                    "title": "Original",
+                                    "detail_url": "https://news.google.com/rss/articles/old-detail?oc=5",
+                                    "description": "same ARTICLE desc",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(
+                [record["extracts"]["detail_url"] for record in execution.records],
+                ["https://news.google.com/rss/articles/next?oc=5"],
+            )
+            item_files = [path for path in output_dir.rglob("*.json") if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_files), 1)
+
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
         config = {
             "name": "google",
