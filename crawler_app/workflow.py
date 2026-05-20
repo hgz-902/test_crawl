@@ -1498,6 +1498,7 @@ def _save_workflow_record_snapshot(
             "error",
             "start_url",
             "final_url",
+            "output_file",
         )
         filtered_records: list[dict[str, Any]] = []
         for record in records:

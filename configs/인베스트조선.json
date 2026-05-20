@@ -1,32 +1,21 @@
 {
   "name": "인베스트조선",
-  "start_url": "https://www.investchosun.com/",
+  "start_url": "https://www.investchosun.com/svc/news/list.html?catid=2",
   "output_dir": "outputs/investchosun",
   "timeout_ms": 60000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "인베스트조선은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 메인 최신 기사 목록을 수집한 뒤 필터 목록 키워드로 분리한다.",
+  "notes": "인베스트조선은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 전체 기사 목록(catid=2) 1페이지의 최신 기사 목록을 수집한 뒤 필터 목록 키워드로 분리한다. 전체 기사 목록은 1페이지당 10개 기사만 노출되므로 loop_limit을 20으로 설정해도 실제 1페이지에서는 최대 10개만 수집된다.",
   "search_terms": [],
   "filter_terms": [
-    "최태원",
-    "SK",
-    "SK이노베이션",
-    "SK E&S",
-    "SK에너지",
-    "SK지오센트릭",
-    "SK어스온",
-    "SK엔무브",
-    "SK아이이테크놀로지",
-    "SK인천석유화학",
-    "SK온",
-    "대한상의"
+    "프랑스"
   ],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"section_01\"]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/a[1]",
-      "xpath_2": "//*[@id=\"section_01\"]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/a[1]",
+      "xpath": "//body[1]/div[@id=\"section\"]/section[1]/div[1]/div[1]/div[2]/div[2]/ul[1]/li[1]/div[1]/dl[1]/dt[1]/a[1]",
+      "xpath_2": "//body[1]/div[@id=\"section\"]/section[1]/div[1]/div[1]/div[2]/div[2]/ul[1]/li[2]/div[1]/dl[1]/dt[1]/a[1]",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 20,
@@ -52,5 +41,5 @@
     }
   ],
   "created_at": "2026-05-14T21:00:00+09:00",
-  "updated_at": "2026-05-19T16:57:46+09:00"
+  "updated_at": "2026-05-20T17:54:02+09:00"
 }

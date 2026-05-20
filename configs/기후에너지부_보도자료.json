@@ -8,27 +8,11 @@
   "ignore_https_errors": false,
   "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [
-    "0",
-    "10",
-    "20"
+    "0"
   ],
   "filter_terms": [
-    "석유",
-    "정유",
-    "화학",
-    "유가",
-    "주유소",
-    "LNG",
-    "전력",
-    "수소",
-    "재생에너지",
-    "태양광",
-    "풍력",
-    "도시가스",
-    "SMR",
-    "ESS",
-    "배터리",
-    "전기차"
+    "에너지",
+    "청년"
   ],
   "steps": [
     {
@@ -37,9 +21,17 @@
       "xpath_2": "//*[@id=\"content_body\"]/div/table/tbody/tr[2]/td[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
+      "loop_limit": 3,
       "action": "click",
       "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/header",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
       "wait_state": "attached"
     },
     {
@@ -62,5 +54,5 @@
     }
   ],
   "created_at": "2026-04-27T18:16:30+09:00",
-  "updated_at": "2026-05-19T18:18:00+09:00"
+  "updated_at": "2026-05-20T18:07:41+09:00"
 }
