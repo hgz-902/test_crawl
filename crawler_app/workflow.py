@@ -1506,9 +1506,14 @@ def _save_workflow_record_snapshot(
             filtered_record = {key: record[key] for key in allowed_record_keys if key in record}
             extracts = filtered_record.get("extracts")
             if isinstance(extracts, dict):
+                filtered_extracts = dict(extracts)
+                title = str(filtered_extracts.pop("title", "")).strip()
+                if title:
+                    filtered_extracts["extract_title"] = title
                 detail_url = str(extracts.get("detail_url") or "").strip()
                 if detail_url:
                     filtered_record["final_url"] = detail_url
+                filtered_record["extracts"] = filtered_extracts
             filtered_records.append(filtered_record)
         records = filtered_records
     payload = {
