@@ -629,6 +629,10 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
     execution = WorkflowExecution(config_name=str(config["name"]), output_dir=output_dir)
     search_terms = _config_search_terms(config)
     parser_name = _config_parser_name(config)
+    effective_record_policy = record_policy
+    direct_record_policy_state: dict[str, Any] = {}
+    if parser_name is None and record_policy is None:
+        effective_record_policy = _build_direct_workflow_record_policy(output_dir, direct_record_policy_state)
     timeout_ms = int(config.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
     step_wait_ms = int(config.get("step_wait_ms") or DEFAULT_STEP_WAIT_MS)
     parse_pause_seconds = _config_parse_pause_seconds(config)
@@ -736,7 +740,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                             parse_pause_seconds=parse_pause_seconds,
                             page_loop_step_index=click_loop_step_indexes[0],
                             item_loop_step_index=click_loop_step_indexes[1],
-                            record_policy=record_policy,
+                            record_policy=effective_record_policy,
                         )
                         execution.records.extend(records)
                         execution.downloaded_files.extend(
@@ -795,7 +799,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                                 board_item_number=page_number,
                                 board_page_number=page_number,
                             )
-                            if _append_execution_record(execution, record, record_policy):
+                            if _append_execution_record(execution, record, effective_record_policy):
                                 execution.downloaded_files.extend(record.get("downloaded_files", []))
                                 execution.extracted_files.extend(record.get("extracted_files", []))
                     elif len(click_loop_step_indexes) == 2:
@@ -811,7 +815,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                             parse_pause_seconds=parse_pause_seconds,
                             page_loop_step_index=click_loop_step_indexes[0],
                             item_loop_step_index=click_loop_step_indexes[1],
-                            record_policy=record_policy,
+                            record_policy=effective_record_policy,
                         )
                         execution.records.extend(records)
                         execution.downloaded_files.extend(
@@ -872,7 +876,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                                 primary_loop_step_index=primary_loop_step_index,
                                 board_item_number=item_number,
                             )
-                            if _append_execution_record(execution, record, record_policy):
+                            if _append_execution_record(execution, record, effective_record_policy):
                                 execution.downloaded_files.extend(record.get("downloaded_files", []))
                                 execution.extracted_files.extend(record.get("extracted_files", []))
                     else:
@@ -889,7 +893,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                             output_dir_override=term_output_dir,
                             primary_loop_step_index=primary_loop_step_index,
                         )
-                        if _append_execution_record(execution, record, record_policy):
+                        if _append_execution_record(execution, record, effective_record_policy):
                             execution.downloaded_files.extend(record.get("downloaded_files", []))
                             execution.extracted_files.extend(record.get("extracted_files", []))
                 except WorkflowRecordPolicyStop as exc:
@@ -906,6 +910,13 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                 pass
             browser.close()
 
+    if direct_record_policy_state:
+        execution.diagnostics["previous_duplicate_index_count"] = direct_record_policy_state.get("previous_duplicate_index_count", 0)
+        same_run_duplicate_skipped_count = int(direct_record_policy_state.get("same_run_duplicate_skipped_count") or 0)
+        if same_run_duplicate_skipped_count:
+            execution.diagnostics["same_run_duplicate_skipped_count"] = (
+                int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+            )
     _finalize_workflow_execution(execution, config)
     _apply_workflow_result_filters(execution, config)
     return execution
@@ -1057,6 +1068,13 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     filter_terms = _config_filter_terms(config)
     source_records = list(execution.records)
     raw_records, duplicate_skipped = _dedupe_execution_records(source_records)
+    raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
+    raw_generated_files.extend(_collect_record_files(source_records, "downloaded_files"))
+    raw_generated_files.extend(_collect_record_files(source_records, "extracted_files"))
+    raw_generated_files.extend(_collect_record_output_files(source_records))
+    filter_enabled = bool(filter_terms)
+    matched_root = _result_category_root(execution.output_dir, "filter")
+    nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
     if execution.diagnostics.get("record_policy_stopped") and not raw_records:
         execution.diagnostics["filter_terms"] = filter_terms
         execution.diagnostics["raw_record_count"] = len(source_records)
@@ -1064,22 +1082,22 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
         execution.diagnostics["matched_record_count"] = 0
         execution.diagnostics["nonfilter_record_count"] = 0
         execution.diagnostics["filter_output_skipped"] = "duplicate_stopped_without_new_records"
+        protected_roots = [matched_root, *([nonfilter_root] if nonfilter_root is not None else [])]
+        _delete_unclassified_output_files(
+            execution.output_dir,
+            protected_roots=protected_roots,
+            candidate_files=raw_generated_files,
+        )
+        _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
         execution.records = []
         execution.downloaded_files = []
         execution.extracted_files = []
         return
-    raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
-    raw_generated_files.extend(_collect_record_files(source_records, "downloaded_files"))
-    raw_generated_files.extend(_collect_record_files(source_records, "extracted_files"))
-    raw_generated_files.extend(_collect_record_output_files(source_records))
     if duplicate_skipped:
         execution.diagnostics["same_run_duplicate_skipped_count"] = (
             int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + duplicate_skipped
         )
     matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
-    filter_enabled = bool(filter_terms)
-    matched_root = _result_category_root(execution.output_dir, "filter")
-    nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
 
     execution.diagnostics["filter_terms"] = filter_terms
     execution.diagnostics["raw_record_count"] = len(source_records)
@@ -1551,6 +1569,40 @@ def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
                 for key in duplicate_keys_for_record(record):
                     index.add(key)
     return index
+
+
+def _build_direct_workflow_record_policy(output_dir: Path, state: dict[str, Any]) -> RecordPolicy:
+    previous_duplicate_index = _build_existing_workflow_duplicate_index(output_dir)
+    same_run_seen: set[str] = set()
+    state["previous_duplicate_index_count"] = len(previous_duplicate_index)
+    state["same_run_duplicate_skipped_count"] = 0
+
+    def record_policy(record: dict[str, Any]) -> dict[str, Any]:
+        keys = duplicate_keys_for_record(record)
+        duplicate_key = next((key for key in keys if key in previous_duplicate_index), "")
+        if duplicate_key:
+            return {
+                "include": False,
+                "stop": True,
+                "reason": "duplicate_stopped",
+                "metadata": {"duplicate_key": duplicate_key, "stop_scope": "search_term"},
+            }
+
+        same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
+        if same_run_duplicate_key:
+            state["same_run_duplicate_skipped_count"] = int(state.get("same_run_duplicate_skipped_count") or 0) + 1
+            return {
+                "include": False,
+                "stop": False,
+                "reason": "same_run_duplicate_skipped",
+                "metadata": {"duplicate_key": same_run_duplicate_key},
+            }
+
+        for key in keys:
+            same_run_seen.add(key)
+        return {"include": True, "stop": False}
+
+    return record_policy
 
 
 def _run_parser_workflow(
