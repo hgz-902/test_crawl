@@ -174,26 +174,22 @@ class NaverNewsApiTests(unittest.TestCase):
             self.assertEqual(manifest, output_dir / "naver_news_api.json")
             self.assertEqual(payload["source_provider"], "naver_news_api")
             date_label = datetime.now(KST).strftime("%Y%m%d")
-            for file_path in payload["item_files"]:
-                self.assertTrue(str(file_path).startswith(f"items/{date_label}/item_"))
+            for index, file_path in enumerate(payload["item_files"], start=1):
+                self.assertRegex(
+                    str(file_path),
+                    rf"^items/{date_label}/NAVER_{date_label}_\d{{6}}_{index}\.json$",
+                )
                 loaded = json.loads((manifest.parent / file_path).read_text(encoding="utf-8"))
                 self.assertIn("post_id", loaded)
                 self.assertIn("item_index", loaded)
                 self.assertNotIn("detail_body", loaded)
 
-    def test_save_naver_news_api_items_reuses_stable_item_paths_without_daily_suffix(self) -> None:
+    def test_save_naver_news_api_items_uses_batch_timestamp_paths_without_daily_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "naver" / "002_SK"
-            items = [{"post_id": "1", "title": "A"}]
+            items = [{"post_id": "1", "title": "A"}, {"post_id": "2", "title": "B"}]
 
-            first = save_naver_news_api_items(
-                output_dir,
-                search_term="SK",
-                api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
-                final_url="https://openapi.naver.com/v1/search/news.json?query=SK",
-                items=items,
-            )
-            second = save_naver_news_api_items(
+            manifest = save_naver_news_api_items(
                 output_dir,
                 search_term="SK",
                 api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
@@ -201,12 +197,14 @@ class NaverNewsApiTests(unittest.TestCase):
                 items=items,
             )
 
-            self.assertEqual(first, second)
-            payload = json.loads(second.read_text(encoding="utf-8"))
-            self.assertEqual(len(payload["item_files"]), 1)
-            self.assertTrue((output_dir / payload["item_files"][0]).exists())
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["item_files"]), 2)
+            date_label = datetime.now(KST).strftime("%Y%m%d")
+            for index, file_path in enumerate(payload["item_files"], start=1):
+                self.assertRegex(str(file_path), rf"^items/{date_label}/NAVER_{date_label}_\d{{6}}_{index}\.json$")
+                self.assertTrue((output_dir / file_path).exists())
             date_dirs = [path for path in (output_dir / "items").iterdir() if path.is_dir()]
-            self.assertEqual([path.name for path in date_dirs], [datetime.now(KST).strftime("%Y%m%d")])
+            self.assertEqual([path.name for path in date_dirs], [date_label])
 
 
 if __name__ == "__main__":

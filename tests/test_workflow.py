@@ -1100,7 +1100,9 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["extracts"]["title"], "네이버 뉴스")
             self.assertEqual(Path(execution.extracted_files[0]).name, "naver_news_api.json")
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
-            self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+            record_output = Path(execution.records[0]["output_file"])
+            self.assertTrue(record_output.exists())
+            self.assertRegex(record_output.name, r"^NAVER_\d{8}_\d{6}_1\.json$")
 
     def test_parser_duplicate_stop_applies_to_current_search_term_only(self) -> None:
         config = {
@@ -1297,6 +1299,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             record_output = Path(execution.records[0]["output_file"])
             self.assertEqual(record_output.parent.parent.name, "items")
             self.assertRegex(record_output.parent.name, r"^\d{8}$")
+            self.assertRegex(record_output.name, r"^DAUM_\d{8}_\d{6}_1\.json$")
             self.assertTrue(record_output.exists())
             workflow_records = Path(config["output_dir"]) / "filter" / "workflow_records.json"
             snapshot = json.loads(workflow_records.read_text(encoding="utf-8"))
@@ -1304,6 +1307,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             snapshot_output = Path(snapshot["records"][0]["output_file"])
             self.assertEqual(snapshot_output.parent.parent.name, "items")
             self.assertRegex(snapshot_output.parent.name, r"^\d{8}$")
+            self.assertEqual(snapshot_output, record_output)
+            self.assertTrue(snapshot_output.exists())
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {
@@ -1365,6 +1370,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
             self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
             self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
+            self.assertRegex(Path(execution.records[1]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_2\.json$")
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1410,6 +1417,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
             self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
 
     def test_run_workflow_config_record_policy_stops_parser_after_kept_record(self) -> None:
         config = {

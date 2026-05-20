@@ -172,7 +172,8 @@ class DaumNewsApiTests(unittest.TestCase):
             self.assertEqual(payload["allowed_domains"], ["news.daum.net", "v.daum.net"])
             self.assertEqual(payload["items"][0]["title"], "A")
             self.assertEqual(len(payload["item_files"]), 1)
-            self.assertTrue(payload["item_files"][0].startswith(f"items/{datetime.now(KST).strftime('%Y%m%d')}/item_"))
+            date_label = datetime.now(KST).strftime("%Y%m%d")
+            self.assertRegex(payload["item_files"][0], rf"^items/{date_label}/DAUM_{date_label}_\d{{6}}_1\.json$")
             item_path = output_dir / payload["item_files"][0]
             self.assertTrue(item_path.exists())
             item_payload = json.loads(item_path.read_text(encoding="utf-8"))
@@ -180,30 +181,29 @@ class DaumNewsApiTests(unittest.TestCase):
             self.assertEqual(item_payload["search_term"], "SK")
             self.assertEqual(item_payload["item_index"], 1)
 
-    def test_save_daum_news_api_items_reuses_stable_item_paths(self) -> None:
+    def test_save_daum_news_api_items_uses_batch_timestamp_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "daum"
-            item = {"post_id": "https://v.daum.net/v/1", "title": "A", "detail_url": "https://v.daum.net/v/1"}
-            first = save_daum_news_api_items(
+            items = [
+                {"post_id": "https://v.daum.net/v/1", "title": "A", "detail_url": "https://v.daum.net/v/1"},
+                {"post_id": "https://v.daum.net/v/2", "title": "B", "detail_url": "https://v.daum.net/v/2"},
+            ]
+            manifest = save_daum_news_api_items(
                 output_dir,
                 search_term="SK",
                 api_url="https://dapi.kakao.com/v2/search/web?query=SK",
                 final_url="https://dapi.kakao.com/v2/search/web?query=SK",
-                items=[item],
-            )
-            second = save_daum_news_api_items(
-                output_dir,
-                search_term="SK",
-                api_url="https://dapi.kakao.com/v2/search/web?query=SK",
-                final_url="https://dapi.kakao.com/v2/search/web?query=SK",
-                items=[item],
+                items=items,
             )
 
-            self.assertEqual(first, second)
-            payload = json.loads(second.read_text(encoding="utf-8"))
-            self.assertEqual(len(payload["item_files"]), 1)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["item_files"]), 2)
+            date_label = datetime.now(KST).strftime("%Y%m%d")
+            for index, file_path in enumerate(payload["item_files"], start=1):
+                self.assertRegex(str(file_path), rf"^items/{date_label}/DAUM_{date_label}_\d{{6}}_{index}\.json$")
+                self.assertTrue((output_dir / file_path).exists())
             date_dirs = [path for path in (output_dir / "items").iterdir() if path.is_dir()]
-            self.assertEqual([path.name for path in date_dirs], [datetime.now(KST).strftime("%Y%m%d")])
+            self.assertEqual([path.name for path in date_dirs], [date_label])
 
 
 if __name__ == "__main__":

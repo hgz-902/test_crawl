@@ -5,7 +5,6 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-import hashlib
 import json
 import os
 import re
@@ -133,13 +132,13 @@ def save_daum_news_api_items(
     allowed_domains: tuple[str, ...] = DEFAULT_NEWS_DOMAINS,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    date_label = _korean_date_label()
+    date_label, time_label = _korean_timestamp_labels()
     items_dir = output_dir / "items" / date_label
     items_dir.mkdir(parents=True, exist_ok=True)
 
     item_files: list[str] = []
     for index, item in enumerate(items, start=1):
-        item_name = _stable_item_file_name(item)
+        item_name = _batch_item_file_name("DAUM", date_label, time_label, index)
         item_path = items_dir / item_name
         item_payload = dict(item)
         item_payload.setdefault("search_term", search_term)
@@ -168,14 +167,13 @@ def save_daum_news_api_items(
     return output_path
 
 
-def _stable_item_file_name(item: dict[str, Any]) -> str:
-    identity = _item_identity(item)
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-    return f"item_{digest}.json"
+def _batch_item_file_name(prefix: str, date_label: str, time_label: str, item_index: int) -> str:
+    return f"{prefix}_{date_label}_{time_label}_{item_index}.json"
 
 
-def _korean_date_label() -> str:
-    return datetime.now(KST).strftime("%Y%m%d")
+def _korean_timestamp_labels() -> tuple[str, str]:
+    now = datetime.now(KST)
+    return now.strftime("%Y%m%d"), now.strftime("%H%M%S")
 
 
 def _item_identity(item: dict[str, Any]) -> str:
