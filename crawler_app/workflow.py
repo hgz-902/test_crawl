@@ -1271,7 +1271,7 @@ def _save_filtered_parser_outputs(
             config,
             nonfilter_records,
             filter_terms=filter_terms,
-            file_name="parser_records.json",
+            file_name="workflow_records.json",
         )
         execution.diagnostics["nonfilter_records_file"] = str(nonfilter_snapshot)
 
@@ -1635,20 +1635,19 @@ def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
     index: set[str] = set()
     if not output_dir.exists():
         return index
-    for file_name in ("workflow_records.json", "parser_records.json"):
-        for path in output_dir.rglob(file_name):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+    for path in output_dir.rglob("workflow_records.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        records = payload.get("records") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
                 continue
-            records = payload.get("records") if isinstance(payload, dict) else []
-            if not isinstance(records, list):
-                continue
-            for record in records:
-                if not isinstance(record, dict):
-                    continue
-                for key in duplicate_keys_for_record(record):
-                    index.add(key)
+            for key in duplicate_keys_for_record(record):
+                index.add(key)
     return index
 
 
