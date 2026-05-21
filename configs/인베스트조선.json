@@ -1,6 +1,6 @@
 {
   "name": "인베스트조선",
-  "start_url": "https://www.investchosun.com/svc/news/list.html?catid=2",
+  "start_url": "https://www.investchosun.com/svc/news/list.html?catid=2&pn={search_term}",
   "output_dir": "outputs/investchosun",
   "timeout_ms": 60000,
   "renderer": "playwright",
@@ -9,13 +9,14 @@
   "notes": "인베스트조선은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 전체 기사 목록(catid=2) 1페이지의 최신 기사 목록을 수집한 뒤 필터 목록 키워드로 분리한다. 전체 기사 목록은 1페이지당 10개 기사만 노출되므로 loop_limit을 20으로 설정해도 실제 1페이지에서는 최대 10개만 수집된다.",
   "search_terms": [],
   "filter_terms": [
-    "프랑스"
+    "단독",
+    "제도"
   ],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//body[1]/div[@id=\"section\"]/section[1]/div[1]/div[1]/div[2]/div[2]/ul[1]/li[1]/div[1]/dl[1]/dt[1]/a[1]",
-      "xpath_2": "//body[1]/div[@id=\"section\"]/section[1]/div[1]/div[1]/div[2]/div[2]/ul[1]/li[2]/div[1]/dl[1]/dt[1]/a[1]",
+      "xpath": "//*[@id=\"section\"]/section/div/div[1]/div[2]/div[2]/ul/li[1]/div/dl/dt/a",
+      "xpath_2": "//*[@id=\"section\"]/section/div/div[1]/div[2]/div[2]/ul/li[2]/div/dl/dt/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 20,
@@ -25,7 +26,7 @@
     },
     {
       "name": "extract_title",
-      "xpath": "//div[contains(@class, 'art_title')]/div[contains(@class, 'title')]",
+      "xpath": "/html/body/div[3]/div[2]/div[1]/div[1]/div[1]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -33,7 +34,7 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//div[@id='article']",
+      "xpath": "//*[@id=\"article\"]/ul/li",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -41,5 +42,5 @@
     }
   ],
   "created_at": "2026-05-14T21:00:00+09:00",
-  "updated_at": "2026-05-20T17:54:02+09:00"
+  "updated_at": "2026-05-21T10:00:52+09:00"
 }
