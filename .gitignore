@@ -30,6 +30,8 @@ configs copy/
 $outDir/
 
 # Harness/session-local documents
+codex_app_agents.md
+docs/codex-app/
 DECISION_RULING.md
 RUN_CONTEXT.md
 TASK_CONTRACT.md
