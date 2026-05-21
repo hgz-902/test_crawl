@@ -20,7 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - dependency is declared, fallba
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
 from crawler_app.duplicate_keys import duplicate_key_for_record, duplicate_keys_for_record
 from crawler_app.runtime_maintenance import cleanup_runtime_files
-from crawler_app.workflow import load_workflow_config, run_workflow_config
+from crawler_app.workflow import _merge_workflow_record_snapshot_records, load_workflow_config, run_workflow_config
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -958,18 +958,7 @@ def _merge_records_by_duplicate_key(
     existing_records: list[dict[str, Any]],
     new_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    merged = [record for record in existing_records if isinstance(record, dict)]
-    seen: set[str] = {key for record in merged for key in duplicate_keys_for_record(record)}
-    for record in new_records:
-        if not isinstance(record, dict):
-            continue
-        keys = duplicate_keys_for_record(record)
-        if any(key in seen for key in keys):
-            continue
-        for key in keys:
-            seen.add(key)
-        merged.append(record)
-    return merged
+    return _merge_workflow_record_snapshot_records(existing_records, new_records)
 
 
 def _job_due_status(job_settings: dict[str, Any]) -> tuple[bool, dict[str, Any]]:

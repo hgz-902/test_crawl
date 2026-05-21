@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "Naver News Search API를 사용. 환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET가 필요하다. Action=parser, attr=naver로 실행한다. 검색어 목록의 각 검색어를 Naver API query={search_term}에 넣어 최신순으로 수집한다.",
   "search_terms": [
-    "프랑스"
+    "프랑스",
+    "독일"
   ],
   "filter_terms": [],
   "steps": [
@@ -20,5 +21,5 @@
     }
   ],
   "created_at": "2026-05-08T00:00:00+09:00",
-  "updated_at": "2026-05-20T17:57:40+09:00"
+  "updated_at": "2026-05-21T11:42:59+09:00"
 }

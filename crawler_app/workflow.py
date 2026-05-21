@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote_plus, unquote, urljoin, urlparse
@@ -53,6 +54,14 @@ BOARD_ITEM_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)\[(?P<index>\d+)\]$")
 BOARD_PATH_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)(?:\[(?P<index>\d+)\])?$")
 BOARD_TRAILING_NUMBER_SEGMENT_RE = re.compile(r"^(?P<prefix>.*?)(?P<index>\d+)(?P<suffix>[^0-9]*)$")
 ITEM_NUMBER_PLACEHOLDER = "{item_number}"
+PARSER_RECORD_DATE_FIELDS = (
+    ("extracts", "pubDate"),
+    ("extracts", "published_at"),
+    ("extracts", "date"),
+    ("published_at",),
+    ("created_at",),
+    ("crawled_at",),
+)
 
 
 @dataclass(slots=True)
@@ -1542,8 +1551,10 @@ def _merge_workflow_record_snapshot_records(
     existing_records: list[dict[str, Any]],
     new_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    merged = [record for record in existing_records if isinstance(record, dict)]
-    seen = {key for record in merged for key in duplicate_keys_for_record(record)}
+    existing = [record for record in existing_records if isinstance(record, dict)]
+    existing_keys = {key for record in existing for key in duplicate_keys_for_record(record)}
+    seen = set(existing_keys)
+    prepend_records: list[dict[str, Any]] = []
     for record in new_records:
         if not isinstance(record, dict):
             continue
@@ -1552,8 +1563,72 @@ def _merge_workflow_record_snapshot_records(
             continue
         for key in keys:
             seen.add(key)
-        merged.append(record)
-    return merged
+        prepend_records.append(record)
+    return _sort_parser_api_records_latest_first(prepend_records) + existing
+
+
+def _sort_parser_api_records_latest_first(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not records or not all(_is_parser_api_record(record) for record in records):
+        return records
+    indexed_records = [(index, record, _parser_record_datetime(record)) for index, record in enumerate(records)]
+    indexed_records.sort(
+        key=lambda item: (
+            0 if item[2] is not None else 1,
+            -(item[2].timestamp() if item[2] is not None else 0),
+            item[0],
+        )
+    )
+    return [record for _, record, _ in indexed_records]
+
+
+def _is_parser_api_record(record: dict[str, Any]) -> bool:
+    parser_candidates = [
+        record.get("parser_name"),
+        record.get("extracts", {}).get("parser_name") if isinstance(record.get("extracts"), dict) else "",
+        record.get("extracts", {}).get("source_provider") if isinstance(record.get("extracts"), dict) else "",
+        record.get("extracts", {}).get("source_api") if isinstance(record.get("extracts"), dict) else "",
+    ]
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            parser_candidates.append(step.get("attr"))
+    return any(str(candidate or "").casefold() in SUPPORTED_PARSER_ATTRS for candidate in parser_candidates)
+
+
+def _parser_record_datetime(record: dict[str, Any]) -> datetime | None:
+    for field_path in PARSER_RECORD_DATE_FIELDS:
+        value: Any = record
+        for key in field_path:
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(key)
+        parsed = _parse_record_datetime(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_record_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
 
 
 def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
