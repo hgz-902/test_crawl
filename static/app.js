@@ -572,10 +572,15 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  const confirmForm = event.target.closest("[data-confirm]");
-  if (confirmForm && !window.confirm(confirmForm.dataset.confirm)) {
+  const confirmTarget = (event.submitter && event.submitter.closest("[data-confirm]")) || event.target.closest("[data-confirm]");
+  if (confirmTarget && !window.confirm(confirmTarget.dataset.confirm)) {
     event.preventDefault();
     return;
+  }
+
+  if (event.target.id === "orchestration-form") {
+    guardOrchestrationSchedulerSubmit(event);
+    if (event.defaultPrevented) return;
   }
 
   if (event.target.id === "config-form") {
@@ -585,7 +590,84 @@ document.addEventListener("submit", (event) => {
     }
     document.getElementById("payload").value = JSON.stringify(buildPayload(event.target));
   }
+
+  showGlobalProgressOverlay(progressMessageForSubmit(event));
 });
+
+function showGlobalProgressOverlay(options = {}) {
+  const overlay = document.getElementById("global-progress-overlay");
+  if (!overlay) return;
+  const title = overlay.querySelector("[data-progress-title]");
+  const message = overlay.querySelector("[data-progress-message]");
+  if (title) title.textContent = options.title || "작업을 처리하는 중입니다";
+  if (message) message.textContent = options.message || "요청이 완료될 때까지 잠시 기다려 주세요.";
+  overlay.hidden = false;
+  document.body.classList.add("is-progress-active");
+}
+
+function progressMessageForSubmit(event) {
+  const form = event.target;
+  const submitter = event.submitter;
+  const hiddenAction = form.querySelector('input[name="action"]');
+  const action = submitter && submitter.name === "action" ? submitter.value : hiddenAction ? hiddenAction.value : "";
+  const buttonText = submitter ? submitter.textContent.trim() : "";
+  const targetAction = submitter && submitter.formAction ? submitter.formAction : form.action;
+  if (form.id === "orchestration-form") {
+    const messages = {
+      save: ["오케스트레이션 설정 저장 중", "입력한 설정을 JSON 상태 파일에 저장하고 있습니다."],
+      run: ["오케스트레이션 수동 실행 중", "선택한 크롤러를 실행하고 결과와 중복 기록을 정리하고 있습니다."],
+      sync: ["모니터링 시작 중", "설정을 저장하고 Windows Task Scheduler 작업을 동기화하고 있습니다."],
+      stop_monitoring: ["모니터링 종료 중", "이 프로젝트가 관리하는 스케줄러 작업을 종료하고 정리하고 있습니다."],
+    };
+    if (messages[action]) return { title: messages[action][0], message: messages[action][1] };
+  }
+  if (form.id === "config-form") {
+    if (targetAction && targetAction.includes("/preview")) {
+      return { title: "미리보기 실행 중", message: "XPath와 실행 단계 매칭 상태를 확인하고 있습니다." };
+    }
+    return { title: "크롤러 설정 저장 중", message: "현재 설정 내용을 저장하고 화면을 갱신하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/preview")) {
+    return { title: "미리보기 실행 중", message: "XPath와 실행 단계 매칭 상태를 확인하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/run")) {
+    return { title: "크롤링 실행 중", message: "외부 사이트 또는 API 응답을 수집하고 결과 파일을 저장하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/delete")) {
+    return { title: "삭제 처리 중", message: "선택한 항목을 삭제하고 목록을 갱신하고 있습니다." };
+  }
+  if (action === "delete_scheduler") {
+    return { title: "스케줄러 삭제 중", message: "선택한 Windows Task Scheduler 작업을 삭제하고 상태를 갱신하고 있습니다." };
+  }
+  return { title: buttonText ? `${buttonText} 처리 중` : "작업을 처리하는 중입니다", message: "요청이 완료될 때까지 잠시 기다려 주세요." };
+}
+
+function guardOrchestrationSchedulerSubmit(event) {
+  const form = event.target;
+  const submitter = event.submitter;
+  const action = submitter && submitter.name === "action" ? submitter.value : "";
+  if (action !== "sync" && action !== "stop_monitoring") return;
+  if (form.dataset.schedulerSubmitPending === "true") {
+    event.preventDefault();
+    return;
+  }
+  form.dataset.schedulerSubmitPending = "true";
+  if (submitter && submitter.name) {
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = submitter.name;
+    hidden.value = submitter.value;
+    hidden.dataset.schedulerSubmitAction = "true";
+    form.appendChild(hidden);
+  }
+  for (const button of form.querySelectorAll('button[name="action"][value="sync"], button[name="action"][value="stop_monitoring"]')) {
+    if (!button.dataset.originalText) button.dataset.originalText = button.textContent.trim();
+    if (button === submitter) button.textContent = action === "sync" ? "모니터링 시작 중..." : "모니터링 종료 중...";
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+    button.classList.add("is-pending");
+  }
+}
 
 renumberSteps();
 initOrchestrationTabs();

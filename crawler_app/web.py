@@ -54,6 +54,7 @@ ORCHESTRATION_STORE = OrchestrationStateStore()
 DISPLAY_TIMEZONE = timezone(timedelta(hours=9), "KST")
 ORCHESTRATION_FLASH_COOKIE = "crawler_orchestration_flash"
 ORCHESTRATION_FLASH_DIR = BASE_DIR / "orchestration_state" / "flash"
+ORCHESTRATION_SCHEDULER_LOCK = asyncio.Lock()
 
 app = FastAPI(title="Crawler Config Manager")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -173,53 +174,59 @@ async def run_orchestration_route(request: Request) -> Response:
 @app.post("/orchestration/schedulers/sync", response_class=HTMLResponse)
 async def sync_orchestration_scheduler_route(request: Request) -> Response:
     _assert_same_origin_post(request)
-    form = await request.form()
-    settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
-    try:
-        updated = _settings_from_form(form, jobs, settings, reset_next_run=True)
-        validate_windows_schedule_settings(updated, jobs)
-        saved = ORCHESTRATION_STORE.save_settings(updated)
-        _persist_job_schedule_state(saved, jobs)
-        scheduler_result = await asyncio.to_thread(sync_windows_scheduled_tasks, saved, jobs)
-        if scheduler_result.status == "synced":
-            message = f"모니터링을 시작했습니다. Windows Task Scheduler 작업을 재생성했습니다(생성 {len(scheduler_result.created)}개 / 삭제 {len(scheduler_result.deleted)}개)."
-        else:
-            message = f"Windows Task Scheduler 동기화를 건너뛰었습니다({scheduler_result.skipped_reason})."
-        error = None
-        status_code = 200
-    except Exception as exc:
-        message = None
-        error = f"모니터링 시작 실패: {exc}"
+    if ORCHESTRATION_SCHEDULER_LOCK.locked():
+        return _redirect_orchestration(message="모니터링 시작/종료 작업이 이미 처리 중입니다. 잠시 후 다시 확인해 주세요.")
+    async with ORCHESTRATION_SCHEDULER_LOCK:
+        form = await request.form()
+        settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
+        try:
+            updated = _settings_from_form(form, jobs, settings, reset_next_run=True)
+            validate_windows_schedule_settings(updated, jobs)
+            saved = ORCHESTRATION_STORE.save_settings(updated)
+            _persist_job_schedule_state(saved, jobs)
+            scheduler_result = await asyncio.to_thread(sync_windows_scheduled_tasks, saved, jobs)
+            if scheduler_result.status == "synced":
+                message = f"모니터링을 시작했습니다. Windows Task Scheduler 작업을 재생성했습니다(생성 {len(scheduler_result.created)}개 / 삭제 {len(scheduler_result.deleted)}개)."
+            else:
+                message = f"Windows Task Scheduler 동기화를 건너뛰었습니다({scheduler_result.skipped_reason})."
+            error = None
+            status_code = 200
+        except Exception as exc:
+            message = None
+            error = f"모니터링 시작 실패: {exc}"
     return _redirect_orchestration(message=message, error=error)
 
 
 @app.post("/orchestration/schedulers/stop", response_class=HTMLResponse)
 async def stop_orchestration_monitoring_route(request: Request) -> Response:
     _assert_same_origin_post(request)
-    settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
-    try:
-        result = await asyncio.to_thread(stop_managed_tasks_with_script, delete_tasks=True)
-        for job in jobs:
-            job_settings = settings.get("jobs", {}).get(job.job_id, {})
-            if isinstance(job_settings, dict):
-                ORCHESTRATION_STORE.save_job_state(
-                    job.job_id,
-                    {
-                        "last_run_at": job_settings.get("last_run_at"),
-                        "next_run_at": "",
-                        "last_status": job_settings.get("last_status"),
-                    },
-                )
-        if result.status == "skipped":
-            message = f"모니터링 종료를 건너뛰었습니다({result.skipped_reason})."
-        elif result.errors:
-            message = None
-            error = "모니터링 종료 중 일부 작업에서 오류가 발생했습니다: " + "; ".join(result.errors)
-            return _redirect_orchestration(error=error)
-        else:
-            message = f"모니터링을 종료했습니다. 종료 {len(result.ended)}개 / 삭제 {len(result.deleted)}개."
-    except Exception as exc:
-        return _redirect_orchestration(error=f"모니터링 종료 실패: {exc}")
+    if ORCHESTRATION_SCHEDULER_LOCK.locked():
+        return _redirect_orchestration(message="모니터링 시작/종료 작업이 이미 처리 중입니다. 잠시 후 다시 확인해 주세요.")
+    async with ORCHESTRATION_SCHEDULER_LOCK:
+        settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
+        try:
+            result = await asyncio.to_thread(stop_managed_tasks_with_script, delete_tasks=True)
+            for job in jobs:
+                job_settings = settings.get("jobs", {}).get(job.job_id, {})
+                if isinstance(job_settings, dict):
+                    ORCHESTRATION_STORE.save_job_state(
+                        job.job_id,
+                        {
+                            "last_run_at": job_settings.get("last_run_at"),
+                            "next_run_at": "",
+                            "last_status": job_settings.get("last_status"),
+                        },
+                    )
+            if result.status == "skipped":
+                message = f"모니터링 종료를 건너뛰었습니다({result.skipped_reason})."
+            elif result.errors:
+                message = None
+                error = "모니터링 종료 중 일부 작업에서 오류가 발생했습니다: " + "; ".join(result.errors)
+                return _redirect_orchestration(error=error)
+            else:
+                message = f"모니터링을 종료했습니다. 종료 {len(result.ended)}개 / 삭제 {len(result.deleted)}개."
+        except Exception as exc:
+            return _redirect_orchestration(error=f"모니터링 종료 실패: {exc}")
     return _redirect_orchestration(message=message)
 
 
@@ -233,7 +240,9 @@ async def delete_orchestration_scheduler_route(request: Request) -> Response:
     message = None
     error = None
     try:
-        result = await asyncio.to_thread(delete_managed_task, task_name)
+        delete_results = []
+        for candidate in _task_names_for_delete(task_name, job_id):
+            delete_results.append(await asyncio.to_thread(delete_managed_task, candidate))
         if job_id and job_id in settings.get("jobs", {}):
             settings["jobs"][job_id]["enabled"] = False
             settings["jobs"][job_id]["next_run_at"] = ""
@@ -246,7 +255,7 @@ async def delete_orchestration_scheduler_route(request: Request) -> Response:
                     "last_status": settings["jobs"][job_id].get("last_status"),
                 },
             )
-        if result.status == "deleted":
+        if any(result.status == "deleted" for result in delete_results):
             message = "선택한 스케줄러를 삭제했습니다."
         else:
             message = None
@@ -599,17 +608,36 @@ def _scheduler_rows(
     details_by_task = {detail.task_name: detail for detail in task_details}
     rows: list[dict[str, Any]] = []
     seen_tasks: set[str] = set()
+    entries_by_job: dict[str, list[dict[str, Any]]] = {}
+    ungrouped_entries: list[dict[str, Any]] = []
     for entry in registry_entries:
-        job_id = str(entry.get("job_id") or "")
+        job_id = str(entry.get("job_id") or "").strip()
+        if job_id:
+            entries_by_job.setdefault(job_id, []).append(entry)
+        else:
+            ungrouped_entries.append(entry)
+
+    for job_id, grouped_entries in entries_by_job.items():
+        entry = grouped_entries[0]
         job = jobs_by_id.get(job_id)
         job_settings = settings.get("jobs", {}).get(job_id, {}) if job_id else {}
-        task_name = str(entry.get("task_name") or managed_task_name(job_id))
-        detail = details_by_task.get(task_name)
+        task_names = [str(candidate.get("task_name") or "").strip() for candidate in grouped_entries]
+        task_names = [candidate for candidate in task_names if candidate]
+        if not task_names:
+            task_names = [managed_task_name(job_id)]
+        task_details_for_job = [details_by_task[task_name] for task_name in task_names if task_name in details_by_task]
+        nearest_next_run = _nearest_scheduler_time([detail.next_run_time for detail in task_details_for_job], prefer_future=True)
+        latest_last_run = _nearest_scheduler_time([detail.last_run_time for detail in task_details_for_job], prefer_future=False)
+        representative_detail = _representative_detail(task_details_for_job, latest_last_run)
+        representative_last_result = representative_detail.last_result if representative_detail is not None else ""
         interval = normalize_interval(job_settings.get("interval"))
-        seen_tasks.add(task_name)
+        seen_tasks.update(task_names)
         rows.append(
             {
-                "task_name": task_name,
+                "task_name": managed_task_name(job_id),
+                "task_names": task_names,
+                "task_count": len(task_names),
+                "task_label": managed_task_name(job_id),
                 "job_id": job_id,
                 "config_name": job.config_name if job is not None else str(entry.get("config_name") or "(설정 파일 없음)"),
                 "output_dir": job.output_dir if job is not None else str(entry.get("output_dir") or ""),
@@ -620,18 +648,54 @@ def _scheduler_rows(
                 "enabled": bool(job_settings.get("enabled")) if isinstance(job_settings, dict) else False,
                 "registered_at": str(entry.get("registered_at") or ""),
                 "registered_at_display": _format_display_time(entry.get("registered_at")),
+                "scheduler_status": _summarize_scheduler_status(task_details_for_job),
+                "scheduler_last_run_at": latest_last_run,
+                "scheduler_last_run_at_display": _format_display_time(latest_last_run),
+                "scheduler_next_run_at": nearest_next_run,
+                "scheduler_next_run_at_display": _format_display_time(nearest_next_run),
+                "scheduler_last_result": representative_last_result,
+                "task_action_path": _summarize_task_action_path([detail.task_to_run for detail in task_details_for_job]),
+                "app_last_run_at": str(job_settings.get("last_run_at") or "") if isinstance(job_settings, dict) else "",
+                "app_last_run_at_display": _format_display_time(job_settings.get("last_run_at") if isinstance(job_settings, dict) else ""),
+                "app_last_status": str(job_settings.get("last_status") or "") if isinstance(job_settings, dict) else "",
+                "allow_email_send": bool(entry.get("allow_email_send", settings.get("allow_email_send"))),
+                "scheduler_last_result_display": _format_scheduler_last_result(representative_last_result),
+            }
+        )
+    for entry in ungrouped_entries:
+        task_name = str(entry.get("task_name") or "").strip()
+        if not task_name:
+            continue
+        detail = details_by_task.get(task_name)
+        seen_tasks.add(task_name)
+        rows.append(
+            {
+                "task_name": task_name,
+                "task_names": [task_name],
+                "task_count": 1,
+                "task_label": task_name,
+                "job_id": "",
+                "config_name": str(entry.get("config_name") or "(설정 파일 없음)"),
+                "output_dir": str(entry.get("output_dir") or ""),
+                "search_terms_count": int(entry.get("search_terms_count") or 0),
+                "filter_terms_count": int(entry.get("filter_terms_count") or 0),
+                "cron": str(entry.get("cron") or ""),
+                "interval": normalize_interval(entry.get("interval")),
+                "enabled": False,
+                "registered_at": str(entry.get("registered_at") or ""),
+                "registered_at_display": _format_display_time(entry.get("registered_at")),
                 "scheduler_status": detail.status if detail is not None else "등록 기록만 있음",
                 "scheduler_last_run_at": detail.last_run_time if detail is not None else "",
                 "scheduler_last_run_at_display": _format_display_time(detail.last_run_time) if detail is not None else "",
                 "scheduler_next_run_at": detail.next_run_time if detail is not None else "",
                 "scheduler_next_run_at_display": _format_display_time(detail.next_run_time) if detail is not None else "",
                 "scheduler_last_result": detail.last_result if detail is not None else "",
-                "task_action_path": detail.task_to_run if detail is not None else "",
-                "app_last_run_at": str(job_settings.get("last_run_at") or "") if isinstance(job_settings, dict) else "",
-                "app_last_run_at_display": _format_display_time(job_settings.get("last_run_at") if isinstance(job_settings, dict) else ""),
-                "app_last_status": str(job_settings.get("last_status") or "") if isinstance(job_settings, dict) else "",
-                "allow_email_send": bool(entry.get("allow_email_send", settings.get("allow_email_send"))),
                 "scheduler_last_result_display": _format_scheduler_last_result(detail.last_result if detail is not None else ""),
+                "task_action_path": detail.task_to_run if detail is not None else "",
+                "app_last_run_at": "",
+                "app_last_run_at_display": "",
+                "app_last_status": "",
+                "allow_email_send": bool(entry.get("allow_email_send", settings.get("allow_email_send"))),
             }
         )
     for detail in task_details:
@@ -640,6 +704,9 @@ def _scheduler_rows(
         rows.append(
             {
                 "task_name": detail.task_name,
+                "task_names": [detail.task_name],
+                "task_count": 1,
+                "task_label": detail.task_name,
                 "job_id": "",
                 "config_name": "(등록 기록 없음)",
                 "output_dir": "",
@@ -665,6 +732,66 @@ def _scheduler_rows(
             }
         )
     return rows
+
+
+def _task_names_for_delete(task_name: str, job_id: str) -> list[str]:
+    if job_id:
+        matching = [
+            str(entry.get("task_name") or "").strip()
+            for entry in load_scheduler_registry()
+            if str(entry.get("job_id") or "").strip() == job_id
+        ]
+        matching = [candidate for candidate in matching if candidate]
+        if matching:
+            return matching
+    normalized = str(task_name or "").strip()
+    return [normalized] if normalized else []
+
+
+def _nearest_scheduler_time(values: list[Any], *, prefer_future: bool) -> str:
+    parsed_values: list[tuple[datetime, str]] = []
+    for value in values:
+        parsed = _parse_display_datetime(value)
+        if parsed is not None:
+            parsed_values.append((parsed, str(value)))
+    if not parsed_values:
+        return ""
+    if prefer_future:
+        now = datetime.now(timezone.utc)
+        future_values = [(parsed, raw) for parsed, raw in parsed_values if parsed >= now]
+        candidates = future_values or parsed_values
+        return min(candidates, key=lambda item: item[0])[1]
+    return max(parsed_values, key=lambda item: item[0])[1]
+
+
+def _representative_detail(details: list[Any], latest_last_run: str) -> Any | None:
+    if not details:
+        return None
+    if latest_last_run:
+        for detail in details:
+            if str(detail.last_run_time or "") == latest_last_run:
+                return detail
+    return details[0]
+
+
+def _summarize_scheduler_status(details: list[Any]) -> str:
+    statuses = [str(detail.status or "").strip() for detail in details if str(detail.status or "").strip()]
+    if not statuses:
+        return "등록 기록만 있음"
+    unique_statuses = sorted(set(statuses))
+    if len(unique_statuses) == 1:
+        return unique_statuses[0]
+    return "혼합 상태"
+
+
+def _summarize_task_action_path(paths: list[Any]) -> str:
+    cleaned = [str(path or "").strip() for path in paths if str(path or "").strip()]
+    if not cleaned:
+        return ""
+    unique_paths = sorted(set(cleaned))
+    if len(unique_paths) == 1:
+        return unique_paths[0]
+    return f"여러 실행 경로({len(unique_paths)}개)"
 
 
 def _saved_schedule_rows(settings: dict[str, Any], jobs: list[Any]) -> list[dict[str, Any]]:
@@ -719,6 +846,22 @@ def _format_display_time(value: Any) -> str:
     if parsed.year <= 1900:
         return ""
     return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_display_datetime(value: Any) -> datetime | None:
+    if not value or _is_scheduler_empty_time(value):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        parsed = _parse_scheduler_time(value)
+        if parsed is None:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=DISPLAY_TIMEZONE)
+    if parsed.year <= 1900:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _is_scheduler_empty_time(value: Any) -> bool:
@@ -808,4 +951,3 @@ def _assert_same_origin_post(request: Request) -> None:
     request_host = request.url.netloc.lower()
     if parsed.netloc.lower() != request_host:
         raise HTTPException(status_code=403, detail="Cross-origin orchestration posts are not allowed.")
-

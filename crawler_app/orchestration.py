@@ -20,7 +20,12 @@ except ModuleNotFoundError:  # pragma: no cover - dependency is declared, fallba
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
 from crawler_app.duplicate_keys import duplicate_key_for_record, duplicate_keys_for_record
 from crawler_app.runtime_maintenance import cleanup_runtime_files
-from crawler_app.workflow import _merge_workflow_record_snapshot_records, load_workflow_config, run_workflow_config
+from crawler_app.workflow import (
+    _limit_workflow_record_snapshot_lines,
+    _merge_workflow_record_snapshot_records,
+    load_workflow_config,
+    run_workflow_config,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -281,6 +286,23 @@ def next_cron_run(cron: Any, *, after: datetime | None = None) -> datetime:
     raise ValueError(f"Could not resolve next run time within one year for cron expression: {expression}")
 
 
+def cron_matches_datetime(cron: Any, candidate: datetime | None = None) -> bool:
+    expression = normalize_cron_expression(cron)
+    minute_field, hour_field, day_field, month_field, weekday_field = expression.split()
+    value = candidate or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    value = value.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    weekday = (value.weekday() + 1) % 7
+    return (
+        _cron_field_matches(minute_field, value.minute)
+        and _cron_field_matches(hour_field, value.hour)
+        and _cron_field_matches(day_field, value.day)
+        and _cron_field_matches(month_field, value.month)
+        and (_cron_field_matches(weekday_field, weekday) or (weekday == 0 and _cron_field_matches(weekday_field, 7)))
+    )
+
+
 def _legacy_interval_to_cron(interval: Any) -> str:
     normalized = normalize_interval(interval)
     value = int(normalized["value"])
@@ -300,6 +322,19 @@ def _validate_cron_field(field: str, minimum: int, maximum: int, label: str) -> 
             continue
         if part.startswith("*/"):
             _validate_cron_number(part[2:], 1, maximum, label)
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            start_number = _weekday_name_to_number(start) if label == "weekday" else None
+            end_number = _weekday_name_to_number(end) if label == "weekday" else None
+            if label == "weekday" and start_number is not None and end_number is not None:
+                if start_number > end_number:
+                    raise ValueError(f"Invalid {label} cron range: {part!r}")
+                continue
+            _validate_cron_number(start, minimum, maximum, label)
+            _validate_cron_number(end, minimum, maximum, label)
+            if int(start) > int(end):
+                raise ValueError(f"Invalid {label} cron range: {part!r}")
             continue
         if label == "weekday" and _weekday_name_to_number(part) is not None:
             continue
@@ -327,6 +362,17 @@ def _cron_field_matches(field: str, value: int) -> bool:
         weekday_number = _weekday_name_to_number(part)
         if weekday_number is not None:
             if weekday_number == value:
+                return True
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            start_number = _weekday_name_to_number(start)
+            end_number = _weekday_name_to_number(end)
+            if start_number is not None and end_number is not None:
+                if start_number <= value <= end_number:
+                    return True
+                continue
+            if int(start) <= value <= int(end):
                 return True
             continue
         if int(part) == value:
@@ -1079,6 +1125,8 @@ def _read_json(path: Path, *, default: Any) -> Any:
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.tmp")
+    if path.name == "workflow_records.json" and isinstance(payload, dict):
+        payload = _limit_workflow_record_snapshot_lines(payload)
     temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temp_path.replace(path)
 

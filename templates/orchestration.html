@@ -172,7 +172,12 @@
       <tbody>
         {% for row in scheduler_rows %}
         <tr data-scheduler-task="{{ row.task_name }}">
-          <td class="url">{{ row.task_name }}</td>
+          <td class="url">
+            {{ row.task_label or row.task_name }}
+            {% if row.task_count and row.task_count > 1 %}
+            <div class="muted-text">{{ row.task_count }}개 Windows 작업 묶음</div>
+            {% endif %}
+          </td>
           <td class="url">{{ row.job_id or "-" }}</td>
           <td>
             <strong>{{ row.config_name }}</strong>

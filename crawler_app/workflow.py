@@ -44,6 +44,7 @@ SUPPORTED_WAIT_STATES = {"attached", "visible", "hidden", "detached"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
+MAX_WORKFLOW_RECORD_LINES = 20_000
 BOARD_CONTAINER_CHILD_XPATHS = {
     "ol": ("./li",),
     "tbody": ("./tr",),
@@ -1533,8 +1534,44 @@ def _save_workflow_record_snapshot(
         "item_count": len(records),
         "records": records,
     }
+    if file_name == "workflow_records.json":
+        payload = _limit_workflow_record_snapshot_lines(payload)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _limit_workflow_record_snapshot_lines(payload: dict[str, Any], max_lines: int = MAX_WORKFLOW_RECORD_LINES) -> dict[str, Any]:
+    records = payload.get("records")
+    if not isinstance(records, list) or max_lines <= 0:
+        return payload
+    if _workflow_record_snapshot_line_count(payload) <= max_lines:
+        payload["item_count"] = len(records)
+        return payload
+
+    low = 0
+    high = len(records)
+    best = 0
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = dict(payload)
+        candidate_records = records[:mid]
+        candidate["records"] = candidate_records
+        candidate["item_count"] = len(candidate_records)
+        if _workflow_record_snapshot_line_count(candidate) <= max_lines:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    limited_payload = dict(payload)
+    limited_records = records[:best]
+    limited_payload["records"] = limited_records
+    limited_payload["item_count"] = len(limited_records)
+    return limited_payload
+
+
+def _workflow_record_snapshot_line_count(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, indent=2).splitlines())
 
 
 def _read_existing_workflow_record_snapshot(path: Path) -> dict[str, Any]:

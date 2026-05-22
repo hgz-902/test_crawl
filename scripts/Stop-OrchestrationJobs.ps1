@@ -21,6 +21,16 @@ function Get-ProjectNamespace {
   }
 }
 
+function Test-ScheduledTaskNotFoundError {
+  param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+  $message = [string]$ErrorRecord.Exception.Message
+  $fullyQualifiedId = [string]$ErrorRecord.FullyQualifiedErrorId
+  return (
+    $fullyQualifiedId -like "*NotFound*" -or
+    $message -match "찾지 못|찾을 수|not found|cannot find|No MSFT_ScheduledTask|ObjectNotFound"
+  )
+}
+
 $namespace = Get-ProjectNamespace -Root $ProjectRoot
 $taskPath = "\CrawlerOrchestration\$namespace\"
 $launcherDir = Join-Path $env:LOCALAPPDATA "CrawlerOrchestration\$namespace"
@@ -52,8 +62,18 @@ foreach ($task in $tasks) {
   }
 
   if ($DeleteTasks -and $PSCmdlet.ShouldProcess($fullName, "Delete scheduled task")) {
-    Unregister-ScheduledTask -TaskPath $task.TaskPath -TaskName $task.TaskName -Confirm:$false
-    Write-Host "Deleted $fullName"
+    try {
+      Unregister-ScheduledTask -TaskPath $task.TaskPath -TaskName $task.TaskName -Confirm:$false -ErrorAction Stop
+      Write-Host "Deleted $fullName"
+    }
+    catch {
+      if (Test-ScheduledTaskNotFoundError -ErrorRecord $_) {
+        Write-Host "Deleted $fullName (already missing)"
+      }
+      else {
+        throw
+      }
+    }
   }
 }
 

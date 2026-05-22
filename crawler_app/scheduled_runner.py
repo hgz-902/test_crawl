@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 
-from crawler_app.orchestration import OrchestrationStateStore, batch_to_dict, run_batch
+from crawler_app.orchestration import OrchestrationStateStore, batch_to_dict, cron_matches_datetime, run_batch
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run saved orchestration jobs from Windows Task Scheduler.")
     parser.add_argument("--job-id", action="append", dest="job_ids")
     parser.add_argument("--allow-email-send", action="store_true")
+    parser.add_argument("--cron-gate", action="store_true", help="Skip selected jobs unless their saved cron matches the current minute.")
     return parser
 
 
@@ -27,6 +29,13 @@ def main() -> int:
         selected = [job_id for job_id in args.job_ids if job_id in enabled_set]
     else:
         selected = enabled_job_ids
+    if args.cron_gate:
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        selected = [
+            job_id
+            for job_id in selected
+            if cron_matches_datetime((settings.get("jobs") or {}).get(job_id, {}).get("cron") or "", now)
+        ]
     print(
         "SCHEDULED_RUN_START "
         + json.dumps(
@@ -34,10 +43,17 @@ def main() -> int:
                 "requested_job_ids": args.job_ids or [],
                 "selected_job_ids": selected,
                 "allow_email_send": bool(settings.get("allow_email_send", False)),
+                "cron_gate": bool(args.cron_gate),
             },
             ensure_ascii=False,
         )
     )
+    if args.cron_gate and not selected:
+        print(
+            "SCHEDULED_RUN_SKIPPED "
+            + json.dumps({"reason": "cron_gate_not_due", "requested_job_ids": args.job_ids or []}, ensure_ascii=False)
+        )
+        return 0
     batch = run_batch(
         selected,
         store=store,

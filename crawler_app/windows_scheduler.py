@@ -11,6 +11,7 @@ import json
 import locale
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 
 from crawler_app.orchestration import APP_ROOT, RegisteredJob, normalize_cron_expression, normalize_interval
 
@@ -18,6 +19,7 @@ from crawler_app.orchestration import APP_ROOT, RegisteredJob, normalize_cron_ex
 PROJECT_NAMESPACE = hashlib.sha1(str(APP_ROOT.resolve()).casefold().encode("utf-8")).hexdigest()[:12]
 TASK_FOLDER = rf"\CrawlerOrchestration\{PROJECT_NAMESPACE}"
 TASK_PREFIX = "crawler_"
+MAX_SPLIT_TASKS_PER_JOB = 48
 RUNNER_SCRIPT = APP_ROOT / "scripts" / "Run-OrchestrationJob.ps1"
 STOP_SCRIPT = APP_ROOT / "scripts" / "Stop-OrchestrationJobs.ps1"
 DEFAULT_LAUNCHER_DIR = Path(os.environ.get("LOCALAPPDATA") or APP_ROOT / "runtime") / "CrawlerOrchestration" / PROJECT_NAMESPACE
@@ -68,6 +70,15 @@ class SchedulerStopResult:
     skipped_reason: str = ""
 
 
+@dataclass(slots=True)
+class SchedulerTaskPlan:
+    task_name: str
+    schedule_args: list[str]
+    launcher_path: Path | None = None
+    strategy: str = "single_schtasks"
+    variant: str = ""
+
+
 CommandRunner = Callable[[list[str]], SchedulerCommandResult]
 
 
@@ -103,28 +114,29 @@ def sync_windows_scheduled_tasks(
         job_settings = job_settings_by_id.get(job.job_id)
         if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
             continue
-        schedule_args = _schedule_args_from_job_settings(job_settings)
-        launcher_path = write_task_launcher(
-            project_root,
-            job.job_id,
-            launcher_dir=launcher_dir,
-            allow_email_send=bool(settings.get("allow_email_send", False)),
-        )
-        task_command = build_task_action(launcher_path)
-        _checked_run(
-            runner,
-            [
-                "schtasks.exe",
-                "/Create",
-                "/F",
-                "/TN",
-                managed_task_name(job.job_id),
-                "/TR",
-                task_command,
-                *schedule_args,
-            ],
-        )
-        created.append(managed_task_name(job.job_id))
+        for plan in _schedule_task_plans_from_job_settings(job.job_id, job_settings):
+            launcher_path = write_task_launcher(
+                project_root,
+                job.job_id,
+                launcher_dir=launcher_dir,
+                allow_email_send=bool(settings.get("allow_email_send", False)),
+                task_name=plan.task_name,
+            )
+            task_command = build_task_action(launcher_path)
+            _checked_run(
+                runner,
+                [
+                    "schtasks.exe",
+                    "/Create",
+                    "/F",
+                    "/TN",
+                    plan.task_name,
+                    "/TR",
+                    task_command,
+                    *plan.schedule_args,
+                ],
+            )
+            created.append(plan.task_name)
 
     write_scheduler_registry(settings, jobs, registry_path=registry_path)
     return SchedulerSyncResult(status="synced", deleted=deleted, created=created)
@@ -138,7 +150,7 @@ def validate_windows_schedule_settings(settings: dict[str, Any], jobs: Iterable[
         if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
             continue
         try:
-            _schedule_args_from_job_settings(job_settings)
+            _schedule_task_plans_from_job_settings(job.job_id, job_settings)
         except ValueError as exc:
             raise ValueError(f"{job.config_name} cron 설정을 Windows Task Scheduler로 변환할 수 없습니다: {exc}") from exc
 
@@ -412,21 +424,24 @@ def write_scheduler_registry(
         job_settings = job_settings_by_id.get(job.job_id)
         if not isinstance(job_settings, dict) or not job_settings.get("enabled"):
             continue
-        tasks.append(
-            {
-                "task_name": managed_task_name(job.job_id),
-                "job_id": job.job_id,
-                "config_name": job.config_name,
-                "config_path": job.config_path,
-                "output_dir": job.output_dir,
-                "search_terms_count": len(job.search_terms),
-                "filter_terms_count": len(job.filter_terms),
-                "interval": normalize_interval(job_settings.get("interval")),
-                "cron": normalize_cron_expression(job_settings.get("cron") or ""),
-                "allow_email_send": allow_email_send,
-                "registered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            }
-        )
+        for plan in _schedule_task_plans_from_job_settings(job.job_id, job_settings):
+            tasks.append(
+                {
+                    "task_name": plan.task_name,
+                    "job_id": job.job_id,
+                    "config_name": job.config_name,
+                    "config_path": job.config_path,
+                    "output_dir": job.output_dir,
+                    "search_terms_count": len(job.search_terms),
+                    "filter_terms_count": len(job.filter_terms),
+                    "interval": normalize_interval(job_settings.get("interval")),
+                    "cron": normalize_cron_expression(job_settings.get("cron") or ""),
+                    "schedule_strategy": plan.strategy,
+                    "task_variant": plan.variant,
+                    "allow_email_send": allow_email_send,
+                    "registered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+            )
     _write_scheduler_registry(tasks, registry_path=registry_path)
     return tasks
 
@@ -453,9 +468,16 @@ def _write_scheduler_registry(tasks: list[dict[str, Any]], *, registry_path: str
     temp_path.replace(path)
 
 
-def managed_task_name(job_id: str) -> str:
+def managed_task_name(job_id: str, variant: str = "") -> str:
     digest = hashlib.sha1(job_id.encode("utf-8")).hexdigest()[:12]
-    return f"{TASK_FOLDER}\\{TASK_PREFIX}{digest}"
+    suffix = f"_{safe_task_suffix(variant)}" if variant else ""
+    return f"{TASK_FOLDER}\\{TASK_PREFIX}{digest}{suffix}"
+
+
+def safe_task_suffix(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or "").strip())
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    return cleaned[:24] or "variant"
 
 
 def write_task_launcher(
@@ -464,21 +486,24 @@ def write_task_launcher(
     *,
     launcher_dir: str | Path = DEFAULT_LAUNCHER_DIR,
     allow_email_send: bool = False,
+    task_name: str = "",
+    cron_gate: bool = False,
 ) -> Path:
     root = str(Path(project_root).resolve())
     script = str(RUNNER_SCRIPT.resolve())
     launcher_root = Path(launcher_dir)
     launcher_root.mkdir(parents=True, exist_ok=True)
-    launcher_name = Path(managed_task_name(job_id)).name if job_id else f"{TASK_PREFIX}batch"
+    launcher_name = Path(task_name or managed_task_name(job_id)).name if job_id else f"{TASK_PREFIX}batch"
     launcher_path = launcher_root / f"{launcher_name}.ps1"
     allow_email_arg = " -AllowEmailSend" if allow_email_send else ""
     job_arg = f" -JobId {_ps_quote(job_id)}" if job_id else ""
+    cron_gate_arg = " -CronGate" if cron_gate else ""
     launcher_path.write_text(
         "\n".join(
             [
                 '$ErrorActionPreference = "Stop"',
                 f"Set-Location -LiteralPath {_ps_quote(root)}",
-                f"& {_ps_quote(script)} -ProjectRoot {_ps_quote(root)}{job_arg}{allow_email_arg}",
+                f"& {_ps_quote(script)} -ProjectRoot {_ps_quote(root)}{job_arg}{allow_email_arg}{cron_gate_arg}",
                 "exit $LASTEXITCODE",
                 "",
             ]
@@ -538,10 +563,44 @@ def _schedule_args_from_job_settings(job_settings: dict[str, Any]) -> list[str]:
     return _schedule_args(job_settings.get("interval"))
 
 
+def _schedule_task_plans_from_job_settings(job_id: str, job_settings: dict[str, Any]) -> list[SchedulerTaskPlan]:
+    cron_expr = str(job_settings.get("cron") or "").strip()
+    if not cron_expr:
+        return [SchedulerTaskPlan(task_name=managed_task_name(job_id), schedule_args=_schedule_args(job_settings.get("interval")))]
+    plans = cron_to_schtasks_task_plans(cron_expr, job_id=job_id)
+    if plans:
+        return plans
+    return [SchedulerTaskPlan(task_name=managed_task_name(job_id), schedule_args=cron_to_schtasks_args(cron_expr))]
+
+
+def cron_to_schtasks_task_plans(cron_expr: str, *, job_id: str) -> list[SchedulerTaskPlan]:
+    """Return one or more concrete schtasks plans for a supported cron expression."""
+    expression = normalize_cron_expression(cron_expr)
+    try:
+        return [
+            SchedulerTaskPlan(
+                task_name=managed_task_name(job_id),
+                schedule_args=cron_to_schtasks_args(expression),
+                strategy="single_schtasks",
+            )
+        ]
+    except ValueError as original_error:
+        split = _split_cron_to_single_schtasks_expressions(expression)
+        if not split:
+            raise original_error
+        return [
+            SchedulerTaskPlan(
+                task_name=managed_task_name(job_id, variant=variant),
+                schedule_args=cron_to_schtasks_args(split_expr),
+                strategy="split_schtasks",
+                variant=variant,
+            )
+            for variant, split_expr in split
+        ]
+
+
 def cron_to_schtasks_args(cron_expr: str) -> list[str]:
-    parts = [part.strip() for part in str(cron_expr or "").split() if part.strip()]
-    if len(parts) != 5:
-        raise ValueError("cron must have 5 fields like '*/5 * * * *' or '0 3 * * *'.")
+    parts = _cron_parts(cron_expr)
     minute, hour, day_of_month, month, day_of_week = parts
     if month != "*":
         raise ValueError("month field is not supported. Use '*' for month.")
@@ -637,6 +696,21 @@ def _parse_weekdays(value: str) -> list[str]:
     }
     weekdays: list[str] = []
     for token in [item.strip().upper() for item in value.split(",") if item.strip()]:
+        if "-" in token:
+            start, end = token.split("-", 1)
+            start_mapped = mapping.get(start)
+            end_mapped = mapping.get(end)
+            if start_mapped is None or end_mapped is None:
+                raise ValueError("day-of-week field must be 0-7 or SUN..SAT (comma separated).")
+            order = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+            start_index = order.index(start_mapped)
+            end_index = order.index(end_mapped)
+            if start_index > end_index:
+                raise ValueError("day-of-week ranges cannot wrap around the week.")
+            for mapped in order[start_index : end_index + 1]:
+                if mapped not in weekdays:
+                    weekdays.append(mapped)
+            continue
         mapped = mapping.get(token)
         if mapped is None:
             raise ValueError("day-of-week field must be 0-7 or SUN..SAT (comma separated).")
@@ -645,6 +719,260 @@ def _parse_weekdays(value: str) -> list[str]:
     if not weekdays:
         raise ValueError("day-of-week field is empty.")
     return weekdays
+
+
+def _cron_parts(cron_expr: str) -> list[str]:
+    parts = [part.strip() for part in str(cron_expr or "").split() if part.strip()]
+    if len(parts) != 5:
+        raise ValueError("cron must have 5 fields like '*/5 * * * *' or '0 3 * * *'.")
+    return parts
+
+
+def _split_cron_to_single_schtasks_expressions(cron_expr: str) -> list[tuple[str, str]]:
+    minute, hour, day_of_month, month, day_of_week = _cron_parts(cron_expr)
+    if month != "*" or day_of_month != "*":
+        return []
+    minute_values = _finite_cron_values(minute, minimum=0, maximum=59)
+    hour_values = _finite_cron_values(hour, minimum=0, maximum=23)
+    if minute_values is None and hour_values is None:
+        return []
+    if minute_values is None:
+        return []
+    hours = hour_values if hour_values is not None else [None]
+    variants: list[tuple[str, str]] = []
+    for minute_value in minute_values:
+        for hour_value in hours:
+            split_hour = "*" if hour_value is None else str(hour_value)
+            variant = f"m{minute_value:02d}" if hour_value is None else f"h{hour_value:02d}m{minute_value:02d}"
+            variants.append((variant, f"{minute_value} {split_hour} {day_of_month} {month} {day_of_week}"))
+    if len(variants) > MAX_SPLIT_TASKS_PER_JOB:
+        raise ValueError(
+            f"cron expands to {len(variants)} Windows tasks; maximum supported without tick-runner strategy is {MAX_SPLIT_TASKS_PER_JOB}."
+        )
+    return variants
+
+
+def _finite_cron_values(field: str, *, minimum: int, maximum: int) -> list[int] | None:
+    if field == "*" or field.startswith("*/"):
+        return None
+    values: list[int] = []
+    for part in field.split(","):
+        token = part.strip()
+        if not token:
+            raise ValueError("cron field contains an empty token.")
+        if "-" in token:
+            start_raw, end_raw = token.split("-", 1)
+            start = int(start_raw)
+            end = int(end_raw)
+            if start < minimum or end > maximum or start > end:
+                raise ValueError(f"cron range must be between {minimum} and {maximum}.")
+            values.extend(range(start, end + 1))
+            continue
+        value = int(token)
+        if value < minimum or value > maximum:
+            raise ValueError(f"cron value must be between {minimum} and {maximum}.")
+        values.append(value)
+    deduped = sorted(set(values))
+    return deduped
+
+
+def cron_to_tick_runner_args(cron_expr: str) -> list[str]:
+    normalize_cron_expression(cron_expr)
+    return ["/SC", "MINUTE", "/MO", "1", "/ST", _format_time(datetime.now().hour, datetime.now().minute)]
+
+
+def cron_schedule_strategy_report(cron_expr: str) -> dict[str, Any]:
+    expression = normalize_cron_expression(cron_expr)
+    report: dict[str, Any] = {"cron": expression, "strategies": {}}
+    try:
+        single = cron_to_schtasks_args(expression)
+        report["strategies"]["single_schtasks"] = {
+            "supported": True,
+            "task_count": 1,
+            "trigger_count": 1,
+            "runner_invocations_per_hour": _estimate_invocations_per_hour(expression),
+            "schedule_args": single,
+        }
+    except ValueError as exc:
+        report["strategies"]["single_schtasks"] = {"supported": False, "reason": str(exc)}
+
+    try:
+        split = _split_cron_to_single_schtasks_expressions(expression)
+        report["strategies"]["split_schtasks"] = {
+            "supported": bool(split),
+            "task_count": len(split) if split else 0,
+            "trigger_count": len(split) if split else 0,
+            "runner_invocations_per_hour": _estimate_invocations_per_hour(expression),
+        }
+    except ValueError as exc:
+        report["strategies"]["split_schtasks"] = {"supported": False, "reason": str(exc)}
+
+    multi_trigger_specs = cron_to_multi_trigger_specs(expression)
+    report["strategies"]["multi_trigger_task"] = {
+        "supported": bool(multi_trigger_specs),
+        "registration_path": "spec_only",
+        "task_count": 1,
+        "trigger_count": len(multi_trigger_specs),
+        "runner_invocations_per_hour": _estimate_invocations_per_hour(expression),
+    }
+    report["strategies"]["tick_runner"] = {
+        "supported": True,
+        "task_count": 1,
+        "trigger_count": 1,
+        "runner_invocations_per_hour": 60,
+        "schedule_args": cron_to_tick_runner_args(expression),
+    }
+    report["recommended"] = _recommend_cron_strategy(report)
+    return report
+
+
+def cron_to_multi_trigger_specs(cron_expr: str) -> list[dict[str, Any]]:
+    """Build trigger specs for one Windows task with multiple triggers.
+
+    This is a side-by-side implementation surface for comparing the "one task,
+    many triggers" strategy. Registration is intentionally kept separate from
+    the current schtasks sync path because multi-trigger registration requires a
+    PowerShell ScheduledTasks/COM or XML task definition path.
+    """
+    expression = normalize_cron_expression(cron_expr)
+    if not _multi_trigger_supported(expression):
+        return []
+    minute, hour, _day_of_month, _month, day_of_week = _cron_parts(expression)
+    minute_values = _finite_cron_values(minute, minimum=0, maximum=59) or list(range(60))
+    hour_values = _finite_cron_values(hour, minimum=0, maximum=23)
+    day_values = _parse_weekdays(day_of_week) if day_of_week != "*" else []
+    specs: list[dict[str, Any]] = []
+    if hour_values is None:
+        for minute_value in minute_values:
+            specs.append(
+                {
+                    "type": "weekly" if day_values else "daily",
+                    "at": _format_time(0, minute_value),
+                    "days_of_week": day_values,
+                    "repetition_interval": "PT1H",
+                    "repetition_duration": "P1D",
+                }
+            )
+        return specs
+    for hour_value in hour_values:
+        for minute_value in minute_values:
+            specs.append(
+                {
+                    "type": "weekly" if day_values else "daily",
+                    "at": _format_time(hour_value, minute_value),
+                    "days_of_week": day_values,
+                }
+            )
+    return specs
+
+
+def build_multi_trigger_task_xml(cron_expr: str, task_command: str) -> str:
+    specs = cron_to_multi_trigger_specs(cron_expr)
+    if not specs:
+        raise ValueError("cron expression cannot be represented as a bounded multi-trigger task.")
+    task = ET.Element("Task", {"version": "1.4", "xmlns": "http://schemas.microsoft.com/windows/2004/02/mit/task"})
+    registration = ET.SubElement(task, "RegistrationInfo")
+    ET.SubElement(registration, "Description").text = "Crawler orchestration scheduled task"
+    triggers = ET.SubElement(task, "Triggers")
+    for spec in specs:
+        trigger = ET.SubElement(triggers, "CalendarTrigger")
+        ET.SubElement(trigger, "StartBoundary").text = f"2000-01-01T{spec['at']}:00"
+        ET.SubElement(trigger, "Enabled").text = "true"
+        if spec.get("repetition_interval"):
+            repetition = ET.SubElement(trigger, "Repetition")
+            ET.SubElement(repetition, "Interval").text = str(spec["repetition_interval"])
+            ET.SubElement(repetition, "Duration").text = str(spec["repetition_duration"])
+            ET.SubElement(repetition, "StopAtDurationEnd").text = "false"
+        if spec.get("days_of_week"):
+            weekly = ET.SubElement(trigger, "ScheduleByWeek")
+            days = ET.SubElement(weekly, "DaysOfWeek")
+            for day in spec["days_of_week"]:
+                ET.SubElement(days, _windows_xml_weekday_name(str(day)))
+            ET.SubElement(weekly, "WeeksInterval").text = "1"
+        else:
+            daily = ET.SubElement(trigger, "ScheduleByDay")
+            ET.SubElement(daily, "DaysInterval").text = "1"
+    settings = ET.SubElement(task, "Settings")
+    ET.SubElement(settings, "MultipleInstancesPolicy").text = "IgnoreNew"
+    ET.SubElement(settings, "DisallowStartIfOnBatteries").text = "false"
+    ET.SubElement(settings, "StopIfGoingOnBatteries").text = "false"
+    ET.SubElement(settings, "AllowHardTerminate").text = "true"
+    ET.SubElement(settings, "StartWhenAvailable").text = "true"
+    ET.SubElement(settings, "Enabled").text = "true"
+    ET.SubElement(settings, "Hidden").text = "false"
+    actions = ET.SubElement(task, "Actions", {"Context": "Author"})
+    exec_action = ET.SubElement(actions, "Exec")
+    command, arguments = _split_task_command(task_command)
+    ET.SubElement(exec_action, "Command").text = command
+    if arguments:
+        ET.SubElement(exec_action, "Arguments").text = arguments
+    return ET.tostring(task, encoding="unicode")
+
+
+def _split_task_command(task_command: str) -> tuple[str, str]:
+    command = str(task_command or "").strip()
+    if not command:
+        raise ValueError("task command is empty.")
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        if end > 0:
+            return command[1:end], command[end + 1 :].strip()
+    parts = command.split(maxsplit=1)
+    return parts[0], parts[1] if len(parts) > 1 else ""
+
+
+def _windows_xml_weekday_name(value: str) -> str:
+    return {
+        "SUN": "Sunday",
+        "MON": "Monday",
+        "TUE": "Tuesday",
+        "WED": "Wednesday",
+        "THU": "Thursday",
+        "FRI": "Friday",
+        "SAT": "Saturday",
+    }[value]
+
+
+def _multi_trigger_supported(cron_expr: str) -> bool:
+    minute, hour, day_of_month, month, _day_of_week = _cron_parts(cron_expr)
+    if month != "*" or day_of_month != "*":
+        return False
+    if minute == "*" or minute.startswith("*/") or hour.startswith("*/"):
+        return False
+    return _multi_trigger_count(cron_expr) <= MAX_SPLIT_TASKS_PER_JOB
+
+
+def _multi_trigger_count(cron_expr: str) -> int:
+    minute, hour, _day_of_month, _month, _day_of_week = _cron_parts(cron_expr)
+    minute_values = _finite_cron_values(minute, minimum=0, maximum=59) or list(range(60))
+    hour_values = _finite_cron_values(hour, minimum=0, maximum=23)
+    if hour_values is None:
+        return len(minute_values)
+    return len(minute_values) * len(hour_values)
+
+
+def _estimate_invocations_per_hour(cron_expr: str) -> int:
+    minute, hour, _day_of_month, _month, _day_of_week = _cron_parts(cron_expr)
+    minute_values = _finite_cron_values(minute, minimum=0, maximum=59)
+    if minute_values is not None:
+        return len(minute_values)
+    if minute == "*":
+        return 60
+    if minute.startswith("*/"):
+        step = _parse_step(minute, "minute")
+        return max(1, 60 // step)
+    return 1
+
+
+def _recommend_cron_strategy(report: dict[str, Any]) -> str:
+    strategies = report.get("strategies") if isinstance(report.get("strategies"), dict) else {}
+    if strategies.get("single_schtasks", {}).get("supported"):
+        return "single_schtasks"
+    if strategies.get("split_schtasks", {}).get("supported"):
+        return "split_schtasks"
+    if strategies.get("multi_trigger_task", {}).get("supported"):
+        return "multi_trigger_task"
+    return "tick_runner"
 
 
 def _format_time(hour: int, minute: int) -> str:
