@@ -31,19 +31,64 @@
     <div class="operation-summary">
       <div>
         <strong>{{ jobs | length }}</strong>
-        <span>등록 config</span>
+        <span>전체 설정</span>
       </div>
       <div>
         <strong>{{ jobs | selectattr("settings.enabled") | list | length }}</strong>
-        <span>선택 항목</span>
+        <span>선택 작업</span>
       </div>
       <div>
         <strong>{{ scheduler_rows | length }}</strong>
-        <span>등록 스케줄</span>
+        <span>스케줄 기록</span>
       </div>
       <div>
         <strong>{{ "real-send" if settings.allow_email_send else "dry-run" }}</strong>
         <span>메일 모드</span>
+      </div>
+    </div>
+
+    <div class="operator-flow" aria-label="오케스트레이션 권장 순서">
+      <div class="operator-flow-step">
+        <span class="flow-index">1</span>
+        <div>
+          <strong>선택 작업 확인</strong>
+          <p>아래 목록에서 실행/모니터링 대상과 실행 주기를 먼저 확인합니다.</p>
+        </div>
+      </div>
+      <div class="operator-flow-step">
+        <span class="flow-index">2</span>
+        <div>
+          <strong>원하는 설정 저장</strong>
+          <p>저장은 JSON 설정만 갱신하며 크롤러 실행이나 스케줄 동기화를 하지 않습니다.</p>
+        </div>
+      </div>
+      <div class="operator-flow-step">
+        <span class="flow-index">3</span>
+        <div>
+          <strong>검증 실행 또는 모니터링</strong>
+          <p>수동 실행은 1회 검증, 모니터링 시작/종료는 Windows Scheduler 변경입니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="selected-target-card">
+      <div>
+        <h2>현재 선택 대상</h2>
+        <p>버튼은 아래 선택된 작업과 저장된 실행 주기에 적용됩니다.</p>
+      </div>
+      <div class="selected-job-list">
+        {% set enabled_jobs = jobs | selectattr("settings.enabled") | list %}
+        {% if enabled_jobs %}
+          {% for job in enabled_jobs[:6] %}
+          <span class="job-chip">{{ job.config_name }}</span>
+          {% endfor %}
+          {% if enabled_jobs | length > 6 %}
+          {% set hidden_jobs = enabled_jobs[6:] | map(attribute="config_name") | join(", ") %}
+          <span class="job-chip muted-chip hidden-job-summary" title="{{ hidden_jobs }}" aria-label="추가 선택 작업: {{ hidden_jobs }}" tabindex="0">+{{ enabled_jobs | length - 6 }}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted-text">선택된 작업이 없습니다. 아래 목록에서 작업을 선택한 뒤 저장하세요.</span>
+        {% endif %}
       </div>
     </div>
 
@@ -71,11 +116,31 @@
       <p>체크하지 않으면 SMTP 정보가 있어도 dry-run으로만 기록됩니다.</p>
     </div>
 
-    <div class="form-actions operation-actions">
-      <button type="submit" name="action" value="save">설정 저장</button>
-      <button class="primary" type="submit" name="action" value="run" data-confirm="선택한 크롤러를 지금 한 번 실행할까요? 스케줄러는 변경하지 않습니다.">수동 실행</button>
-      <button type="submit" name="action" value="sync" data-confirm="현재 설정으로 이 프로젝트의 Windows 스케줄러를 재생성할까요?">모니터링 시작</button>
-      <button class="danger" type="submit" name="action" value="stop_monitoring" data-confirm="이 프로젝트가 관리하는 모니터링 작업을 종료하고 스케줄러를 삭제할까요? outputs와 workflow_records.json은 삭제하지 않습니다.">모니터링 종료</button>
+    <div class="operation-actions-grid">
+      <div class="action-lane">
+        <div>
+          <strong>설정만 저장</strong>
+          <p>크롤러 실행과 스케줄러 동기화 없이 원하는 설정만 저장합니다.</p>
+        </div>
+        <button type="submit" name="action" value="save">설정 저장</button>
+      </div>
+      <div class="action-lane">
+        <div>
+          <strong>선택 작업 1회 실행</strong>
+          <p>선택된 작업을 즉시 실행합니다. 스케줄러 등록은 바꾸지 않습니다.</p>
+        </div>
+        <button class="primary" type="submit" name="action" value="run" data-confirm="선택한 크롤러를 지금 한 번 실행할까요? 스케줄러는 변경하지 않습니다.">수동 실행</button>
+      </div>
+      <div class="action-lane scheduler-lane">
+        <div>
+          <strong>모니터링 관리</strong>
+          <p>Windows Scheduler를 생성/정리합니다. outputs와 history는 보존합니다.</p>
+        </div>
+        <div class="lane-buttons">
+          <button type="submit" name="action" value="sync" data-confirm="현재 설정으로 이 프로젝트의 Windows 스케줄러를 재생성할까요?">모니터링 시작</button>
+          <button class="danger" type="submit" name="action" value="stop_monitoring" data-confirm="이 프로젝트가 관리하는 모니터링 작업을 종료하고 스케줄러를 삭제할까요? outputs와 workflow_records.json은 삭제하지 않습니다.">모니터링 종료</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -88,7 +153,7 @@
     <div class="panel-heading">
       <div>
         <h2>설정 LIST / 배치 config</h2>
-        <p>cron은 5개 필드 형식입니다. 예: `0 3 * * *` 매일 03시, `*/5 * * * *` 5분마다 실행.</p>
+        <p>실행 주기는 5개 필드 cron 형식입니다. 예: `0 3 * * *` 매일 03시, `*/5 * * * *` 5분마다 실행.</p>
       </div>
     </div>
     {% if jobs %}
@@ -97,12 +162,12 @@
         <thead>
           <tr>
             <th class="select-col">선택</th>
-            <th>크롤러</th>
+            <th>작업</th>
             <th>출력 경로</th>
             <th>검색어</th>
             <th>필터</th>
-            <th class="cron-col">Cron 주기</th>
-            <th>스케줄</th>
+            <th class="cron-col">실행 주기</th>
+            <th>저장 상태</th>
             <th>최근 실행</th>
             <th>다음 실행</th>
           </tr>
@@ -144,27 +209,31 @@
       <h2>등록된 스케줄 / 스케줄 결과 보기</h2>
       <p>현재 Windows Task Scheduler에 등록된 managed task와 최근 앱 실행 결과를 함께 표시합니다.</p>
     </div>
+    <div class="scheduler-refresh-state is-loading" data-scheduler-refresh-state>
+      Windows Scheduler 상태 확인 중
+    </div>
   </div>
   {% if scheduler_error %}
   <div class="notice error">스케줄러 조회 실패: {{ scheduler_error }}</div>
   {% endif %}
 
   <div class="subsection-block">
-  <h2>등록된 스케줄 영역</h2>
+  <h2>등록된 스케줄 영역 - 실제 Windows 상태 확인</h2>
+  <p class="muted-text">앱에 저장된 등록 기록과 실제 Windows 상태를 구분해서 보여줍니다. 실제 Windows 상태는 이 영역에서 비차단으로 갱신됩니다.</p>
   {% if scheduler_rows %}
   <div class="table-wrap flush">
     <table class="scheduler-table">
       <thead>
         <tr>
-          <th>Task</th>
-          <th>Job ID</th>
+          <th>작업 묶음</th>
+          <th>작업 ID</th>
           <th>크롤러</th>
-          <th>Cron</th>
-          <th>상태</th>
+          <th>실행 주기</th>
+          <th>Windows 상태</th>
           <th>최근 실행</th>
           <th>다음 실행</th>
-          <th>Last Result</th>
-          <th>Action</th>
+          <th>결과 코드</th>
+          <th>실행 경로</th>
           <th>등록</th>
           <th>관리</th>
         </tr>
@@ -215,15 +284,15 @@
 
   <div class="subsection-block">
   <h2>저장된 모니터링 설정</h2>
-  <p class="muted-text">설정 저장 또는 모니터링 종료 후에도 남아 있는 desired settings입니다. 실제 Windows 등록 여부는 위 등록된 스케줄 영역에서 별도로 확인합니다.</p>
+  <p class="muted-text">설정 저장 또는 모니터링 종료 후에도 남아 있는 원하는 상태입니다. 실제 Windows 등록 여부는 위 등록된 스케줄 영역에서 별도로 확인합니다.</p>
   {% if saved_schedule_rows %}
   <div class="table-wrap flush">
     <table class="scheduler-table">
       <thead>
         <tr>
           <th>크롤러</th>
-          <th>Job ID</th>
-          <th>Cron</th>
+          <th>작업 ID</th>
+          <th>실행 주기</th>
           <th>저장 상태</th>
           <th>최근 실행</th>
           <th>다음 실행</th>
@@ -301,7 +370,7 @@
   {% endif %}
 
   <div class="subsection-block">
-  <h2>스케줄 결과 보기</h2>
+  <h2>실행 이력</h2>
   {% if history %}
   <div class="table-wrap flush">
     <table>

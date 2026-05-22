@@ -103,6 +103,15 @@ p,
   margin-bottom: 18px;
 }
 
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table-wrap > table {
+  min-width: 860px;
+}
+
 .collapsible-panel > summary {
   display: flex;
   align-items: center;
@@ -366,11 +375,174 @@ td {
   font-size: 12px;
 }
 
+.operator-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.operator-flow-step,
+.selected-target-card,
+.action-lane {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.operator-flow-step {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 10px;
+  align-items: start;
+  min-height: 82px;
+  padding: 12px;
+}
+
+.flow-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #344054;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.operator-flow-step strong,
+.selected-target-card strong,
+.action-lane strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.operator-flow-step p,
+.selected-target-card p,
+.action-lane p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.selected-target-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.38fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+}
+
+.selected-target-card h2 {
+  margin-bottom: 6px;
+}
+
+.selected-job-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.job-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  max-width: 220px;
+  padding: 4px 9px;
+  border: 1px solid #cad6e6;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted-chip {
+  color: var(--muted);
+  background: #f1f4f8;
+}
+
+.hidden-job-summary {
+  cursor: help;
+  outline-offset: 2px;
+}
+
+.hidden-job-summary:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.16);
+  outline: none;
+}
+
 .operation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.operation-actions-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(240px, 1fr) minmax(280px, 1.15fr);
+  gap: 12px;
+}
+
+.action-lane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 96px;
+  padding: 14px;
+}
+
+.scheduler-lane {
+  border-color: #ead0d0;
+  background: #fffafa;
+}
+
+.lane-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.scheduler-refresh-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.scheduler-refresh-state.is-loading {
+  border-color: #bdd1f4;
+  background: #f1f6ff;
+  color: #2358a5;
+}
+
+.scheduler-refresh-state.is-ready {
+  border-color: #a8dab5;
+  background: #e9f6ec;
+  color: #137333;
+}
+
+.scheduler-refresh-state.is-error {
+  border-color: #edd28a;
+  background: #fff7e0;
+  color: #8a5a00;
 }
 
 .tab-nav {
@@ -1175,11 +1347,20 @@ pre {
   .panel-heading,
   .orchestration-settings,
   .operation-summary,
+  .operator-flow,
+  .selected-target-card,
+  .operation-actions-grid,
+  .action-lane,
   .interval-control {
     grid-template-columns: 1fr;
   }
 
   .panel-heading {
     display: grid;
+  }
+
+  .selected-job-list,
+  .lane-buttons {
+    justify-content: flex-start;
   }
 }

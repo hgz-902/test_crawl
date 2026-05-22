@@ -127,6 +127,17 @@ function initSchedulerDetailsLazyLoad() {
   if (!container) return;
   const statusUrl = container.dataset.schedulerStatusUrl;
   if (!statusUrl) return;
+  const refreshState = container.querySelector("[data-scheduler-refresh-state]");
+
+  function setRefreshState(state, text) {
+    if (!refreshState) return;
+    refreshState.textContent = text;
+    refreshState.classList.toggle("is-loading", state === "loading");
+    refreshState.classList.toggle("is-ready", state === "ready");
+    refreshState.classList.toggle("is-error", state === "error");
+  }
+
+  setRefreshState("loading", "Windows Scheduler 상태 확인 중");
 
   fetch(statusUrl, { headers: { Accept: "application/json" } })
     .then((response) => {
@@ -153,9 +164,14 @@ function initSchedulerDetailsLazyLoad() {
           if (field === "scheduler_last_result_display") cell.title = row.scheduler_last_result || "";
         }
       }
+      if (payload.scheduler_error) {
+        setRefreshState("error", "registry만 표시 중: 실제 Windows 상태 확인 실패");
+      } else {
+        setRefreshState("ready", "실제 Windows 상태 갱신됨");
+      }
     })
     .catch(() => {
-      // Scheduler detail refresh is deliberately non-blocking; the registry view remains usable.
+      setRefreshState("error", "registry만 표시 중: 실제 Windows 상태 확인 불가");
     });
 }
 
