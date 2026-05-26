@@ -1,33 +1,25 @@
 {
-  "name": "산업부_보도자료",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
-  "output_dir": "outputs/motir_news",
+  "name": "산업부_행정예고",
+  "start_url": "https://www.motir.go.kr/kor/article/ATCLa6723dc7b?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
+  "output_dir": "outputs/motir_administration",
   "timeout_ms": 30000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
+  "notes": "",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [
-    "석유",
-    "정유",
-    "화학",
-    "유가",
-    "주유소",
-    "LNG",
-    "전력"
-  ],
+  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"mytable\"]/tbody/tr[1]/td[3]/div/a",
-      "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
+      "xpath": "//*[@id=\"mytable\"]/tbody/tr[1]/td[2]/div/a",
+      "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[2]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
+      "loop_limit": 2,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -50,16 +42,15 @@
     },
     {
       "name": "download_file",
-      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[6]/p/span[1]/a[1]",
-      "xpath_2": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[6]/p/span[2]/a[1]",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[4]/p/span[1]/a[1]",
+      "xpath_2": "//*[@id=\"cont-body\"]/div[1]/div[2]/ul/li[4]/p/span[2]/a[1]",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 4,
       "action": "download",
       "attr": "href",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-28T18:13:20+09:00",
-  "updated_at": "2026-05-26T13:35:29+09:00"
+  "created_at": "2026-05-26T09:48:50+09:00",
+  "updated_at": "2026-05-26T13:34:48+09:00"
 }
