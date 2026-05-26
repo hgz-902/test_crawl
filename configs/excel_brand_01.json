@@ -1,0 +1,54 @@
+{
+  "name": "Brand_유튜브",
+  "start_url": "https://www.youtube.com",
+  "output_dir": "outputs/excel_brand_01",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.youtube.com\nSelected monitoring URL: https://www.youtube.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.",
+  "search_terms": [],
+  "filter_terms": [
+    "SK",
+    "SK 이노베이션",
+    "SK E&S",
+    "SK 에너지",
+    "SK 지오센트릭",
+    "SK어스온",
+    "SK엔무브",
+    "SK아이이테크놀로지",
+    "SK인천석유화학",
+    "SK온",
+    "석유",
+    "정유",
+    "화학",
+    "유가",
+    "주유소",
+    "LNG",
+    "전력",
+    "수소",
+    "재생에너지",
+    "태앙광",
+    "풍력"
+  ],
+  "steps": [
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:42:04+00:00"
+}

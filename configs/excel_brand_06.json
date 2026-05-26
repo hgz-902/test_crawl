@@ -1,0 +1,54 @@
+{
+  "name": "Brand_페이스북",
+  "start_url": "https://www.facebook.com",
+  "output_dir": "outputs/excel_brand_06",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.facebook.com\nSelected monitoring URL: https://www.facebook.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.\nHTTP status during discovery was 400; XPath may require browser DevTools verification or site-specific handling.",
+  "search_terms": [],
+  "filter_terms": [
+    "석유",
+    "석유화학",
+    "주유소",
+    "국가전략기술",
+    "국가핵심기술",
+    "신성장원천기술",
+    "상법",
+    "이차전지",
+    "배터리",
+    "연료용 중유",
+    "탄소중립",
+    "기후테크",
+    "SAF",
+    "플라스틱",
+    "액침냉각",
+    "해외자원개발",
+    "사후정산",
+    "RFS",
+    "NDC",
+    "횡재세",
+    "전기요금 지역 차등제"
+  ],
+  "steps": [
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:42:04+00:00"
+}

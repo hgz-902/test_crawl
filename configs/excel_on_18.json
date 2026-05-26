@@ -1,0 +1,51 @@
+{
+  "name": "ON_배터리뉴스",
+  "start_url": "https://battery-news.de/en/home",
+  "output_dir": "outputs/excel_on_18",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://battery-news.de/en/home\nSelected monitoring URL: https://battery-news.de/en/home\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
+  "search_terms": [],
+  "filter_terms": [
+    "EV",
+    "Electric Vehicle",
+    "ESS",
+    "China",
+    "Korea",
+    "Lithium",
+    "Lithium ion Battery"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/div[1]/div/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[10]/div/div[2]/h3/div/a",
+      "xpath_2": "/html/body/div[1]/div/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[11]/div/div[2]/h3/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:42:04+00:00"
+}

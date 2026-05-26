@@ -1,0 +1,51 @@
+{
+  "name": "ON_헝가리 법률 데이터베이스",
+  "start_url": "https://njt.jog.gov.hu/",
+  "output_dir": "outputs/excel_on_01",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://njt.hu\nSelected monitoring URL: https://njt.jog.gov.hu/\nOnly one usable article/list link could be selected safely, so the workflow opens that first link without item loop.",
+  "search_terms": [],
+  "filter_terms": [
+    "ESG",
+    "Hungary ESG Act",
+    "Act CVIII",
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/main/div[1]/section[1]/div/div/div[1]/a",
+      "loop": false,
+      "action": "goto",
+      "attr": "href",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:42:04+00:00"
+}

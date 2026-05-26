@@ -1,0 +1,54 @@
+{
+  "name": "ON_미 연방 관보",
+  "start_url": "https://www.federalregister.gov/documents/current",
+  "output_dir": "outputs/excel_on_15",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.federalregister.gov\nSelected monitoring URL: https://www.federalregister.gov/documents/current\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
+  "search_terms": [],
+  "filter_terms": [
+    "EV",
+    "Electric Vehicle",
+    "ESS",
+    "China",
+    "Korea",
+    "Lithium",
+    "Anode",
+    "Cathode",
+    "Lithium ion Battery",
+    "Battery"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/main/div/div[4]/div/div/div/div[1]/div/div[2]/ul[2]/li[2]/a",
+      "xpath_2": "/html/body/main/div/div[4]/div/div/div/div[1]/div/div[2]/ul[2]/li[3]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:42:04+00:00"
+}

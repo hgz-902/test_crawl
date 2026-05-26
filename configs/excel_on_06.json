@@ -1,0 +1,53 @@
+{
+  "name": "ON_EFRAG",
+  "start_url": "https://www.efrag.org/en/news-and-calendar/news",
+  "output_dir": "outputs/excel_on_06",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": true,
+  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.efrag.org/en/sustainability-reporting\nSelected monitoring URL: https://www.efrag.org/en/news-and-calendar/news\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nDiscovery limitation: ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))\nManual refinement: replaced the initial weak/page-only candidate with a validated repeated article link pair from the fetched HTML.",
+  "search_terms": [],
+  "filter_terms": [
+    "ESRS",
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "Battery Passport",
+    "Battery",
+    "EV"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/div/div[1]/main/div/div/div[2]/article/div/div/section/div/div[2]/div/div/div/div[2]/div/div/div[1]/div/div[1]/article/main/h3/a",
+      "xpath_2": "/html/body/div/div[1]/main/div/div/div[2]/article/div/div/section/div/div[2]/div/div/div/div[2]/div/div/div[1]/div/div[2]/article/main/h3/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T09:42:04+00:00",
+  "updated_at": "2026-05-26T09:44:15+00:00"
+}
