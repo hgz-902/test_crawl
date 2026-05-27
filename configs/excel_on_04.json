@@ -1,13 +1,16 @@
 {
-  "name": "ON_헝가리 관보",
-  "start_url": "https://magyarkozlony.hu/",
-  "output_dir": "outputs/excel_on_04",
+  "name": "헝가리 관보",
+  "start_url": "https://magyarkozlony.hu/?page={search_term}",
+  "output_dir": "outputs/magyarkozlony",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://magyarkozlony.hu\nSelected monitoring URL: https://magyarkozlony.hu/\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "ESG",
     "Hungary ESG Act",
@@ -23,8 +26,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div/main/div[2]/section/div[2]/div[2]/div[2]/div[1]/div[2]/a[1]",
-      "xpath_2": "/html/body/div/main/div[2]/section/div[2]/div[2]/div[2]/div[1]/div[2]/a[2]",
+      "xpath": "//*[@id=\"app\"]/main/div[2]/section/div[2]/div[2]/div[1]/div[1]/div[2]/a[1]",
+      "xpath_2": "//*[@id=\"app\"]/main/div[2]/section/div[2]/div[2]/div[2]/div[1]/div[2]/a[1]",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -34,21 +37,20 @@
     },
     {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"app\"]/main/div/section/div[1]/div/div/div[1]/b",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     },
     {
-      "name": "extract_body",
-      "xpath": "//body",
+      "name": "download_file",
+      "xpath": "//*[@id=\"app\"]/main/div/section/div[1]/div/div/div[3]/a",
       "loop": false,
-      "action": "extract",
-      "attr": "text",
+      "action": "download",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:51:00+09:00",
+  "updated_at": "2026-05-27T16:59:16+09:00"
 }

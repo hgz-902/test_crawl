@@ -1,13 +1,16 @@
 {
-  "name": "ON_배터리뉴스",
-  "start_url": "https://battery-news.de/en/home",
-  "output_dir": "outputs/excel_on_18",
+  "name": "배터리뉴스",
+  "start_url": "https://battery-news.de/en/home/page/{search_term}/",
+  "output_dir": "outputs/battery_news",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://battery-news.de/en/home\nSelected monitoring URL: https://battery-news.de/en/home\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "extract_body는 개발자도구에서 직접 수집한 XPath로는 실패하여, AI의 도움을 받아 작성",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "EV",
     "Electric Vehicle",
@@ -20,8 +23,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div[1]/div/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[10]/div/div[2]/h3/div/a",
-      "xpath_2": "/html/body/div[1]/div/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[11]/div/div[2]/h3/div/a",
+      "xpath": "//*[@id=\"content\"]/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[1]/div/div[2]/h3/div/a",
+      "xpath_2": "//*[@id=\"content\"]/div/div/section[3]/div/div[1]/div/div[2]/div/section/article[2]/div/div[2]/h3/div/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -39,13 +42,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "(//*[contains(@class,\"post-content\")])[1]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:37:00+09:00",
+  "updated_at": "2026-05-27T14:01:32+09:00"
 }

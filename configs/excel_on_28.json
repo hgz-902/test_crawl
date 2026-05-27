@@ -1,13 +1,16 @@
 {
-  "name": "ON_유럽 교통환경연맹",
-  "start_url": "https://www.transportenvironment.org/",
-  "output_dir": "outputs/excel_on_28",
+  "name": "유럽 교통환경연맹",
+  "start_url": "https://www.transportenvironment.org/search/results?section=article&page={search_term}",
+  "output_dir": "outputs/transportenvironment",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.transportenvironment.org\nSelected monitoring URL: https://www.transportenvironment.org/news/\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nHTTP status during discovery was 404; XPath may require browser DevTools verification or site-specific handling.\nManual refinement: replaced the initial weak/page-only candidate with a validated repeated article link pair from the fetched HTML.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "IAA",
     "Industrial Acceleration Act",
@@ -23,8 +26,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html[1]/body/main/section/section[1]/div/div/div[2]/div/ul/li[1]/a",
-      "xpath_2": "/html[1]/body/main/section/section[1]/div/div/div[2]/div/ul/li[2]/a",
+      "xpath": "//*[@id=\"results\"]/div[2]/div[2]/div/div[2]/div/article[1]/h3/a",
+      "xpath_2": "//*[@id=\"results\"]/div[2]/div[2]/div/div[2]/div/article[2]/h3/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -42,13 +45,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"main-content\"]/section[2]/div/div[2]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:44:15+00:00"
+  "created_at": "2026-05-27T11:27:00+09:00",
+  "updated_at": "2026-05-27T09:40:17+09:00"
 }

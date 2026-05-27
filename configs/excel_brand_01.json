@@ -1,12 +1,12 @@
 {
-  "name": "Brand_유튜브",
+  "name": "유튜브",
   "start_url": "https://www.youtube.com",
-  "output_dir": "outputs/excel_brand_01",
+  "output_dir": "outputs/youtube",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.youtube.com\nSelected monitoring URL: https://www.youtube.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.",
+  "notes": "동일한 수집 결과를 내려면 구독회원 로그인이 필요하여 보류.",
   "search_terms": [],
   "filter_terms": [
     "SK",
@@ -49,6 +49,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T12:00:00+09:00",
+  "updated_at": "2026-05-27T18:19:47+09:00"
 }

@@ -1,12 +1,12 @@
 {
-  "name": "Brand_X(트위터)",
+  "name": "X(트위터)",
   "start_url": "https://x.com",
-  "output_dir": "outputs/excel_brand_07",
+  "output_dir": "outputs/x_twitter",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://x.com\nSelected monitoring URL: https://x.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.",
+  "notes": "로그인이 필요하여 설정 중단.",
   "search_terms": [],
   "filter_terms": [
     "석유",
@@ -49,6 +49,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:25:00+09:00",
+  "updated_at": "2026-05-27T09:23:21+09:00"
 }

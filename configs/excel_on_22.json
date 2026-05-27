@@ -1,12 +1,12 @@
 {
-  "name": "ON_EU 법",
-  "start_url": "https://eur-lex.europa.eu/homepage.html",
-  "output_dir": "outputs/excel_on_22",
+  "name": "EU 법",
+  "start_url": "https://eur-lex.europa.eu/search.html?scope=EURLEX&lang=en&type=quick",
+  "output_dir": "outputs/eur_lex2",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://eur-lex.europa.eu/homepage.html\nSelected monitoring URL: https://eur-lex.europa.eu/homepage.html\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nDiscovery limitation: ParserError: Document is empty",
+  "notes": "EU법(관보)와 동일한 사이트로 보임. 크롤링 위치 가이드가 필요.",
   "search_terms": [],
   "filter_terms": [
     "IAA",
@@ -34,6 +34,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:33:00+09:00",
+  "updated_at": "2026-05-27T11:14:00+09:00"
 }

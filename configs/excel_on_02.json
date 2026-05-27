@@ -1,13 +1,16 @@
 {
-  "name": "ON_헝가리 규제 업무 감독청",
-  "start_url": "https://sztfh.hu/hirek/",
-  "output_dir": "outputs/excel_on_02",
+  "name": "헝가리 규제 업무 감독청",
+  "start_url": "https://sztfh.hu/hatosag/hirek/page/{search_term}/",
+  "output_dir": "outputs/sztfh_hu",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://sztfh.hu\nSelected monitoring URL: https://sztfh.hu/hirek/\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "ESG",
     "Hungary ESG Act",
@@ -23,8 +26,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div[1]/div[2]/div/div/div/div/div[1]/article[6]/div[4]/span[2]/a[1]",
-      "xpath_2": "/html/body/div[1]/div[2]/div/div/div/div/div[1]/article[7]/div[4]/span[2]/a[1]",
+      "xpath": "//*[@id=\"content\"]/div[1]/article[1]/div[3]/h2/a",
+      "xpath_2": "//*[@id=\"content\"]/div[1]/article[2]/div[3]/h2/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -34,7 +37,7 @@
     },
     {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"content\"]/article/div[3]/h2",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -42,13 +45,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"content\"]/article/div[3]/div[2]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:53:00+09:00",
+  "updated_at": "2026-05-27T18:08:12+09:00"
 }

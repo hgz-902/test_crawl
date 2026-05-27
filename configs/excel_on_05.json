@@ -1,13 +1,16 @@
 {
-  "name": "ON_유럽 의회(입법부 열차 시간표)",
-  "start_url": "https://www.europarl.europa.eu/legislative-train",
-  "output_dir": "outputs/excel_on_05",
+  "name": "유럽 의회(입법부 열차 시간표)",
+  "start_url": "https://www.europarl.europa.eu/legislative-train/search?pageNumber={search_term}&keywords=&_selectedStates=1&_selectedPriorities=1&_selectedCommittees=1&_selectedTypes=1&_selectedPackages=1&_selectedTags=1",
+  "output_dir": "outputs/europarl_legislative_train",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.europarl.europa.eu/legislative-train\nSelected monitoring URL: https://www.europarl.europa.eu/legislative-train\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "CSRD",
     "CSDDD",
@@ -22,8 +25,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/main/div[2]/section[2]/div/div[2]/table/tr[4]/th[2]/a",
-      "xpath_2": "/html/body/main/div[2]/section[2]/div/div[2]/table/tr[5]/th[2]/a",
+      "xpath": "//*[@id=\"results\"]/div[2]/ol/li[1]/h3/a",
+      "xpath_2": "//*[@id=\"results\"]/div[2]/ol/li[2]/h3/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -33,7 +36,7 @@
     },
     {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"content\"]/div[1]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -41,13 +44,20 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"content\"]/div[2]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"contextPdf\"]",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:50:00+09:00",
+  "updated_at": "2026-05-27T16:55:01+09:00"
 }

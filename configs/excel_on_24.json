@@ -1,14 +1,13 @@
 {
-  "name": "ON_EU 입법관찰소",
-  "start_url": "https://oeil.secure.europarl.europa.eu/oeil/en",
-  "output_dir": "outputs/excel_on_24",
+  "name": "EU 입법관찰소",
+  "start_url": "https://oeil.europarl.europa.eu/oeil/en/search?fullText.term={search_term}&fullText.mode=EXACT_WORD",
+  "output_dir": "outputs/oeil_eu",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://oeil.secure.europarl.europa.eu/oeil/en\nSelected monitoring URL: https://oeil.secure.europarl.europa.eu/oeil/en\nOnly one usable article/list link could be selected safely, so the workflow opens that first link without item loop.",
-  "search_terms": [],
-  "filter_terms": [
+  "notes": "페이지 파라미터 이용불가한 사이트라, 검색어 목록에서 실제 검색어를 사용.\n일부 상세 페이지의 DOM 구조가 달라서 몇몇은 수집이 잘되지만 몇몇은 수집이 안됨.",
+  "search_terms": [
     "IAA",
     "Industrial Acceleration Act",
     "Battery booster strategy",
@@ -20,18 +19,22 @@
     "EV",
     "ESS"
   ],
+  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/main/div[3]/div/div[3]/div/div[5]/div[1]/div/ul/li/a",
-      "loop": false,
-      "action": "goto",
-      "attr": "href",
+      "xpath": "//*[@id=\"website-body\"]/div[1]/div[2]/div[2]/div[2]/div/div/div[1]/div[1]/div[1]/h3/a",
+      "xpath_2": "//*[@id=\"website-body\"]/div[1]/div[2]/div[2]/div[2]/div/div/div[2]/div[1]/div[1]/h3/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
       "wait_state": "attached"
     },
     {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/h2",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -39,13 +42,20 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/div[4]/div/div",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/div[1]/div[2]/div/ul/li/a",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:31:00+09:00",
+  "updated_at": "2026-05-27T13:39:53+09:00"
 }

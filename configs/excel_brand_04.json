@@ -1,13 +1,16 @@
 {
-  "name": "Brand_경쟁사(LGES)",
-  "start_url": "https://inside.lgensol.com/category/news/",
-  "output_dir": "outputs/excel_brand_04",
+  "name": "경쟁사(LGES)",
+  "start_url": "https://inside.lgensol.com/category/news/?_paged={search_term}",
+  "output_dir": "outputs/lges",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://inside.lgensol.com\nSelected monitoring URL: https://inside.lgensol.com/category/news/\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "SK",
     "SK 이노베이션",
@@ -34,8 +37,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div[1]/div/div/main/div[2]/div/div[2]/div[1]/div[2]/a",
-      "xpath_2": "/html/body/div[1]/div/div/main/div[2]/div/div[2]/div[1]/div[3]/a",
+      "xpath": "//*[@id=\"main\"]/div[2]/div/div[2]/div[1]/div[1]/a",
+      "xpath_2": "//*[@id=\"main\"]/div[2]/div/div[2]/div[1]/div[2]/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -53,13 +56,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"main\"]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:57:00+09:00",
+  "updated_at": "2026-05-27T18:25:12+09:00"
 }

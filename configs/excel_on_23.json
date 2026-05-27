@@ -1,13 +1,15 @@
 {
-  "name": "ON_EU 법(관보)",
-  "start_url": "https://eur-lex.europa.eu/oj/direct-access.html",
-  "output_dir": "outputs/excel_on_23",
+  "name": "EU 법(관보)",
+  "start_url": "https://eur-lex.europa.eu/search.html?page={search_term}&lang=en&type=quick",
+  "output_dir": "outputs/eur_lex",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://eur-lex.europa.eu/oj/direct-access.html\nSelected monitoring URL: https://eur-lex.europa.eu/oj/direct-access.html\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nDiscovery limitation: ParserError: Document is empty",
-  "search_terms": [],
+  "notes": "페이지 파라미터는 있으나, 각 기사로 들어가는 링크가 완전한 반복구조가 아님. 페이지가 넘어가도 XPath가 초기화되지 않고 XPath 내의 넘버링이 계속 늘어나는 구조",
+  "search_terms": [
+    "1"
+  ],
   "filter_terms": [
     "IAA",
     "Industrial Acceleration Act",
@@ -22,8 +24,19 @@
   ],
   "steps": [
     {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"cellar_1\"]",
+      "xpath_2": "//*[@id=\"cellar_2\"]",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 11,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"title\"]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -31,13 +44,20 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"document1\"]/div/div",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"format_language_table_PDF_EN\"]",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:32:00+09:00",
+  "updated_at": "2026-05-27T11:04:22+09:00"
 }

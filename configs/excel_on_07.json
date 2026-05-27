@@ -1,12 +1,12 @@
 {
-  "name": "ON_유럽 의회(보도자료) URL 이상",
+  "name": "유럽 의회(보도자료) URL 이상",
   "start_url": "https://www.dumb4dumb-oldsite.responsiblemineralsinitiative.org/minerals-due-diligence/standards",
-  "output_dir": "outputs/excel_on_07",
+  "output_dir": "outputs/responsiblemineralsinitiative",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.dumb4dumb-oldsite.responsiblemineralsinitiative.org/minerals-due-diligence/standards\nSelected monitoring URL: https://www.dumb4dumb-oldsite.responsiblemineralsinitiative.org/minerals-due-diligence/standards\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nDiscovery limitation: SSLError: HTTPSConnectionPool(host='www.dumb4dumb-oldsite.responsiblemineralsinitiative.org', port=443): Max retries exceeded with url: /minerals-due-diligence/standards (Caused by SSLError(SSLCertVerificationError(1, \"[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'www.dumb4dumb-oldsite.responsiblemineralsinitiative.org'. (_ssl.c:997)\")))",
+  "notes": "URL 이상",
   "search_terms": [],
   "filter_terms": [
     "RMI 2.0 Standards",
@@ -38,6 +38,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:48:00+09:00",
+  "updated_at": "2026-05-27T15:27:51+09:00"
 }

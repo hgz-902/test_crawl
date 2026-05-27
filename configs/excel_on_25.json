@@ -1,12 +1,12 @@
 {
-  "name": "ON_EU 위원회",
+  "name": "EU 위원회",
   "start_url": "https://ec.europa.eu/commission/presscorner/home/en",
-  "output_dir": "outputs/excel_on_25",
-  "timeout_ms": 45000,
+  "output_dir": "outputs/ec_europa",
+  "timeout_ms": 100000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://ec.europa.eu/commission/presscorner/home/en\nSelected monitoring URL: https://ec.europa.eu/commission/presscorner/home/en\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.",
+  "notes": "페이지 파라미터를 찾을 수 없어, 우선은 1페이지만 크롤링하는 설정으로 저장\n기사 접속은 되지만, DOM 내부의 title과 body가 늦게 채워지는데 이걸 읽어올 수 있게 기다릴 시간이 필요함\n페이지 타임아웃 100000까지 넣었지만 읽어오지 못하고 있음.",
   "search_terms": [],
   "filter_terms": [
     "IAA",
@@ -22,8 +22,19 @@
   ],
   "steps": [
     {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"news-block\"]/div[2]/li/a/div/h3",
+      "xpath_2": "//*[@id=\"news-block\"]/div[3]/li/a/div/h3",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "/html/body/app-root/ecl-app/div/app-detail/ecl-page-header/div/h1",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -31,13 +42,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "/html/body/app-root/ecl-app/div/app-detail/div/div/div[2]/ecl-content-item/div",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:30:00+09:00",
+  "updated_at": "2026-05-27T10:49:10+09:00"
 }

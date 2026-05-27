@@ -1,12 +1,12 @@
 {
-  "name": "Brand_페이스북",
+  "name": "페이스북",
   "start_url": "https://www.facebook.com",
-  "output_dir": "outputs/excel_brand_06",
+  "output_dir": "outputs/facebook",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.facebook.com\nSelected monitoring URL: https://www.facebook.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.\nHTTP status during discovery was 400; XPath may require browser DevTools verification or site-specific handling.",
+  "notes": "로그인이 필요하여 보류.",
   "search_terms": [],
   "filter_terms": [
     "석유",
@@ -49,6 +49,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:55:00+09:00",
+  "updated_at": "2026-05-27T18:19:02+09:00"
 }

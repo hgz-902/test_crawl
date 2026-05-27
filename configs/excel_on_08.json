@@ -1,13 +1,16 @@
 {
-  "name": "ON_유럽 의회(뉴스)",
-  "start_url": "https://www.europarl.europa.eu/news/en",
-  "output_dir": "outputs/excel_on_08",
+  "name": "유럽 의회(뉴스)",
+  "start_url": "https://www.europarl.europa.eu/news/en/page/{search_term}",
+  "output_dir": "outputs/europarl_news",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.europarl.europa.eu/news/en\nSelected monitoring URL: https://www.europarl.europa.eu/news/en\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "0",
+    "1"
+  ],
   "filter_terms": [
     "Omnibus",
     "CSRD",
@@ -22,8 +25,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div[1]/main/div[2]/div/div/div[3]/div/article[2]/div/h3/div[1]/a",
-      "xpath_2": "/html/body/div[1]/main/div[2]/div/div/div[3]/div/article[3]/div/h3/div[1]/a",
+      "xpath": "/html/body/article[1]/div/h3/div[1]/a",
+      "xpath_2": "/html/body/article[2]/div/h3/div[1]/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -33,7 +36,7 @@
     },
     {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div/div[1]/div/div[2]/div/div/h1/div/span[1]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -41,13 +44,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div/div[2]/div/div[3]/div/div",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:47:00+09:00",
+  "updated_at": "2026-05-27T15:20:53+09:00"
 }

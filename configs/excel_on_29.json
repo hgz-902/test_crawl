@@ -1,13 +1,16 @@
 {
-  "name": "ON_International Council on Clean Transportation",
-  "start_url": "https://theicct.org/publications/",
-  "output_dir": "outputs/excel_on_29",
+  "name": "International Council on Clean Transportation",
+  "start_url": "https://theicct.org/insight-analysis/publications/?_paged={search_term}",
+  "output_dir": "outputs/International_Council",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://theicct.org\nSelected monitoring URL: https://theicct.org/publications/\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
-  "search_terms": [],
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "Zero emission",
     "Industrial Acceleration Act",
@@ -23,8 +26,8 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/div/div/div/div/article/div/div/div/div[2]/div[2]/div/div/div/div[1]/article[7]/div[1]/h3/a",
-      "xpath_2": "/html/body/div/div/div/div/article/div/div/div/div[2]/div[2]/div/div/div/div[1]/article[8]/div[1]/h3/a",
+      "xpath": "/html/body/div/div/div/div/article/div/div/div/div[2]/div[2]/div/div/div/div[1]/article[1]/div[1]/h3/a",
+      "xpath_2": "/html/body/div/div/div/div/article/div/div/div/div[2]/div[2]/div/div/div/div[1]/article[2]/div[1]/h3/a",
       "loop": true,
       "loop_mode": "items",
       "loop_limit": 3,
@@ -42,13 +45,21 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"publications\"]/div/div/div[2]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"content-area\"]/div/div[3]/div/div/div[1]/div/div/div/p/a",
+      "loop": false,
+      "action": "download",
+      "attr": "href",
+      "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:26:00+09:00",
+  "updated_at": "2026-05-27T09:30:26+09:00"
 }

@@ -1,12 +1,12 @@
 {
-  "name": "Brand_인스타그램",
+  "name": "인스타그램",
   "start_url": "https://www.instagram.com",
-  "output_dir": "outputs/excel_brand_05",
+  "output_dir": "outputs/instagram",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet Brand.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.instagram.com\nSelected monitoring URL: https://www.instagram.com\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nSocial/video platforms often require login, JavaScript rendering, channel/search URLs, or official APIs; this config is best-effort and should be verified manually.",
+  "notes": "로그인이 필요하여 보류.",
   "search_terms": [],
   "filter_terms": [
     "석유",
@@ -49,6 +49,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:56:00+09:00",
+  "updated_at": "2026-05-27T18:19:15+09:00"
 }

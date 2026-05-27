@@ -1,13 +1,16 @@
 {
-  "name": "ON_미 국회",
-  "start_url": "https://www.congress.gov/most-viewed-bills",
-  "output_dir": "outputs/excel_on_16",
+  "name": "미 국회",
+  "start_url": "https://www.congress.gov/search?pageSort=latestAction%3Adesc&searchResultViewType=expanded&pageSize=100&q=%7B%22source%22%3A%22all%22%7D&page={search_term}",
+  "output_dir": "outputs/congress_gov",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.congress.gov/most-viewed-bills\nSelected monitoring URL: https://www.congress.gov/most-viewed-bills\nNo stable article/list link pair was available from the fetched HTML, so the workflow filters the selected page body itself.\nHTTP status during discovery was 403; XPath may require browser DevTools verification or site-specific handling.",
-  "search_terms": [],
+  "notes": "open_detail에서 XPath가 홀수로 이동해야 하는데, 소스코드상 연이은 숫자(1, 2, ...)가 아니면 오류가 발생 중이라 설정 임시 중단.\ntext를 얻기 위해 click을 한 번 더 하는 구조.",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "EV",
     "Electric Vehicle",
@@ -22,8 +25,27 @@
   ],
   "steps": [
     {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"main\"]/ol/li[1]/span[1]/a",
+      "xpath_2": "//*[@id=\"main\"]/ol/li[2]/span[1]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "open_detail2",
+      "xpath": "//*[@id=\"tabs\"]/ul/li[2]/h2/a",
+      "loop": false,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
       "name": "extract_title",
-      "xpath": "//h1",
+      "xpath": "//*[@id=\"content\"]/div[1]/h1",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -31,13 +53,13 @@
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"main\"]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:39:00+09:00",
+  "updated_at": "2026-05-27T13:52:47+09:00"
 }

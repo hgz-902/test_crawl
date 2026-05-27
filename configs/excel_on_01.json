@@ -1,13 +1,16 @@
 {
-  "name": "ON_헝가리 법률 데이터베이스",
-  "start_url": "https://njt.jog.gov.hu/",
-  "output_dir": "outputs/excel_on_01",
+  "name": "헝가리 법률 데이터베이스",
+  "start_url": "https://njt.jog.gov.hu/search/-:-:-:-:-:-:-:-:-:-:1:-:-:-:-:-/{search_term}/10",
+  "output_dir": "outputs/njt_jog_hu",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://njt.hu\nSelected monitoring URL: https://njt.jog.gov.hu/\nOnly one usable article/list link could be selected safely, so the workflow opens that first link without item loop.",
-  "search_terms": [],
+  "notes": "title만 추출하려 하니 XPath가 불규칙적이라, body에서 title과 body를 모두 추출하는 것으로 설정.",
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [
     "ESG",
     "Hungary ESG Act",
@@ -23,29 +26,24 @@
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "/html/body/main/div[1]/section[1]/div/div/div[1]/a",
-      "loop": false,
-      "action": "goto",
-      "attr": "href",
-      "wait_state": "attached"
-    },
-    {
-      "name": "extract_title",
-      "xpath": "//h1",
-      "loop": false,
-      "action": "extract",
-      "attr": "text",
+      "xpath": "//*[@id=\"results\"]/div[1]/div/a",
+      "xpath_2": "//*[@id=\"results\"]/div[2]/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
       "wait_state": "attached"
     },
     {
       "name": "extract_body",
-      "xpath": "//body",
+      "xpath": "//*[@id=\"jogszab\"]",
       "loop": false,
       "action": "extract",
       "attr": "text",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:54:00+09:00",
+  "updated_at": "2026-05-27T18:18:32+09:00"
 }

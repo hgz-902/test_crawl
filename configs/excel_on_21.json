@@ -1,12 +1,12 @@
 {
-  "name": "ON_electrive",
+  "name": "electrive",
   "start_url": "https://www.electrive.com",
-  "output_dir": "outputs/excel_on_21",
+  "output_dir": "outputs/electrive",
   "timeout_ms": 45000,
   "renderer": "playwright",
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "Generated from Excel sheet ON.\nExcel Keywords are stored only in filter_terms. search_terms is intentionally empty because this product uses search_terms as URL/page parameters.\nOriginal Excel URL: https://www.electrive.com\nSelected monitoring URL: https://www.electrive.com\nopen_detail XPath values are absolute DOM paths from the fetched HTML and form a validator-compatible repeating pair from the article/list area when available.",
+  "notes": "open_detail에 반복 구조를 넣을 수 없는 XPath 구조라 설정 임시 중단.",
   "search_terms": [],
   "filter_terms": [
     "EU",
@@ -48,6 +48,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:42:04+00:00",
-  "updated_at": "2026-05-26T09:42:04+00:00"
+  "created_at": "2026-05-27T11:34:00+09:00",
+  "updated_at": "2026-05-27T11:19:30+09:00"
 }
