@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 LOGGER = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def google_description_duplicate_key_for_record(record: dict[str, Any]) -> str:
 
 
 def normalize_duplicate_url(value: str) -> str:
-    raw = str(value or "").strip()
+    raw = canonicalize_article_url(value)
     if not raw:
         return ""
     parts = urlsplit(raw)
@@ -62,6 +62,33 @@ def normalize_duplicate_url(value: str) -> str:
             path = path.rstrip("/")
         return urlunsplit((parts.scheme.casefold(), parts.netloc.casefold(), path, parts.query, ""))
     return raw.split("#", 1)[0].rstrip("/")
+
+
+def canonicalize_article_url(value: str, page_query_params: Iterable[str] | None = None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if not (parts.scheme or parts.netloc):
+        return raw.split("#", 1)[0].rstrip("/")
+
+    query = parts.query
+    if page_query_params and query:
+        query = _remove_query_params(query, {str(name).casefold() for name in page_query_params if str(name).strip()})
+
+    path = parts.path
+    if path != "/":
+        path = path.rstrip("/")
+    return urlunsplit((parts.scheme.casefold(), parts.netloc.casefold(), path, query, ""))
+
+
+def _remove_query_params(query: str, names_to_remove: set[str]) -> str:
+    kept = [
+        (name, value)
+        for name, value in parse_qsl(query, keep_blank_values=True)
+        if name.casefold() not in names_to_remove
+    ]
+    return urlencode(kept, doseq=True)
 
 
 def normalize_duplicate_text(value: str) -> str:
@@ -84,6 +111,13 @@ def _record_parser_name(record: dict[str, Any]) -> str:
     for step in record.get("steps") or []:
         if isinstance(step, dict):
             candidates.append(step.get("attr"))
+    record_key = str(record.get("record_key") or "").strip().casefold()
+    if record_key.startswith("naver-"):
+        candidates.append("naver")
+    elif record_key.startswith("daum-"):
+        candidates.append("daum")
+    elif record_key.startswith("google-"):
+        candidates.append("google")
     for candidate in candidates:
         text = _first_text(candidate).casefold()
         if text:
@@ -117,6 +151,15 @@ def _record_url_field(record: dict[str, Any], field_name: str) -> str:
             value = _first_text(step.get(field_name))
         if value:
             return value
+    if field_name == "detail_url":
+        for fallback_name in ("link", "originallink"):
+            value = _first_text(record.get(fallback_name))
+            if value:
+                return value
+            value = _first_text(extracts.get(fallback_name))
+            if value:
+                return value
+        return _record_url_field(record, "final_url")
     return ""
 
 

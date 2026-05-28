@@ -8,13 +8,10 @@
   "ignore_https_errors": false,
   "notes": "Naver News Search API를 사용. 환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET가 필요하다. Action=parser, attr=naver로 실행한다. 검색어 목록의 각 검색어를 Naver API query={search_term}에 넣어 최신순으로 수집한다.",
   "search_terms": [
-    "최태원",
     "SK",
-    "SK이노베이션",
-    "SK E&S",
-    "SK에너지",
-    "SK지오센트릭",
-    "SK어스온"
+    "SK하이닉스",
+    "코스피",
+    "8000선"
   ],
   "filter_terms": [
     "최태원",
@@ -30,5 +27,5 @@
     }
   ],
   "created_at": "2026-05-08T00:00:00+09:00",
-  "updated_at": "2026-05-21T17:23:43+09:00"
+  "updated_at": "2026-05-28T18:01:20+09:00"
 }

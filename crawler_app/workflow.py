@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import shutil
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.header import decode_header
-from email.utils import parsedate_to_datetime
+from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote_plus, unquote, urljoin, urlparse
+from urllib.parse import parse_qsl, quote_plus, unquote, urljoin, urlparse, urlsplit
 import json
 import re
 import sys
@@ -18,7 +21,7 @@ from lxml import html as lxml_html
 import requests
 
 from crawler_app.daum_news_api import DAUM_NEWS_API_ATTR, fetch_daum_news_api_items, save_daum_news_api_items
-from crawler_app.duplicate_keys import duplicate_keys_for_record
+from crawler_app.duplicate_keys import canonicalize_article_url, duplicate_keys_for_record, normalize_duplicate_url
 from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
@@ -45,6 +48,8 @@ DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
 MAX_WORKFLOW_RECORD_LINES = 20_000
+KST = timezone(timedelta(hours=9))
+NUMERIC_SEARCH_TERM_RE = re.compile(r"^\d+$")
 BOARD_CONTAINER_CHILD_XPATHS = {
     "ol": ("./li",),
     "tbody": ("./tr",),
@@ -101,10 +106,82 @@ class WorkflowRecordPolicyStop(RuntimeError):
         self.generated_files = generated_files or []
 
 
+@dataclass(slots=True)
+class LatestDuplicateIndex:
+    normal_by_search: dict[str, set[str]] = field(default_factory=dict)
+    numeric_by_filter: dict[str, set[str]] = field(default_factory=dict)
+    all_keys: set[str] = field(default_factory=set)
+
+    @property
+    def has_records(self) -> bool:
+        return bool(self.all_keys)
+
+
 def _build_record_key(search_term_index: int | None, item_index: int | None) -> str:
     term_number = (search_term_index + 1) if isinstance(search_term_index, int) else 1
     item_label = f"item{item_index + 1:03d}" if isinstance(item_index, int) else "single"
     return f"term{term_number:03d}_{item_label}"
+
+
+def _build_stable_record_key(config: dict[str, Any], record: dict[str, Any]) -> str:
+    prefix = _record_key_prefix(config, record)
+    identity = f"{_record_identity_for_key(record)}|{datetime.now(KST).strftime('%Y%m%d')}"
+    digest = hashlib.blake2b(identity.encode("utf-8"), digest_size=8).digest()
+    token = base64.b32encode(digest).decode("ascii").rstrip("=")
+    return f"{prefix}-{token}"
+
+
+def _record_key_prefix(config: dict[str, Any], record: dict[str, Any]) -> str:
+    parser_name = _record_parser_name(record)
+    if parser_name in {NAVER_NEWS_API_ATTR, "naver_news_api"}:
+        return "NAVER"
+    if parser_name in {DAUM_NEWS_API_ATTR, "kakao_daum_web_search"}:
+        return "DAUM"
+    if parser_name in {GOOGLE_NEWS_RSS_ATTR, "google_news_rss"}:
+        return "GOOGLE"
+    output_name = Path(str(config.get("output_dir") or config.get("name") or "crawler")).name
+    normalized = re.sub(r"[^A-Za-z0-9]+", "", output_name).upper()
+    return (normalized or "CRAWLER")[:12]
+
+
+def _record_identity_for_key(record: dict[str, Any]) -> str:
+    for key in duplicate_keys_for_record(record):
+        normalized = normalize_duplicate_url(key)
+        if normalized:
+            return normalized
+    extracts = record.get("extracts") if isinstance(record.get("extracts"), dict) else {}
+    candidates = [
+        record.get("final_url"),
+        extracts.get("detail_url"),
+        extracts.get("originallink"),
+        extracts.get("link"),
+        extracts.get("extract_title"),
+        extracts.get("title"),
+        record.get("start_url"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return normalize_duplicate_url(text) or text
+    return json.dumps(record, ensure_ascii=False, sort_keys=True)
+
+
+def _record_parser_name(record: dict[str, Any]) -> str:
+    extracts = record.get("extracts") if isinstance(record.get("extracts"), dict) else {}
+    candidates: list[Any] = [
+        record.get("parser_name"),
+        extracts.get("parser_name"),
+        extracts.get("source_provider"),
+        extracts.get("source_api"),
+    ]
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            candidates.append(step.get("attr"))
+    for candidate in candidates:
+        text = str(candidate or "").strip().casefold()
+        if text:
+            return text
+    return ""
 
 
 def _build_artifact_prefix(record_key: str, step_index: int, step_name: str) -> str:
@@ -642,7 +719,7 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
     effective_record_policy = record_policy
     direct_record_policy_state: dict[str, Any] = {}
     if parser_name is None and record_policy is None:
-        effective_record_policy = _build_direct_workflow_record_policy(output_dir, direct_record_policy_state)
+        effective_record_policy = _build_direct_workflow_record_policy(output_dir, config, direct_record_policy_state)
     timeout_ms = int(config.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
     step_wait_ms = int(config.get("step_wait_ms") or DEFAULT_STEP_WAIT_MS)
     parse_pause_seconds = _config_parse_pause_seconds(config)
@@ -908,6 +985,8 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
                             execution.extracted_files.extend(record.get("extracted_files", []))
                 except WorkflowRecordPolicyStop as exc:
                     _mark_record_policy_stop(execution, exc)
+                    if _stop_remaining_search_terms(exc):
+                        break
                     continue
         except Exception as exc:
             execution.error = str(exc)
@@ -922,10 +1001,19 @@ def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | No
 
     if direct_record_policy_state:
         execution.diagnostics["previous_duplicate_index_count"] = direct_record_policy_state.get("previous_duplicate_index_count", 0)
+        execution.diagnostics["latest_duplicate_index_count"] = direct_record_policy_state.get("latest_duplicate_index_count", 0)
         same_run_duplicate_skipped_count = int(direct_record_policy_state.get("same_run_duplicate_skipped_count") or 0)
         if same_run_duplicate_skipped_count:
             execution.diagnostics["same_run_duplicate_skipped_count"] = (
                 int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+            )
+        latest_cross_group_duplicate_skipped_count = int(
+            direct_record_policy_state.get("latest_cross_group_duplicate_skipped_count") or 0
+        )
+        if latest_cross_group_duplicate_skipped_count:
+            execution.diagnostics["latest_cross_group_duplicate_skipped_count"] = (
+                int(execution.diagnostics.get("latest_cross_group_duplicate_skipped_count") or 0)
+                + latest_cross_group_duplicate_skipped_count
             )
     _finalize_workflow_execution(execution, config)
     _apply_workflow_result_filters(execution, config)
@@ -1084,7 +1172,7 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     raw_generated_files.extend(_collect_record_output_files(source_records))
     filter_enabled = bool(filter_terms)
     matched_root = _result_category_root(execution.output_dir, "filter")
-    nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
+    nonfilter_root = None
     if execution.diagnostics.get("record_policy_stopped") and not raw_records:
         execution.diagnostics["filter_terms"] = filter_terms
         execution.diagnostics["raw_record_count"] = len(source_records)
@@ -1098,6 +1186,7 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
             protected_roots=protected_roots,
             candidate_files=raw_generated_files,
         )
+        _remove_nonfilter_output_dir(execution.output_dir)
         _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
         execution.records = []
         execution.downloaded_files = []
@@ -1116,8 +1205,8 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     execution.diagnostics["nonfilter_record_count"] = len(nonfilter_records)
     execution.diagnostics["filter_enabled"] = filter_enabled
     execution.diagnostics["filter_output_dir"] = str(matched_root)
-    if nonfilter_root is not None:
-        execution.diagnostics["nonfilter_output_dir"] = str(nonfilter_root)
+    if filter_enabled:
+        execution.diagnostics["nonfilter_output_suppressed"] = True
 
     execution.records = matched_records
     execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
@@ -1139,22 +1228,10 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
             execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
             execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
-            if nonfilter_root is not None and nonfilter_records:
-                _relocate_record_file_lists(nonfilter_records, execution.output_dir, nonfilter_root)
         elif matched_records:
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
             execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
             execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
-
-        if nonfilter_root is not None and nonfilter_records:
-            nonfilter_path = _save_workflow_record_snapshot(
-                nonfilter_root,
-                config,
-                nonfilter_records,
-                filter_terms=filter_terms,
-                file_name="workflow_records.json",
-            )
-            execution.diagnostics["nonfilter_records_file"] = str(nonfilter_path)
 
     protected_roots = [matched_root, *([nonfilter_root] if nonfilter_root is not None else [])]
     _delete_unclassified_output_files(
@@ -1162,6 +1239,7 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
         protected_roots=protected_roots,
         candidate_files=raw_generated_files,
     )
+    _remove_nonfilter_output_dir(execution.output_dir)
     _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
 
     matched_path = _save_workflow_record_snapshot(
@@ -1173,6 +1251,14 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     )
     execution.diagnostics["matched_records_file"] = str(matched_path)
     execution.diagnostics["manifest_file"] = str(matched_path)
+    latest_path = _save_latest_record_snapshot(
+        matched_root,
+        config,
+        matched_records=matched_records,
+        nonfilter_records=nonfilter_records,
+        filter_terms=filter_terms,
+    )
+    execution.diagnostics["latest_records_file"] = str(latest_path)
 
 
 def _delete_unclassified_output_files(output_dir: Path, protected_roots: list[Path], candidate_files: list[str]) -> None:
@@ -1201,6 +1287,15 @@ def _delete_unclassified_output_files(output_dir: Path, protected_roots: list[Pa
             continue
 
 
+def _remove_nonfilter_output_dir(output_dir: Path) -> None:
+    nonfilter_root = output_dir / "nonfilter"
+    try:
+        if nonfilter_root.is_dir():
+            shutil.rmtree(nonfilter_root)
+    except FileNotFoundError:
+        return
+
+
 def _save_filtered_parser_outputs(
     *,
     execution: WorkflowExecution,
@@ -1221,7 +1316,6 @@ def _save_filtered_parser_outputs(
         parser_runs[index] = run
 
     matched_by_term = _group_records_by_search_term(matched_records)
-    nonfilter_by_term = _group_records_by_search_term(nonfilter_records)
     matched_files: list[str] = []
     nonfilter_files: list[str] = []
     for search_term_index, run in parser_runs.items():
@@ -1240,41 +1334,13 @@ def _save_filtered_parser_outputs(
             filter_terms=filter_terms,
         )
         _assign_parser_record_output_files(matched_by_term.get(search_term_index, []), matched_path)
+        _rename_parser_record_output_files(matched_by_term.get(search_term_index, []), matched_path)
         matched_files.append(str(matched_path))
         run["output_file"] = str(matched_path)
-        if nonfilter_root is not None:
-            nonfilter_output_dir = _search_term_output_dir(
-                nonfilter_root,
-                search_term,
-                search_term_index,
-                len(parser_runs) or 1,
-            )
-            nonfilter_items = [dict(record.get("extracts") or {}) for record in nonfilter_by_term.get(search_term_index, [])]
-            if nonfilter_items:
-                nonfilter_path = _save_parser_items(
-                    parser_name=parser_name or GOOGLE_NEWS_RSS_ATTR,
-                    output_dir=nonfilter_output_dir,
-                    search_term=search_term,
-                    source_url=api_url,
-                    final_url=final_url,
-                    items=nonfilter_items,
-                    filter_terms=filter_terms,
-                )
-                _assign_parser_record_output_files(nonfilter_by_term.get(search_term_index, []), nonfilter_path)
-                nonfilter_files.append(str(nonfilter_path))
 
     execution.extracted_files = matched_files
     execution.diagnostics["matched_output_files"] = matched_files
     execution.diagnostics["nonfilter_output_files"] = nonfilter_files
-    if nonfilter_root is not None and nonfilter_records:
-        nonfilter_snapshot = _save_workflow_record_snapshot(
-            nonfilter_root,
-            config,
-            nonfilter_records,
-            filter_terms=filter_terms,
-            file_name="workflow_records.json",
-        )
-        execution.diagnostics["nonfilter_records_file"] = str(nonfilter_snapshot)
 
 
 def _fetch_parser_items(
@@ -1346,6 +1412,57 @@ def _assign_parser_record_output_files(records: list[dict[str, Any]], manifest_p
                 step["output_file"] = str(output_path)
 
 
+def _rename_parser_record_output_files(records: list[dict[str, Any]], manifest_path: Path) -> None:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    item_files: list[str] = []
+    for record in records:
+        output_file = str(record.get("output_file") or "")
+        if not output_file:
+            continue
+        path = Path(output_file)
+        if not path.exists():
+            item_files.append(_relative_parser_item_file(manifest_path, path))
+            continue
+        record_key = safe_name(str(record.get("record_key") or path.stem))
+        target = _unique_path(path.with_name(f"{record_key}.json"))
+        if target != path:
+            try:
+                path.rename(target)
+            except OSError:
+                target = path
+        _write_parser_item_record_key(target, str(record.get("record_key") or ""))
+        record["output_file"] = str(target)
+        for step in record.get("steps") or []:
+            if isinstance(step, dict):
+                step["output_file"] = str(target)
+        item_files.append(_relative_parser_item_file(manifest_path, target))
+    if isinstance(payload, dict) and item_files:
+        payload["item_files"] = item_files
+        manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _relative_parser_item_file(manifest_path: Path, item_path: Path) -> str:
+    try:
+        return item_path.relative_to(manifest_path.parent).as_posix()
+    except ValueError:
+        return str(item_path)
+
+
+def _write_parser_item_record_key(path: Path, record_key: str) -> None:
+    if not record_key:
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if isinstance(payload, dict):
+        payload["record_key"] = record_key
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _parser_manifest_item_files(manifest_path: Path) -> list[str]:
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1398,7 +1515,7 @@ def _record_matches_filter_terms(record: dict[str, Any], filter_terms: list[str]
 
 def _record_filter_blob(value: Any) -> str:
     parts: list[str] = []
-    ignored_keys = {
+    metadata_keys = {
         "search_term",
         "search_term_index",
         "search_term_count",
@@ -1411,16 +1528,56 @@ def _record_filter_blob(value: Any) -> str:
         "config_name",
         "output_dir",
         "parser_name",
+        "post_id",
+        "item_index",
+        "source",
+        "source_name",
+        "source_provider",
+        "source_api",
+        "api_metadata",
         "record_key",
         "output_file",
+        "downloaded_file",
         "downloaded_files",
+        "extracted_file",
         "extracted_files",
+        "url",
+        "link",
+        "detail_url",
+        "originallink",
+        "api_url",
+        "rss_url",
+        "xpath",
+        "resolved_xpath",
+        "attr",
+        "action",
+        "name",
+        "success",
+        "error",
+        "duration_seconds",
+        "matched_count",
+        "pubDate",
+        "pub_date",
+        "published_at",
+        "date",
+        "datetime",
+    }
+    direct_content_keys = {
+        "extract_title",
+        "title",
+        "description",
+        "body",
+        "content",
+        "text",
+        "summary",
+        "desc",
+        "value",
     }
 
-    def visit(item: Any, key: str | None = None) -> None:
+    def visit_content(item: Any, key: str | None = None) -> None:
         if item is None:
             return
-        if key in ignored_keys:
+        if key in metadata_keys:
             return
         if isinstance(item, str):
             cleaned = " ".join(item.split()).strip().lower()
@@ -1429,17 +1586,34 @@ def _record_filter_blob(value: Any) -> str:
             return
         if isinstance(item, dict):
             for sub_key, sub_value in item.items():
-                visit(sub_value, str(sub_key))
+                visit_content(sub_value, str(sub_key))
             return
         if isinstance(item, list):
             for sub_value in item:
-                visit(sub_value, key)
+                visit_content(sub_value, key)
             return
         cleaned = " ".join(str(item).split()).strip().lower()
         if cleaned:
             parts.append(cleaned)
 
-    visit(value)
+    if not isinstance(value, dict):
+        visit_content(value)
+        return " \n".join(parts)
+
+    for key in direct_content_keys:
+        if key in value:
+            visit_content(value.get(key), key)
+
+    extracts = value.get("extracts")
+    if isinstance(extracts, dict):
+        visit_content(extracts)
+
+    steps = value.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and "value" in step:
+                visit_content(step.get("value"), "value")
+
     return " \n".join(parts)
 
 
@@ -1471,6 +1645,70 @@ def _collect_record_output_files(records: list[dict[str, Any]]) -> list[str]:
     return collected
 
 
+def _apply_stable_record_key(
+    record: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    rename_files: bool = False,
+) -> None:
+    old_key = str(record.get("record_key") or "")
+    new_key = _build_stable_record_key(config, record)
+    if not new_key or new_key == old_key:
+        return
+    record["record_key"] = new_key
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            step["record_key"] = new_key
+    if rename_files:
+        _rename_record_artifacts(record, old_key, new_key)
+
+
+def _rename_record_artifacts(record: dict[str, Any], old_key: str, new_key: str) -> None:
+    if not old_key or not new_key or old_key == new_key:
+        return
+    for key in ("downloaded_files", "extracted_files"):
+        value = record.get(key)
+        if isinstance(value, list):
+            record[key] = [_rename_record_artifact_path(path, old_key, new_key) for path in value]
+        elif isinstance(value, str):
+            record[key] = _rename_record_artifact_path(value, old_key, new_key)
+    if record.get("output_file"):
+        record["output_file"] = _rename_record_artifact_path(str(record["output_file"]), old_key, new_key)
+    for step in record.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        for key in ("downloaded_files", "extracted_files"):
+            value = step.get(key)
+            if isinstance(value, list):
+                step[key] = [_rename_record_artifact_path(path, old_key, new_key) for path in value]
+            elif isinstance(value, str):
+                step[key] = _rename_record_artifact_path(value, old_key, new_key)
+        for key in ("downloaded_file", "extracted_file", "output_file"):
+            if step.get(key):
+                step[key] = _rename_record_artifact_path(str(step[key]), old_key, new_key)
+
+
+def _rename_record_artifact_path(path_value: Any, old_key: str, new_key: str) -> str:
+    path_text = str(path_value or "")
+    if not path_text:
+        return ""
+    path = Path(path_text)
+    old_safe = safe_name(old_key)
+    new_safe = safe_name(new_key)
+    if old_safe not in path.name:
+        return path_text
+    target_name = path.name.replace(old_safe, new_safe, 1)
+    target = path.with_name(target_name)
+    try:
+        if path.exists():
+            target = _unique_path(target)
+            path.rename(target)
+            return str(target)
+    except OSError:
+        return path_text
+    return str(target)
+
+
 def _group_records_by_search_term(records: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for record in records:
@@ -1499,38 +1737,14 @@ def _save_workflow_record_snapshot(
         existing_records = existing_payload.get("records") if isinstance(existing_payload.get("records"), list) else []
         records = _merge_workflow_record_snapshot_records(existing_records, records)
     if file_name == "workflow_records.json":
-        allowed_record_keys = (
-            "record_key",
-            "success",
-            "extracts",
-            "downloaded_files",
-            "extracted_files",
-            "error",
-            "start_url",
-            "final_url",
-            "output_file",
-        )
-        filtered_records: list[dict[str, Any]] = []
+        snapshot_records: list[dict[str, Any]] = []
         for record in records:
             if not isinstance(record, dict):
                 continue
-            filtered_record = {key: record[key] for key in allowed_record_keys if key in record}
-            extracts = filtered_record.get("extracts")
-            if isinstance(extracts, dict):
-                filtered_extracts = dict(extracts)
-                title = str(filtered_extracts.pop("title", "")).strip()
-                if title:
-                    filtered_extracts["extract_title"] = title
-                detail_url = str(extracts.get("detail_url") or "").strip()
-                if detail_url:
-                    filtered_record["final_url"] = detail_url
-                filtered_record["extracts"] = filtered_extracts
-            filtered_records.append(filtered_record)
-        records = filtered_records
+            snapshot_records.append(_workflow_record_snapshot_record(config, record, filter_terms=filter_terms))
+        records = snapshot_records
     payload = {
         "config_name": config.get("name"),
-        "search_terms": _config_search_terms(config),
-        "filter_terms": filter_terms,
         "item_count": len(records),
         "records": records,
     }
@@ -1538,6 +1752,319 @@ def _save_workflow_record_snapshot(
         payload = _limit_workflow_record_snapshot_lines(payload)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
+
+
+def _save_latest_record_snapshot(
+    output_dir: Path,
+    config: dict[str, Any],
+    *,
+    matched_records: list[dict[str, Any]],
+    nonfilter_records: list[dict[str, Any]],
+    filter_terms: list[str],
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "latest.json"
+    existing_payload = _read_existing_workflow_record_snapshot(output_path)
+    existing_records = []
+    if existing_payload:
+        raw_existing = existing_payload.get("records")
+        if isinstance(raw_existing, list):
+            existing_records = [record for record in raw_existing if isinstance(record, dict)]
+
+    current_entries: list[dict[str, str]] = []
+    for record in matched_records:
+        terms = _matched_filter_terms(record, filter_terms) if filter_terms else [""]
+        for term in terms:
+            current_entries.append(_latest_record_entry(config, record, filter_term=term))
+    for record in nonfilter_records:
+        current_entries.append(_latest_record_entry(config, record, filter_term="nonfilter"))
+
+    records = _merge_latest_records(existing_records, current_entries)
+    payload = {
+        "config_name": config.get("name"),
+        "item_count": len(records),
+        "records": records,
+    }
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return output_path
+
+
+def _latest_record_entry(config: dict[str, Any], record: dict[str, Any], *, filter_term: str) -> dict[str, str]:
+    return {
+        "search_term": str(record.get("search_term") or ""),
+        "filter_term": str(filter_term or ""),
+        "final_url": _record_final_url(config, record),
+    }
+
+
+def _merge_latest_records(
+    existing_records: list[dict[str, Any]],
+    current_records: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    merged: dict[tuple[str, str], dict[str, str]] = {}
+    order: list[tuple[str, str]] = []
+    for record in current_records:
+        key = _latest_record_group_key(record)
+        if key in merged:
+            continue
+        merged[key] = _normalize_latest_record(record)
+        order.append(key)
+    for record in existing_records:
+        key = _latest_record_group_key(record)
+        if key in merged:
+            continue
+        merged[key] = _normalize_latest_record(record)
+        order.append(key)
+    return [merged[key] for key in order]
+
+
+def _latest_record_group_key(record: dict[str, Any]) -> tuple[str, str]:
+    search_term = str(record.get("search_term") or "")
+    search_key = "__numeric_page_param__" if NUMERIC_SEARCH_TERM_RE.fullmatch(search_term.strip()) else search_term
+    return search_key, str(record.get("filter_term") or "")
+
+
+def _normalize_latest_record(record: dict[str, Any]) -> dict[str, str]:
+    return {
+        "search_term": str(record.get("search_term") or ""),
+        "filter_term": str(record.get("filter_term") or ""),
+        "final_url": str(record.get("final_url") or ""),
+    }
+
+
+def build_latest_duplicate_index(
+    snapshot_roots: list[str | Path] | tuple[str | Path, ...],
+    config: dict[str, Any] | None = None,
+) -> LatestDuplicateIndex:
+    index = LatestDuplicateIndex()
+    for record in iter_latest_records(snapshot_roots):
+        prepared = _record_for_duplicate_index(config, record)
+        keys = duplicate_keys_for_record(prepared)
+        if not keys:
+            continue
+        search_term = str(record.get("search_term") or "")
+        filter_term = str(record.get("filter_term") or "")
+        target = (
+            index.numeric_by_filter.setdefault(filter_term, set())
+            if _is_numeric_search_term(search_term)
+            else index.normal_by_search.setdefault(search_term, set())
+        )
+        for key in keys:
+            target.add(key)
+            index.all_keys.add(key)
+    return index
+
+
+def iter_latest_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for root_value in snapshot_roots:
+        root = Path(root_value)
+        if root.is_file():
+            paths = [root] if root.name == "latest.json" else []
+        elif root.exists():
+            paths = list(root.rglob("latest.json"))
+        else:
+            paths = []
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            raw_records = payload.get("records") if isinstance(payload, dict) else payload
+            if isinstance(raw_records, list):
+                records.extend(record for record in raw_records if isinstance(record, dict))
+    return records
+
+
+def latest_duplicate_decision_for_record(
+    record: dict[str, Any],
+    latest_index: LatestDuplicateIndex,
+    *,
+    filter_terms: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    if not latest_index.has_records:
+        return None
+    keys = duplicate_keys_for_record(record)
+    if not keys:
+        return None
+
+    search_term = str(record.get("search_term") or "")
+    if _is_numeric_search_term(search_term):
+        candidate_filters = _latest_filter_candidates_for_record(record, list(filter_terms or []))
+        for filter_term in candidate_filters:
+            duplicate_key = next((key for key in keys if key in latest_index.numeric_by_filter.get(filter_term, set())), "")
+            if duplicate_key:
+                return _latest_duplicate_stop_decision(duplicate_key, latest_scope="numeric_filter")
+    else:
+        duplicate_key = next((key for key in keys if key in latest_index.normal_by_search.get(search_term, set())), "")
+        if duplicate_key:
+            return _latest_duplicate_stop_decision(duplicate_key, latest_scope="search_term")
+
+    duplicate_key = next((key for key in keys if key in latest_index.all_keys), "")
+    if duplicate_key:
+        return {
+            "include": False,
+            "stop": False,
+            "reason": "latest_cross_group_duplicate_skipped",
+            "metadata": {
+                "duplicate_key": duplicate_key,
+                "latest": True,
+                "stop_scope": "none",
+            },
+        }
+    return None
+
+
+def _latest_filter_candidates_for_record(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    if not filter_terms:
+        return [""]
+    matched = _matched_filter_terms(record, filter_terms)
+    if matched:
+        return matched
+    return ["nonfilter", ""]
+
+
+def _latest_duplicate_stop_decision(duplicate_key: str, *, latest_scope: str) -> dict[str, Any]:
+    stop_scope = "numeric_page_sequence" if latest_scope == "numeric_filter" else "search_term"
+    return {
+        "include": False,
+        "stop": True,
+        "reason": "duplicate_boundary_stopped",
+        "metadata": {
+            "duplicate_key": duplicate_key,
+            "stop_scope": stop_scope,
+            "boundary": True,
+            "latest": True,
+            "latest_scope": latest_scope,
+        },
+    }
+
+
+def _is_numeric_search_term(value: Any) -> bool:
+    return bool(NUMERIC_SEARCH_TERM_RE.fullmatch(str(value or "").strip()))
+
+
+def _duplicate_stop_scope_for_record(record: dict[str, Any]) -> str:
+    return "numeric_page_sequence" if _is_numeric_search_term(record.get("search_term")) else "search_term"
+
+
+def _stop_remaining_search_terms(exc: WorkflowRecordPolicyStop) -> bool:
+    return str(exc.metadata.get("stop_scope") or "") in {"numeric_page_sequence", "workflow", "config"}
+
+
+def _workflow_record_snapshot_record(
+    config: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    filter_terms: list[str],
+) -> dict[str, Any]:
+    if not str(record.get("record_key") or "").strip():
+        record = dict(record)
+        record["record_key"] = _build_stable_record_key(config, record)
+    return {
+        "record_key": str(record.get("record_key") or ""),
+        "search_term": str(record.get("search_term") or ""),
+        "filter_term": ", ".join(_matched_filter_terms(record, filter_terms)),
+        "extract_title": _record_title(record),
+        "description": _record_description(record),
+        "pub_date": _record_pub_date(record),
+        "final_url": _record_final_url(config, record),
+    }
+
+
+def _matched_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    blob = _record_filter_blob(record)
+    if not blob:
+        return []
+    return [term for term in filter_terms if str(term or "").strip().lower() in blob]
+
+
+def _record_extracts(record: dict[str, Any]) -> dict[str, Any]:
+    extracts = record.get("extracts")
+    return extracts if isinstance(extracts, dict) else {}
+
+
+def _record_title(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(
+        record.get("extract_title"),
+        record.get("title"),
+        extracts.get("extract_title"),
+        extracts.get("title"),
+    )
+
+
+def _record_description(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(
+        record.get("description"),
+        record.get("desc"),
+        record.get("summary"),
+        extracts.get("description"),
+        extracts.get("desc"),
+        extracts.get("summary"),
+    )
+
+
+def _record_pub_date(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    value = _first_record_text(
+        record.get("pub_date"),
+        record.get("pubDate"),
+        record.get("published_at"),
+        record.get("date"),
+        record.get("datetime"),
+        extracts.get("pub_date"),
+        extracts.get("pubDate"),
+        extracts.get("published_at"),
+        extracts.get("date"),
+        extracts.get("datetime"),
+    )
+    return value or format_datetime(datetime.now(KST))
+
+
+def _record_final_url(config: dict[str, Any], record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return canonicalize_article_url(
+        _first_record_text(
+            extracts.get("detail_url"),
+            record.get("detail_url"),
+            extracts.get("originallink"),
+            record.get("originallink"),
+            extracts.get("link"),
+            record.get("link"),
+            record.get("final_url"),
+            extracts.get("final_url"),
+        ),
+        page_query_params=_config_search_term_query_params(config, str(record.get("search_term") or "")),
+    )
+
+
+def _config_search_term_query_params(config: dict[str, Any], search_term: str) -> set[str]:
+    if not NUMERIC_SEARCH_TERM_RE.fullmatch(str(search_term or "").strip()):
+        return set()
+    try:
+        query_items = parse_qsl(urlsplit(str(config.get("start_url") or "")).query, keep_blank_values=True)
+    except ValueError:
+        return set()
+    params: set[str] = set()
+    for name, value in query_items:
+        if "{search_term}" in str(value):
+            params.add(str(name))
+    return params
+
+
+def _first_record_text(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, list):
+            text = _first_record_text(*value)
+        else:
+            text = str(value).strip()
+        if text:
+            return text
+    return ""
 
 
 def _limit_workflow_record_snapshot_lines(payload: dict[str, Any], max_lines: int = MAX_WORKFLOW_RECORD_LINES) -> dict[str, Any]:
@@ -1668,10 +2195,14 @@ def _parse_record_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
-    index: set[str] = set()
+def _build_existing_workflow_duplicate_indexes(
+    output_dir: Path,
+    config: dict[str, Any] | None = None,
+) -> tuple[set[str], set[str]]:
+    all_keys: set[str] = set()
+    boundary_keys: set[str] = set()
     if not output_dir.exists():
-        return index
+        return all_keys, boundary_keys
     for path in output_dir.rglob("workflow_records.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1680,30 +2211,74 @@ def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
         records = payload.get("records") if isinstance(payload, dict) else []
         if not isinstance(records, list):
             continue
-        for record in records:
+        for index, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
-            for key in duplicate_keys_for_record(record):
-                index.add(key)
-    return index
+            keys = duplicate_keys_for_record(_record_for_duplicate_index(config, record))
+            for key in keys:
+                all_keys.add(key)
+            if index == 0:
+                for key in keys:
+                    boundary_keys.add(key)
+    return all_keys, boundary_keys
 
 
-def _build_direct_workflow_record_policy(output_dir: Path, state: dict[str, Any]) -> RecordPolicy:
-    previous_duplicate_index = _build_existing_workflow_duplicate_index(output_dir)
+def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
+    all_keys, _ = _build_existing_workflow_duplicate_indexes(output_dir)
+    return all_keys
+
+
+def _record_for_duplicate_index(config: dict[str, Any] | None, record: dict[str, Any]) -> dict[str, Any]:
+    if config is None:
+        return record
+    prepared = dict(record)
+    prepared["final_url"] = _record_final_url(config, prepared)
+    return prepared
+
+
+def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any], state: dict[str, Any]) -> RecordPolicy:
+    previous_duplicate_index, boundary_duplicate_index = _build_existing_workflow_duplicate_indexes(output_dir, config)
+    latest_duplicate_index = build_latest_duplicate_index([output_dir], config)
+    filter_terms = _config_filter_terms(config)
     same_run_seen: set[str] = set()
     state["previous_duplicate_index_count"] = len(previous_duplicate_index)
+    state["previous_boundary_duplicate_index_count"] = len(boundary_duplicate_index)
+    state["latest_duplicate_index_count"] = len(latest_duplicate_index.all_keys)
     state["same_run_duplicate_skipped_count"] = 0
+    state["latest_cross_group_duplicate_skipped_count"] = 0
 
     def record_policy(record: dict[str, Any]) -> dict[str, Any]:
         keys = duplicate_keys_for_record(record)
-        duplicate_key = next((key for key in keys if key in previous_duplicate_index), "")
-        if duplicate_key:
-            return {
-                "include": False,
-                "stop": True,
-                "reason": "duplicate_stopped",
-                "metadata": {"duplicate_key": duplicate_key, "stop_scope": "search_term"},
-            }
+        if latest_duplicate_index.has_records:
+            latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
+            if latest_decision is not None:
+                if not latest_decision.get("stop"):
+                    state["latest_cross_group_duplicate_skipped_count"] = (
+                        int(state.get("latest_cross_group_duplicate_skipped_count") or 0) + 1
+                    )
+                return latest_decision
+        else:
+            boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
+            if boundary_duplicate_key:
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_boundary_stopped",
+                    "metadata": {
+                        "duplicate_key": boundary_duplicate_key,
+                        "stop_scope": _duplicate_stop_scope_for_record(record),
+                        "boundary": True,
+                    },
+                }
+
+            duplicate_key = next((key for key in keys if key in previous_duplicate_index), "")
+            if duplicate_key:
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_stopped",
+                    "metadata": {"duplicate_key": duplicate_key, "stop_scope": _duplicate_stop_scope_for_record(record)},
+                }
 
         same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
         if same_run_duplicate_key:
@@ -1741,9 +2316,16 @@ def _run_parser_workflow(
     effective_terms = search_terms or [None]
     total_items = 0
     item_limit = _step_loop_limit(parser_step)
-    existing_duplicate_index = set() if record_policy is not None else _build_existing_workflow_duplicate_index(execution.output_dir)
+    existing_duplicate_index: set[str] = set()
+    boundary_duplicate_index: set[str] = set()
+    latest_duplicate_index = LatestDuplicateIndex()
+    filter_terms = _config_filter_terms(config)
+    if record_policy is None:
+        existing_duplicate_index, boundary_duplicate_index = _build_existing_workflow_duplicate_indexes(execution.output_dir, config)
+        latest_duplicate_index = build_latest_duplicate_index([execution.output_dir], config)
     same_run_seen: set[str] = set()
     same_run_duplicate_skipped_count = 0
+    latest_cross_group_duplicate_skipped_count = 0
     for search_term_index, search_term in enumerate(effective_terms):
         term_output_dir = _search_term_output_dir(
             execution.output_dir,
@@ -1778,16 +2360,42 @@ def _run_parser_workflow(
                 final_url=final_url,
                 output_file="",
             )
+            _apply_stable_record_key(record, config)
             if record_policy is None:
                 keys = duplicate_keys_for_record(record)
-                duplicate_key = next((key for key in keys if key in existing_duplicate_index), "")
-                if duplicate_key:
-                    stop_exc = WorkflowRecordPolicyStop(
-                        reason="duplicate_stopped",
-                        metadata={"duplicate_key": duplicate_key, "stop_scope": "search_term"},
-                        records=accepted_records,
-                    )
-                    break
+                if latest_duplicate_index.has_records:
+                    latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
+                    if latest_decision is not None:
+                        if latest_decision.get("stop"):
+                            stop_exc = WorkflowRecordPolicyStop(
+                                reason=str(latest_decision.get("reason") or "duplicate_boundary_stopped"),
+                                metadata=dict(latest_decision.get("metadata") or {}),
+                                records=accepted_records,
+                            )
+                            break
+                        latest_cross_group_duplicate_skipped_count += 1
+                        continue
+                else:
+                    boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
+                    if boundary_duplicate_key:
+                        stop_exc = WorkflowRecordPolicyStop(
+                            reason="duplicate_boundary_stopped",
+                            metadata={
+                                "duplicate_key": boundary_duplicate_key,
+                                "stop_scope": _duplicate_stop_scope_for_record(record),
+                                "boundary": True,
+                            },
+                            records=accepted_records,
+                        )
+                        break
+                    duplicate_key = next((key for key in keys if key in existing_duplicate_index), "")
+                    if duplicate_key:
+                        stop_exc = WorkflowRecordPolicyStop(
+                            reason="duplicate_stopped",
+                            metadata={"duplicate_key": duplicate_key, "stop_scope": _duplicate_stop_scope_for_record(record)},
+                            records=accepted_records,
+                        )
+                        break
                 same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
                 if same_run_duplicate_key:
                     same_run_duplicate_skipped_count += 1
@@ -1816,6 +2424,7 @@ def _run_parser_workflow(
                 items=accepted_items,
             )
             _assign_parser_record_output_files(accepted_records, output_path)
+            _rename_parser_record_output_files(accepted_records, output_path)
             execution.extracted_files.append(str(output_path))
         execution.diagnostics.setdefault("search_term_runs", []).append(
             {
@@ -1833,12 +2442,19 @@ def _run_parser_workflow(
         execution.records.extend(accepted_records)
         if stop_exc is not None:
             _mark_record_policy_stop(execution, stop_exc)
+            if _stop_remaining_search_terms(stop_exc):
+                break
             continue
 
     execution.diagnostics["parser_item_count"] = total_items
     if same_run_duplicate_skipped_count:
         execution.diagnostics["same_run_duplicate_skipped_count"] = (
             int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+        )
+    if latest_cross_group_duplicate_skipped_count:
+        execution.diagnostics["latest_cross_group_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("latest_cross_group_duplicate_skipped_count") or 0)
+            + latest_cross_group_duplicate_skipped_count
         )
 
 
@@ -2448,7 +3064,11 @@ def _run_one_item(
         record["success"] = False
         record["error"] = str(exc)
     finally:
-        record["final_url"] = page.url
+        record["final_url"] = canonicalize_article_url(
+            page.url,
+            page_query_params=_config_search_term_query_params(config, str(search_term or "")),
+        )
+        _apply_stable_record_key(record, config, rename_files=True)
         page.close()
 
     return record

@@ -21,6 +21,9 @@ from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
 from crawler_app.duplicate_keys import duplicate_key_for_record, duplicate_keys_for_record
 from crawler_app.runtime_maintenance import cleanup_runtime_files
 from crawler_app.workflow import (
+    LatestDuplicateIndex,
+    build_latest_duplicate_index,
+    latest_duplicate_decision_for_record,
     _limit_workflow_record_snapshot_lines,
     _merge_workflow_record_snapshot_records,
     load_workflow_config,
@@ -557,13 +560,17 @@ def _run_selected_job(
 
     try:
         if snapshot_roots is not None:
-            duplicate_index = build_duplicate_index(list(snapshot_roots))
+            roots = list(snapshot_roots)
         else:
-            duplicate_index = build_duplicate_index(_snapshot_roots_for_jobs([job]))
+            roots = _snapshot_roots_for_jobs([job])
+        duplicate_index, boundary_duplicate_index = build_duplicate_indexes(roots)
+        latest_duplicate_index = build_latest_duplicate_index(roots)
         result = run_job(
             job,
             settings=settings,
             duplicate_index=duplicate_index,
+            boundary_duplicate_index=boundary_duplicate_index,
+            latest_duplicate_index=latest_duplicate_index,
             runner=runner,
             send_notifications=send_notifications,
             allow_email_send=allow_email_send,
@@ -680,27 +687,68 @@ def run_job(
     *,
     settings: dict[str, Any],
     duplicate_index: set[str],
+    boundary_duplicate_index: set[str] | None = None,
+    latest_duplicate_index: LatestDuplicateIndex | None = None,
     runner: Runner | None = None,
     send_notifications: bool = True,
     allow_email_send: bool = False,
 ) -> JobRunResult:
     started_at = utc_timestamp()
     seen: set[str] = set()
+    boundary_duplicate_index = boundary_duplicate_index or set()
+    latest_duplicate_index = latest_duplicate_index or LatestDuplicateIndex()
     duplicate: dict[str, Any] = {}
     same_run_duplicate_skipped_count = 0
+    latest_cross_group_duplicate_skipped_count = 0
+
+    def stop_scope_for_record(record: dict[str, Any]) -> str:
+        return "numeric_page_sequence" if str(record.get("search_term") or "").strip().isdigit() else "search_term"
 
     def record_policy(record: dict[str, Any]) -> dict[str, Any]:
-        nonlocal same_run_duplicate_skipped_count
+        nonlocal same_run_duplicate_skipped_count, latest_cross_group_duplicate_skipped_count
         keys = duplicate_keys_for_record(record)
-        duplicate_key = next((key for key in keys if key in duplicate_index), "")
-        if duplicate_key:
-            duplicate.update({"key": duplicate_key, "record": record})
-            return {
-                "include": False,
-                "stop": True,
-                "reason": "duplicate_stopped",
-                "metadata": {"duplicate_key": duplicate_key, "stop_scope": "search_term"},
-            }
+        if latest_duplicate_index.has_records:
+            latest_decision = latest_duplicate_decision_for_record(
+                record,
+                latest_duplicate_index,
+                filter_terms=job.filter_terms,
+            )
+            if latest_decision is not None:
+                if latest_decision.get("stop"):
+                    duplicate.update(
+                        {
+                            "key": (latest_decision.get("metadata") or {}).get("duplicate_key"),
+                            "record": record,
+                            "boundary": True,
+                            "latest": True,
+                        }
+                    )
+                else:
+                    latest_cross_group_duplicate_skipped_count += 1
+                return latest_decision
+        else:
+            boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
+            if boundary_duplicate_key:
+                duplicate.update({"key": boundary_duplicate_key, "record": record, "boundary": True})
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_boundary_stopped",
+                    "metadata": {
+                        "duplicate_key": boundary_duplicate_key,
+                        "stop_scope": stop_scope_for_record(record),
+                        "boundary": True,
+                    },
+                }
+            duplicate_key = next((key for key in keys if key in duplicate_index), "")
+            if duplicate_key:
+                duplicate.update({"key": duplicate_key, "record": record})
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_stopped",
+                    "metadata": {"duplicate_key": duplicate_key, "stop_scope": stop_scope_for_record(record)},
+                }
         same_run_duplicate_key = next((key for key in keys if key in seen), "")
         if same_run_duplicate_key:
             same_run_duplicate_skipped_count += 1
@@ -721,6 +769,8 @@ def run_job(
         metadata = dict(normalized.get("metadata", {}))
         if same_run_duplicate_skipped_count:
             metadata["same_run_duplicate_skipped_count"] = same_run_duplicate_skipped_count
+        if latest_cross_group_duplicate_skipped_count:
+            metadata["latest_cross_group_duplicate_skipped_count"] = latest_cross_group_duplicate_skipped_count
         metadata.setdefault("config_name", job.config_name)
         metadata.setdefault("job_id", job.job_id)
         metadata.setdefault("config_path", job.config_path)
@@ -853,14 +903,30 @@ def url_candidate(record: dict[str, Any]) -> str:
 
 
 def build_duplicate_index(snapshot_roots: Iterable[str | Path]) -> set[str]:
+    duplicate_index, _ = build_duplicate_indexes(snapshot_roots)
+    return duplicate_index
+
+
+def build_duplicate_indexes(snapshot_roots: Iterable[str | Path]) -> tuple[set[str], set[str]]:
     index: set[str] = set()
-    for record in iter_snapshot_records(snapshot_roots):
-        for key in duplicate_keys_for_record(record):
-            index.add(key)
-    return index
+    boundary_index: set[str] = set()
+    for records in iter_snapshot_record_groups(snapshot_roots):
+        for record_index, record in enumerate(records):
+            keys = duplicate_keys_for_record(record)
+            for key in keys:
+                index.add(key)
+            if record_index == 0:
+                for key in keys:
+                    boundary_index.add(key)
+    return index, boundary_index
 
 
 def iter_snapshot_records(snapshot_roots: Iterable[str | Path]) -> Iterable[dict[str, Any]]:
+    for records in iter_snapshot_record_groups(snapshot_roots):
+        yield from records
+
+
+def iter_snapshot_record_groups(snapshot_roots: Iterable[str | Path]) -> Iterable[list[dict[str, Any]]]:
     for root_value in snapshot_roots:
         root = Path(root_value)
         paths: list[Path]
@@ -875,9 +941,12 @@ def iter_snapshot_records(snapshot_roots: Iterable[str | Path]) -> Iterable[dict
             raw_records = payload.get("records") if isinstance(payload, dict) else payload
             if not isinstance(raw_records, list):
                 continue
+            records: list[dict[str, Any]] = []
             for record in raw_records:
                 if isinstance(record, dict):
-                    yield record
+                    records.append(record)
+            if records:
+                yield records
 
 
 def records_matching_keywords(records: Iterable[dict[str, Any]], keywords: Iterable[str]) -> list[dict[str, Any]]:
