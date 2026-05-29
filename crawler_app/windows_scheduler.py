@@ -167,7 +167,7 @@ def list_managed_tasks(*, command_runner: CommandRunner | None = None) -> list[s
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
         task_name = str(row.get("TaskName") or "").strip()
-        if task_name.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}"):
+        if _is_monitoring_managed_task_name(task_name):
             task_names.append(task_name)
     return task_names
 
@@ -188,7 +188,7 @@ def list_managed_task_details(*, command_runner: CommandRunner | None = None) ->
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
         task_name = str(row.get("TaskName") or "").strip()
-        if not task_name.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}"):
+        if not _is_monitoring_managed_task_name(task_name):
             continue
         details.append(
             SchedulerTaskInfo(
@@ -220,7 +220,7 @@ def _basic_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
     reader = csv.DictReader(io.StringIO(result.stdout))
     for row in reader:
         task_name = str(row.get("TaskName") or "").strip()
-        if not task_name.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}"):
+        if not _is_monitoring_managed_task_name(task_name):
             continue
         details.append(
             SchedulerTaskInfo(
@@ -265,7 +265,7 @@ def _powershell_task_details(runner: CommandRunner) -> list[SchedulerTaskInfo]:
         if not isinstance(row, dict):
             continue
         task_name = str(row.get("TaskName") or "").strip()
-        if not task_name.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}"):
+        if not _is_monitoring_managed_task_name(task_name):
             continue
         details.append(
             SchedulerTaskInfo(
@@ -287,7 +287,7 @@ def delete_managed_task(
     registry_path: str | Path = DEFAULT_SCHEDULER_REGISTRY_PATH,
 ) -> SchedulerDeleteResult:
     normalized = str(task_name or "").strip()
-    if not normalized.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}"):
+    if not _is_monitoring_managed_task_name(normalized):
         raise ValueError("Only managed crawler orchestration tasks can be deleted.")
     runner = command_runner or _run_command
     runner(["schtasks.exe", "/End", "/TN", normalized])
@@ -472,6 +472,15 @@ def managed_task_name(job_id: str, variant: str = "") -> str:
     digest = hashlib.sha1(job_id.encode("utf-8")).hexdigest()[:12]
     suffix = f"_{safe_task_suffix(variant)}" if variant else ""
     return f"{TASK_FOLDER}\\{TASK_PREFIX}{digest}{suffix}"
+
+
+def _is_monitoring_managed_task_name(task_name: str) -> bool:
+    normalized = str(task_name or "").strip()
+    return normalized.startswith(f"{TASK_FOLDER}\\{TASK_PREFIX}")
+
+
+def _task_basename(task_name: str) -> str:
+    return str(task_name or "").strip().rstrip("\\").split("\\")[-1]
 
 
 def safe_task_suffix(value: str) -> str:

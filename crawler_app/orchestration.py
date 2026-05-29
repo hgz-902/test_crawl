@@ -24,7 +24,6 @@ from crawler_app.workflow import (
     LatestDuplicateIndex,
     build_latest_duplicate_index,
     latest_duplicate_decision_for_record,
-    _limit_workflow_record_snapshot_lines,
     _merge_workflow_record_snapshot_records,
     load_workflow_config,
     run_workflow_config,
@@ -1194,8 +1193,6 @@ def _read_json(path: Path, *, default: Any) -> Any:
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.tmp")
-    if path.name == "workflow_records.json" and isinstance(payload, dict):
-        payload = _limit_workflow_record_snapshot_lines(payload)
     temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temp_path.replace(path)
 

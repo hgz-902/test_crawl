@@ -284,6 +284,14 @@ KAKAO_REST_API_KEY=<Kakao REST API key>
 
 Scheduled run logs are written under `runtime/scheduled-task/`, which is ignored by git.
 
+### Workflow Records Rollup
+
+When the crawler web server is running (`python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000`), a Python background scheduler inside the server process rolls `outputs/*/filter/workflow_records.json` at the configured daily time. The rollup uses the same `crawler_app.workflow_records_rollup.rollup_workflow_records()` function as the manual PowerShell script, so file locking, archive placement, latest-first archive sorting, and keep-count pruning stay consistent.
+
+The default rollup time is defined by `DEFAULT_ROLLUP_TIME` in `crawler_app/workflow_records_rollup.py`. Rollup archives are stored under each crawler's `outputs/<crawler>/filter/rollup/` folder, and server-side rollup logs are written under `runtime/scheduled-task/`.
+
+If the web server is not running at the configured time, the Python scheduler cannot run. For a manual one-off rollup, run `python -m crawler_app.workflow_records_rollup` from the project virtual environment.
+
 ### Validation
 
 ```powershell
@@ -292,3 +300,44 @@ python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
 ```
 
 Then verify `/orchestration` in a browser by saving settings and running a small selected batch. Without SMTP credentials, mail notification should report dry-run.
+
+## Workflow Records API
+
+The app exposes a POST API that reads the current and rolled `workflow_records.json` files and returns records in the same record shape stored on disk.
+
+Endpoint:
+
+```text
+POST /api/workflow-records
+POST /api/workflow-records/search
+```
+
+Example single-day request:
+
+```json
+{
+  "date": "2026-05-29",
+  "source_name": "naver_news",
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Example range request across all sources:
+
+```json
+{
+  "from_date": "2026-05-01",
+  "to_date": "2026-05-29",
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Rules:
+
+- `date` reads one rollup date. If it is today, the live `outputs/<source>/filter/workflow_records.json` file is used.
+- `from_date` and `to_date` read matching rollup files for past dates and the live file when today's date is included.
+- `source_name` is optional. When omitted, all `outputs/<source>/` folders are searched.
+- Default pagination is `page=1`, `page_size=20`; `page_size` is capped at 100.
+- `sort_by` defaults to `pub_date`, and `published_at` is accepted as an alias.

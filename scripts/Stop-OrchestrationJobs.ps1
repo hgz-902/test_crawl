@@ -31,6 +31,32 @@ function Test-ScheduledTaskNotFoundError {
   )
 }
 
+function Test-TaskCommandNotFoundMessage {
+  param([string]$Message)
+  return $Message -match "찾지 못|찾을 수|not found|cannot find|No MSFT_ScheduledTask|ObjectNotFound"
+}
+
+function Invoke-ScheduledTaskCommand {
+  param([string[]]$Arguments)
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = (& schtasks.exe @Arguments 2>&1 | ForEach-Object { "$_" } | Out-String).Trim()
+    $exitCode = $LASTEXITCODE
+  }
+  catch {
+    $output = [string]$_.Exception.Message
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 1 }
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  [PSCustomObject]@{
+    ExitCode = $exitCode
+    Output = $output
+  }
+}
+
 $namespace = Get-ProjectNamespace -Root $ProjectRoot
 $taskPath = "\CrawlerOrchestration\$namespace\"
 $launcherDir = Join-Path $env:LOCALAPPDATA "CrawlerOrchestration\$namespace"
@@ -47,33 +73,42 @@ if ($tasks.Count -eq 0) {
 foreach ($task in $tasks) {
   $fullName = "$($task.TaskPath)$($task.TaskName)"
   if ($PSCmdlet.ShouldProcess($fullName, "Stop scheduled task")) {
-    try {
-      if ($task.State -eq "Running") {
-        Stop-ScheduledTask -TaskPath $task.TaskPath -TaskName $task.TaskName
+    if ($task.State -eq "Running") {
+      $endResult = Invoke-ScheduledTaskCommand -Arguments @("/End", "/TN", $fullName)
+      if ($endResult.ExitCode -eq 0) {
         Write-Host "Stopped $fullName"
       }
+      elseif (Test-TaskCommandNotFoundMessage -Message $endResult.Output) {
+        Write-Host "Stopped $fullName (already missing)"
+      }
       else {
-        Write-Host "Skipped stop for $fullName (state=$($task.State))"
+        Write-Warning "Failed to stop ${fullName}: $($endResult.Output)"
       }
     }
-    catch {
-      Write-Warning "Failed to stop ${fullName}: $($_.Exception.Message)"
+    else {
+      Write-Host "Skipped stop for $fullName (state=$($task.State))"
     }
   }
 
   if ($DeleteTasks -and $PSCmdlet.ShouldProcess($fullName, "Delete scheduled task")) {
-    try {
-      Unregister-ScheduledTask -TaskPath $task.TaskPath -TaskName $task.TaskName -Confirm:$false -ErrorAction Stop
+    $deleteResult = Invoke-ScheduledTaskCommand -Arguments @("/Delete", "/TN", $fullName, "/F")
+    if ($deleteResult.ExitCode -eq 0) {
       Write-Host "Deleted $fullName"
     }
-    catch {
-      if (Test-ScheduledTaskNotFoundError -ErrorRecord $_) {
-        Write-Host "Deleted $fullName (already missing)"
-      }
-      else {
-        throw
-      }
+    elseif (Test-TaskCommandNotFoundMessage -Message $deleteResult.Output) {
+      Write-Host "Deleted $fullName (already missing)"
     }
+    else {
+      throw "Failed to delete ${fullName}: $($deleteResult.Output). Run the crawler server or VS Code with an account that can delete this project's Windows Task Scheduler tasks."
+    }
+  }
+}
+
+if ($DeleteTasks) {
+  $remainingTasks = @(Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue)
+  if ($remainingTasks.Count -gt 0) {
+    $remainingNames = ($remainingTasks | ForEach-Object { "$($_.TaskPath)$($_.TaskName)" }) -join ", "
+    throw "Monitoring stop did not delete all managed tasks. Remaining tasks: $remainingNames"
   }
 }
 

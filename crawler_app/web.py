@@ -43,6 +43,8 @@ from crawler_app.windows_scheduler import (
     validate_windows_schedule_settings,
 )
 from crawler_app.workflow import preview_workflow_config
+from crawler_app.workflow_records_api import build_workflow_records_response
+from crawler_app.workflow_records_rollup_scheduler import WorkflowRecordsRollupScheduler
 from crawlers.configurable_crawler import ConfigurableCrawler
 
 
@@ -55,10 +57,31 @@ DISPLAY_TIMEZONE = timezone(timedelta(hours=9), "KST")
 ORCHESTRATION_FLASH_COOKIE = "crawler_orchestration_flash"
 ORCHESTRATION_FLASH_DIR = BASE_DIR / "orchestration_state" / "flash"
 ORCHESTRATION_SCHEDULER_LOCK = asyncio.Lock()
+WORKFLOW_RECORDS_ROLLUP_SCHEDULER = WorkflowRecordsRollupScheduler(project_root=BASE_DIR)
 
 app = FastAPI(title="Crawler Config Manager")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.on_event("startup")
+async def start_workflow_records_rollup_scheduler() -> None:
+    WORKFLOW_RECORDS_ROLLUP_SCHEDULER.start()
+
+
+@app.on_event("shutdown")
+async def stop_workflow_records_rollup_scheduler() -> None:
+    WORKFLOW_RECORDS_ROLLUP_SCHEDULER.stop()
+
+
+@app.post("/api/workflow-records")
+@app.post("/api/workflow-records/search")
+async def workflow_records_api_route(request: Request) -> dict[str, Any]:
+    try:
+        payload = await _request_payload(request)
+        return build_workflow_records_response(payload, outputs_root=BASE_DIR / "outputs")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -410,6 +433,20 @@ def _safe_json(value: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+async def _request_payload(request: Request) -> dict[str, Any]:
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError as exc:
+            raise ValueError("request body must be valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be an object")
+        return payload
+    form = await request.form()
+    return {key: form.get(key) for key in form.keys()}
 
 
 def _redirect_orchestration(

@@ -28,6 +28,7 @@ runtime/
 imsi/
 configs copy/
 $outDir/
+naver_news_문제*/
 
 # Harness/session-local documents
 codex_app_agents.md
