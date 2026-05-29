@@ -48,6 +48,7 @@ SUPPORTED_WAIT_STATES = {"attached", "visible", "hidden", "detached"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
+API_RECENT_URL_INDEX_LIMIT = 2000
 KST = timezone(timedelta(hours=9))
 NUMERIC_SEARCH_TERM_RE = re.compile(r"^\d+$")
 BOARD_CONTAINER_CHILD_XPATHS = {
@@ -113,11 +114,17 @@ class LatestDuplicateIndex:
     numeric_by_filter: dict[str, set[str]] = field(default_factory=dict)
     normal_boundaries_by_search: dict[str, list["LatestBoundary"]] = field(default_factory=dict)
     numeric_boundaries_by_filter: dict[str, list["LatestBoundary"]] = field(default_factory=dict)
+    api_recent_keys: set[str] = field(default_factory=set)
     all_keys: set[str] = field(default_factory=set)
 
     @property
     def has_records(self) -> bool:
-        return bool(self.all_keys or self.normal_boundaries_by_search or self.numeric_boundaries_by_filter)
+        return bool(
+            self.all_keys
+            or self.api_recent_keys
+            or self.normal_boundaries_by_search
+            or self.numeric_boundaries_by_filter
+        )
 
 
 @dataclass(slots=True)
@@ -1896,6 +1903,11 @@ def _save_latest_record_snapshot(
         "item_count": len(records),
         "records": records,
     }
+    if _config_parser_name(config) in SUPPORTED_PARSER_ATTRS:
+        payload["api_recent_records"] = _merge_api_recent_records(
+            existing_payload.get("api_recent_records") if isinstance(existing_payload, dict) else [],
+            current_entries,
+        )
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
 
@@ -1986,6 +1998,28 @@ def _dedupe_latest_records_by_url(records: list[dict[str, str]]) -> list[dict[st
     return deduped
 
 
+def _merge_api_recent_records(
+    existing_records: Any,
+    current_records: list[dict[str, str]],
+    *,
+    limit: int = API_RECENT_URL_INDEX_LIMIT,
+) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_record in [*current_records, *(existing_records if isinstance(existing_records, list) else [])]:
+        if not isinstance(raw_record, dict):
+            continue
+        record = _normalize_latest_record(raw_record)
+        url_key = normalize_duplicate_url(record.get("final_url"))
+        if not url_key or url_key in seen:
+            continue
+        seen.add(url_key)
+        merged.append(record)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 def _latest_record_group_key(record: dict[str, Any]) -> tuple[str, str]:
     search_term = str(record.get("search_term") or "")
     search_key = "__numeric_page_param__" if NUMERIC_SEARCH_TERM_RE.fullmatch(search_term.strip()) else search_term
@@ -2027,11 +2061,33 @@ def build_latest_duplicate_index(
         for key in keys:
             target.add(key)
             index.all_keys.add(key)
+    for record in iter_latest_api_recent_records(snapshot_roots):
+        prepared = _record_for_duplicate_index(config, record)
+        for key in duplicate_keys_for_record(prepared):
+            index.api_recent_keys.add(key)
     return index
 
 
 def iter_latest_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
+    for payload in iter_latest_payloads(snapshot_roots):
+        raw_records = payload.get("records") if isinstance(payload, dict) else payload
+        if isinstance(raw_records, list):
+            records.extend(record for record in raw_records if isinstance(record, dict))
+    return records
+
+
+def iter_latest_api_recent_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for payload in iter_latest_payloads(snapshot_roots):
+        raw_records = payload.get("api_recent_records") if isinstance(payload, dict) else None
+        if isinstance(raw_records, list):
+            records.extend(record for record in raw_records if isinstance(record, dict))
+    return records
+
+
+def iter_latest_payloads(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
     for root_value in snapshot_roots:
         root = Path(root_value)
         if root.is_file():
@@ -2045,10 +2101,9 @@ def iter_latest_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            raw_records = payload.get("records") if isinstance(payload, dict) else payload
-            if isinstance(raw_records, list):
-                records.extend(record for record in raw_records if isinstance(record, dict))
-    return records
+            if isinstance(payload, dict):
+                payloads.append(payload)
+    return payloads
 
 
 def latest_duplicate_decision_for_record(
@@ -2087,6 +2142,13 @@ def latest_duplicate_decision_for_record(
         )
         if decision is not None:
             return decision
+
+    api_recent_duplicate_key = next((key for key in keys if key in latest_index.api_recent_keys), "")
+    if api_recent_duplicate_key:
+        return _latest_duplicate_stop_decision(
+            api_recent_duplicate_key,
+            latest_scope="api_recent_url",
+        )
 
     duplicate_key = next((key for key in keys if key in latest_index.all_keys), "")
     if duplicate_key:

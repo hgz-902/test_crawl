@@ -192,16 +192,18 @@ Settings and run history are stored in local runtime files:
 
 ### Duplicate Stop Policy
 
-Before a batch run, the orchestration layer reads existing `workflow_records.json` snapshots under configured output directories and builds a duplicate index.
+Before a batch run, the orchestration layer reads the configured output directory for the current crawler and builds duplicate state from `latest.json` plus any live `workflow_records.json` snapshots.
 
-Duplicate keys are derived from common record fields:
+Duplicate keys use normalized `final_url` only. Title-based duplicate checks are intentionally not used.
 
-- Title candidates: `extracts.title`, `extracts.extract_title`, title-like extract names, or parser step value.
-- URL candidates: `extracts.detail_url`, `extracts.link`, `extracts.originallink`, `extracts.url`, `final_url`, or `start_url`.
-- Preferred key: `title + url`.
-- Fallback key: title only when no URL is available.
+`latest.json` is the boundary file used after `workflow_records.json` has been rolled up:
 
-When a duplicate is found, only the current crawler job is stopped as `duplicate_stopped`. The duplicate record is not added to the new result or parser output, and the next selected crawler job continues. During normal UI runs, each config builds its duplicate index from its own configured output directory so another config's matching title or URL does not stop the current config.
+- `records` keeps the newest boundary per search/filter group.
+- Numeric `search_terms` are treated as page parameters and share boundaries by `filter_term`.
+- Normal search terms keep boundaries by `search_term`.
+- Naver, Daum, and Google additionally keep `api_recent_records`, a source-wide recent URL index used to catch API articles that were already collected but are not the newest item of their search/filter group.
+
+When a previous-run duplicate boundary is found, the current search term is stopped as `duplicate_stopped` and the next search term or selected crawler job can continue. When the duplicate appears only inside the same active run, the item is skipped and the current search term continues.
 
 ### Schedule Semantics
 
