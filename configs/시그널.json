@@ -19,7 +19,6 @@
       "xpath_2": "//*[@id=\"l-left-scroll-in\"]/div/ul/li[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -42,5 +41,5 @@
     }
   ],
   "created_at": "2026-05-15T00:00:00+09:00",
-  "updated_at": "2026-05-28T14:04:34+09:00"
+  "updated_at": "2026-05-30T10:07:49+09:00"
 }

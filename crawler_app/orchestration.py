@@ -399,7 +399,7 @@ def registered_config_jobs(config_dir: str | Path = CONFIG_DIR) -> list[Register
     for summary in list_configs(config_dir):
         jobs.append(
             RegisteredJob(
-                job_id=Path(summary.path).stem,
+                job_id=config_file_stem(Path(summary.path).stem),
                 config_name=summary.name,
                 config_path=str(Path(summary.path)),
                 output_dir=summary.output_dir,

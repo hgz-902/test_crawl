@@ -100,8 +100,15 @@ def delete_config(name: str, config_dir: str | Path = CONFIG_DIR) -> None:
 
 
 def config_name_to_path(name: str, config_dir: str | Path = CONFIG_DIR) -> Path:
+    root = Path(config_dir)
+    raw_name = str(name).strip()
+    exact_stem = Path(raw_name).name
+    if exact_stem and exact_stem == raw_name:
+        exact_path = root / f"{exact_stem}.json"
+        if exact_path.exists():
+            return exact_path
     cleaned = config_file_stem(name)
-    return Path(config_dir) / f"{cleaned}.json"
+    return root / f"{cleaned}.json"
 
 
 def config_file_stem(name: str) -> str:

@@ -13,7 +13,7 @@ from crawler_app.file_lock import FileLock, FileLockTimeout
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUTS_ROOT = APP_ROOT / "outputs"
 DEFAULT_KEEP_COUNT = 20
-DEFAULT_ROLLUP_TIME = "18:40"
+DEFAULT_ROLLUP_TIME = "12:52"
 KST = timezone(timedelta(hours=9))
 
 

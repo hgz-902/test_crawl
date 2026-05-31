@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 
 from crawler_app.orchestration import OrchestrationStateStore, batch_to_dict, cron_matches_datetime, run_batch
@@ -15,7 +16,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_output_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
+    _configure_output_encoding()
     args = build_parser().parse_args()
     store = OrchestrationStateStore()
     settings = store.load_settings()

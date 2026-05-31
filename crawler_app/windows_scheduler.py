@@ -428,10 +428,10 @@ def write_scheduler_registry(
             tasks.append(
                 {
                     "task_name": plan.task_name,
-                    "job_id": job.job_id,
-                    "config_name": job.config_name,
-                    "config_path": job.config_path,
-                    "output_dir": job.output_dir,
+                    "job_id": str(job.job_id),
+                    "config_name": str(job.config_name),
+                    "config_path": str(job.config_path),
+                    "output_dir": str(job.output_dir),
                     "search_terms_count": len(job.search_terms),
                     "filter_terms_count": len(job.filter_terms),
                     "interval": normalize_interval(job_settings.get("interval")),

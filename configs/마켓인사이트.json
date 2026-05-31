@@ -19,7 +19,6 @@
       "xpath_2": "//*[@id=\"contents\"]/div/div/div[1]/ul/li[2]/div/h3/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 20,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -42,5 +41,5 @@
     }
   ],
   "created_at": "2026-05-15T00:00:00+09:00",
-  "updated_at": "2026-05-21T17:25:51+09:00"
+  "updated_at": "2026-05-30T10:07:41+09:00"
 }

@@ -8,8 +8,7 @@
   "ignore_https_errors": false,
   "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [
-    "1",
-    "2"
+    "1"
   ],
   "filter_terms": [
     "석유",
@@ -27,7 +26,6 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[3]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 10,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -61,5 +59,5 @@
     }
   ],
   "created_at": "2026-04-28T18:13:20+09:00",
-  "updated_at": "2026-05-28T16:21:33+09:00"
+  "updated_at": "2026-05-30T10:06:28+09:00"
 }

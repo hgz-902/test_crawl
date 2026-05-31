@@ -8,8 +8,7 @@
   "ignore_https_errors": false,
   "notes": "extract_body는 개발자도구에서 직접 수집한 XPath로는 실패하여, AI의 도움을 받아 작성",
   "search_terms": [
-    "1",
-    "2"
+    "1"
   ],
   "filter_terms": [
     "EV",
@@ -50,5 +49,5 @@
     }
   ],
   "created_at": "2026-05-27T11:37:00+09:00",
-  "updated_at": "2026-05-27T14:01:32+09:00"
+  "updated_at": "2026-05-30T10:16:51+09:00"
 }

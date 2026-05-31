@@ -290,7 +290,7 @@ Scheduled run logs are written under `runtime/scheduled-task/`, which is ignored
 
 When the crawler web server is running (`python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000`), a Python background scheduler inside the server process rolls `outputs/*/filter/workflow_records.json` at the configured daily time. The rollup uses the same `crawler_app.workflow_records_rollup.rollup_workflow_records()` function as the manual PowerShell script, so file locking, archive placement, latest-first archive sorting, and keep-count pruning stay consistent.
 
-The default rollup time is defined by `DEFAULT_ROLLUP_TIME` in `crawler_app/workflow_records_rollup.py`. Rollup archives are stored under each crawler's `outputs/<crawler>/filter/rollup/` folder, and server-side rollup logs are written under `runtime/scheduled-task/`.
+The default rollup time is defined by `DEFAULT_ROLLUP_TIME` in `crawler_app/workflow_records_rollup.py`. The running web server rereads that source value on each scheduler check, so changing and saving the constant can take effect without restarting the server. A rollup is only skipped when the same `date + rollup time` has already run; changing the time later in the day allows that new daily boundary to run once. Rollup archives are stored under each crawler's `outputs/<crawler>/filter/rollup/` folder, and server-side rollup logs are written under `runtime/scheduled-task/`.
 
 If the web server is not running at the configured time, the Python scheduler cannot run. For a manual one-off rollup, run `python -m crawler_app.workflow_records_rollup` from the project virtual environment.
 
