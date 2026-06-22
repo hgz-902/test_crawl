@@ -621,6 +621,21 @@ document.addEventListener("change", (event) => {
   }
 });
 
+document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-parquet-filter]")) {
+    filterParquetRows();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.matches("[data-parquet-select-all]")) {
+    setVisibleParquetChecks(true);
+  }
+  if (event.target.matches("[data-parquet-clear]")) {
+    setVisibleParquetChecks(false);
+  }
+});
+
 document.addEventListener("submit", (event) => {
   const confirmTarget = (event.submitter && event.submitter.closest("[data-confirm]")) || event.target.closest("[data-confirm]");
   if (confirmTarget && !window.confirm(confirmTarget.dataset.confirm)) {
@@ -641,8 +656,33 @@ document.addEventListener("submit", (event) => {
     document.getElementById("payload").value = JSON.stringify(buildPayload(event.target));
   }
 
+  if (event.target.matches("[data-download-form]")) {
+    return;
+  }
+
   showGlobalProgressOverlay(progressMessageForSubmit(event));
 });
+
+// parquet 전환 목록에서 output/kind 필터를 적용한다.
+function filterParquetRows() {
+  const outputFilter = (document.querySelector('[data-parquet-filter="output"]')?.value || "").trim().toLowerCase();
+  const kindFilter = (document.querySelector('[data-parquet-filter="kind"]')?.value || "").trim().toLowerCase();
+  document.querySelectorAll("[data-parquet-row]").forEach((row) => {
+    const output = (row.dataset.output || "").toLowerCase();
+    const kind = (row.dataset.kind || "").toLowerCase();
+    const visible = (!outputFilter || output.includes(outputFilter)) && (!kindFilter || kind.includes(kindFilter));
+    row.hidden = !visible;
+  });
+}
+
+// 현재 화면에 보이는 parquet row의 체크박스만 선택/해제한다.
+function setVisibleParquetChecks(checked) {
+  document.querySelectorAll("[data-parquet-row]").forEach((row) => {
+    if (row.hidden) return;
+    const input = row.querySelector('input[type="checkbox"][name="paths"]');
+    if (input) input.checked = checked;
+  });
+}
 
 // 긴 작업 중 화면을 덮는 진행 상태 오버레이를 표시한다.
 function showGlobalProgressOverlay(options = {}) {

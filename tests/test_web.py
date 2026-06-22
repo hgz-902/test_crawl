@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
 import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 from fastapi.testclient import TestClient
 
@@ -32,6 +35,32 @@ class FakeCrawler:
             data=[{"item_index": 0}],
             metadata={"output_dir": "outputs/test-site"},
         )
+
+
+def write_parquet_fixture(
+    path: Path,
+    *,
+    source_file_name: str,
+    content: bytes,
+    tran_kind: str = "text",
+    tran_manifest_json: str | None = None,
+) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = {
+        "source_relative_path": [f"001_default/{source_file_name}"],
+        "source_file_name": [source_file_name],
+        "tran_kind": [tran_kind],
+        "collected_at": ["2026-06-22T10:00:00+09:00"],
+        "content_bytes": [content],
+        "exported_at": ["2026-06-22T10:01:00+09:00"],
+    }
+    if tran_manifest_json is not None:
+        columns["tran_manifest_json"] = [tran_manifest_json]
+    table = pa.Table.from_pydict(columns)
+    pq.write_table(table, path)
 
 
 class WebLoggingTests(unittest.TestCase):
@@ -1290,6 +1319,108 @@ class WebLoggingTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403)
+
+
+class ParquetConverterRouteTests(unittest.TestCase):
+    def test_parquet_converter_lists_tran_parquet_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            write_parquet_fixture(
+                tmp_path / "outputs" / "sample" / "tran" / "text_20260622_100000000000.parquet",
+                source_file_name="article.txt",
+                content=b"hello",
+            )
+
+            with TestClient(web.app) as client, patch.object(web, "BASE_DIR", tmp_path):
+                response = client.get("/parquet-converter")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("article.txt", response.text)
+        self.assertIn("text_20260622_100000000000.parquet", response.text)
+
+    def test_parquet_converter_downloads_original_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            write_parquet_fixture(
+                tmp_path / "outputs" / "sample" / "tran" / "metadata_20260622_100000000000.parquet",
+                source_file_name="workflow_records.json",
+                content=b'{"records":[]}',
+                tran_kind="metadata",
+                tran_manifest_json=json.dumps(
+                    [
+                        {
+                            "source_relative_path": "001_default/article.txt",
+                            "source_file_name": "article.txt",
+                            "tran_file_name": "text_20260622_100000000000.parquet",
+                            "tran_kind": "text",
+                        }
+                    ]
+                ),
+            )
+
+            with TestClient(web.app) as client, patch.object(web, "BASE_DIR", tmp_path):
+                response = client.get(
+                    "/parquet-converter/download",
+                    params={"path": "sample/tran/metadata_20260622_100000000000.parquet"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode("utf-8"))
+        self.assertEqual(payload["workflow_records"], {"records": []})
+        self.assertEqual(payload["tran_manifest"][0]["tran_file_name"], "text_20260622_100000000000.parquet")
+        self.assertEqual(payload["source_file_name"], "workflow_records.json")
+        self.assertIn("workflow_records.json", response.headers["content-disposition"])
+
+    def test_parquet_converter_downloads_selected_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            write_parquet_fixture(
+                tmp_path / "outputs" / "sample" / "tran" / "text_20260622_100000000000.parquet",
+                source_file_name="article.txt",
+                content=b"article-body",
+            )
+            write_parquet_fixture(
+                tmp_path / "outputs" / "sample" / "tran" / "download_20260622_100001000000.parquet",
+                source_file_name="report.pdf",
+                content=b"%PDF",
+                tran_kind="download",
+            )
+
+            with TestClient(web.app) as client, patch.object(web, "BASE_DIR", tmp_path):
+                response = client.post(
+                    "/parquet-converter/download-zip",
+                    data={
+                        "paths": [
+                            "sample/tran/text_20260622_100000000000.parquet",
+                            "sample/tran/download_20260622_100001000000.parquet",
+                        ]
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = sorted(archive.namelist())
+            self.assertEqual(
+                names,
+                [
+                    "sample/download_20260622_100001000000/report.pdf",
+                    "sample/text_20260622_100000000000/article.txt",
+                ],
+            )
+            self.assertEqual(archive.read("sample/text_20260622_100000000000/article.txt"), b"article-body")
+
+    def test_parquet_converter_rejects_paths_outside_outputs_tran(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            with TestClient(web.app) as client, patch.object(web, "BASE_DIR", tmp_path):
+                response = client.get("/parquet-converter/download", params={"path": "../secret.parquet"})
+                non_tran_response = client.get(
+                    "/parquet-converter/download",
+                    params={"path": "sample/filter/metadata_20260622_100000000000.parquet"},
+                )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(non_tran_response.status_code, 400)
 
 
 if __name__ == "__main__":

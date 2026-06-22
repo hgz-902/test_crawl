@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+{% block title %}parquet 전환{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <h1>parquet 전환</h1>
+      <p class="muted-text">outputs 하위 tran parquet을 원본 파일로 변환해 다운로드합니다.</p>
+    </div>
+    <a class="button" href="/">설정 목록</a>
+  </div>
+
+  {% if error %}
+    <div class="notice error">{{ error }}</div>
+  {% endif %}
+
+  <div class="parquet-tools">
+    <label>
+      output
+      <input type="search" id="parquet-output-filter" placeholder="예: yna" data-parquet-filter="output">
+    </label>
+    <label>
+      kind
+      <input type="search" id="parquet-kind-filter" placeholder="metadata, download, text" data-parquet-filter="kind">
+    </label>
+    <span class="muted-text">총 {{ parquet_rows | length }}개</span>
+  </div>
+
+  {% if parquet_rows %}
+  <form method="post" action="/parquet-converter/download-zip" data-download-form>
+    <div class="parquet-actions">
+      <button type="button" class="button" data-parquet-select-all>전체 선택</button>
+      <button type="button" class="button" data-parquet-clear>선택 해제</button>
+      <button type="submit" class="button primary">선택 ZIP 다운로드</button>
+    </div>
+
+    <div class="table-scroll">
+      <table class="parquet-table">
+        <thead>
+          <tr>
+            <th class="center-col">선택</th>
+            <th>output</th>
+            <th>kind</th>
+            <th>parquet 파일</th>
+            <th>원본 파일</th>
+            <th>원본 상대경로</th>
+            <th>수집시각</th>
+            <th>변환시각</th>
+            <th>크기</th>
+            <th>전환</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in parquet_rows %}
+          <tr data-parquet-row data-output="{{ row.output_name }}" data-kind="{{ row.tran_kind }}">
+            <td class="center-col">
+              {% if row.downloadable %}
+                <input type="checkbox" name="paths" value="{{ row.path }}">
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>{{ row.output_name }}</td>
+            <td><span class="badge">{{ row.tran_kind }}</span></td>
+            <td class="file-cell">{{ row.parquet_file_name }}</td>
+            <td class="file-cell">{{ row.source_file_name or "-" }}</td>
+            <td class="path-cell">{{ row.source_relative_path or row.error or "-" }}</td>
+            <td>{{ row.collected_at or "-" }}</td>
+            <td>{{ row.exported_at or "-" }}</td>
+            <td>{{ row.parquet_size }}</td>
+            <td class="center-col">
+              {% if row.downloadable %}
+                <a class="button" href="/parquet-converter/download?path={{ row.path | urlencode }}">전환</a>
+              {% else %}
+                <span class="muted-text">불가</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
+  {% else %}
+    <div class="empty">outputs 하위 tran parquet 파일이 없습니다.</div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import json
+import re
 import uuid
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote, quote_plus, urlparse
+import zipfile
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import requests
@@ -94,6 +97,53 @@ async def index(request: Request) -> HTMLResponse:
         request,
         "index.html",
         {"configs": list_configs()},
+    )
+
+
+# parquet 변환 페이지를 렌더링한다.
+@app.get("/parquet-converter", response_class=HTMLResponse)
+async def parquet_converter_page(request: Request) -> HTMLResponse:
+    rows, error = _parquet_converter_rows()
+    return templates.TemplateResponse(
+        request,
+        "parquet_converter.html",
+        {"parquet_rows": rows, "error": error},
+    )
+
+
+# parquet 파일 하나를 원본 bytes로 변환해 다운로드한다.
+@app.get("/parquet-converter/download")
+async def parquet_converter_download_route(path: str) -> Response:
+    item = _read_parquet_conversion_item(path)
+    return Response(
+        content=item["content_bytes"],
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": _content_disposition(str(item["source_file_name"]))},
+    )
+
+
+# 선택된 parquet 파일들을 원본 파일 ZIP으로 변환해 다운로드한다.
+@app.post("/parquet-converter/download-zip")
+async def parquet_converter_download_zip_route(request: Request) -> StreamingResponse:
+    _assert_same_origin_post(request)
+    form = await request.form()
+    selected_paths = [str(value) for value in form.getlist("paths") if str(value).strip()]
+    if not selected_paths:
+        raise HTTPException(status_code=400, detail="선택된 parquet 파일이 없습니다.")
+
+    buffer = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for selected_path in selected_paths:
+            item = _read_parquet_conversion_item(selected_path)
+            archive_name = _zip_member_name(item, used_names)
+            archive.writestr(archive_name, item["content_bytes"])
+    buffer.seek(0)
+    filename = f"parquet_originals_{datetime.now(DISPLAY_TIMEZONE):%Y%m%d_%H%M%S}.zip"
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
@@ -1085,6 +1135,188 @@ def _format_scheduler_last_result(value: Any) -> str:
 # 참/거짓 값을 계산해 반환한다.
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+# outputs/*/tran/*.parquet 목록을 화면 표시용 row로 만든다.
+def _parquet_converter_rows() -> tuple[list[dict[str, Any]], str | None]:
+    outputs_root = BASE_DIR / "outputs"
+    if not outputs_root.exists():
+        return [], None
+
+    rows: list[dict[str, Any]] = []
+    error: str | None = None
+    for parquet_path in sorted(outputs_root.glob("*/tran/*.parquet")):
+        relative_path = parquet_path.relative_to(outputs_root)
+        row = {
+            "path": relative_path.as_posix(),
+            "output_name": relative_path.parts[0],
+            "parquet_file_name": parquet_path.name,
+            "parquet_size": parquet_path.stat().st_size,
+            "source_file_name": "",
+            "source_relative_path": "",
+            "tran_kind": _kind_from_parquet_name(parquet_path.name),
+            "collected_at": "",
+            "exported_at": "",
+            "downloadable": False,
+            "error": "",
+        }
+        try:
+            item = _read_parquet_conversion_item(relative_path.as_posix())
+            row.update(
+                {
+                    "source_file_name": item["source_file_name"],
+                    "source_relative_path": item["source_relative_path"],
+                    "tran_kind": item["tran_kind"],
+                    "collected_at": item["collected_at"],
+                    "exported_at": item["exported_at"],
+                    "downloadable": True,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - 화면에는 깨진 parquet도 오류 row로 보여준다.
+            row["error"] = str(exc)
+            error = "일부 parquet 파일을 읽지 못했습니다. 오류 행을 확인해 주세요."
+        rows.append(row)
+    return rows, error
+
+
+# parquet 파일 하나를 읽어 원본 다운로드에 필요한 값을 반환한다.
+def _read_parquet_conversion_item(relative_path: str | Path) -> dict[str, Any]:
+    parquet_path = _resolve_parquet_converter_path(relative_path)
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="pyarrow가 설치되어 있지 않아 parquet을 읽을 수 없습니다.") from exc
+
+    try:
+        table = pq.read_table(parquet_path)
+    except Exception as exc:  # noqa: BLE001 - parquet 라이브러리 오류를 HTTP 오류로 변환한다.
+        raise HTTPException(status_code=400, detail=f"parquet 파일을 읽을 수 없습니다: {exc}") from exc
+
+    rows = table.to_pylist()
+    if len(rows) != 1:
+        raise HTTPException(status_code=400, detail="지원하지 않는 parquet row 구조입니다.")
+    row = rows[0]
+    content = row.get("content_bytes")
+    if not isinstance(content, (bytes, bytearray)):
+        raise HTTPException(status_code=400, detail="parquet에 content_bytes가 없습니다.")
+
+    outputs_root = (BASE_DIR / "outputs").resolve()
+    relative = parquet_path.relative_to(outputs_root)
+    tran_kind = str(row.get("tran_kind") or _kind_from_parquet_name(parquet_path.name))
+    source_file_name = _safe_download_file_name(row.get("source_file_name") or "download.bin")
+    download_bytes = bytes(content)
+    if tran_kind == "metadata":
+        source_file_name = _safe_download_file_name(source_file_name or "workflow_records.json")
+        download_bytes = _metadata_download_bytes(row, download_bytes)
+    return {
+        "path": relative.as_posix(),
+        "output_name": relative.parts[0],
+        "parquet_stem": parquet_path.stem,
+        "parquet_file_name": parquet_path.name,
+        "source_relative_path": str(row.get("source_relative_path") or ""),
+        "source_file_name": source_file_name,
+        "tran_kind": tran_kind,
+        "collected_at": str(row.get("collected_at") or ""),
+        "exported_at": str(row.get("exported_at") or ""),
+        "content_bytes": download_bytes,
+    }
+
+
+# metadata parquet 다운로드에 원본 workflow_records와 매칭 manifest를 함께 보존한다.
+def _metadata_download_bytes(row: dict[str, Any], content: bytes) -> bytes:
+    workflow_records: Any
+    try:
+        workflow_records = json.loads(content.decode("utf-8"))
+    except Exception:
+        workflow_records = content.decode("utf-8", errors="replace")
+
+    manifest: Any = []
+    manifest_text = row.get("tran_manifest_json")
+    if isinstance(manifest_text, str) and manifest_text.strip():
+        try:
+            manifest = json.loads(manifest_text)
+        except json.JSONDecodeError:
+            manifest = manifest_text
+
+    payload = {
+        "workflow_records": workflow_records,
+        "tran_manifest": manifest,
+        "source_relative_path": str(row.get("source_relative_path") or ""),
+        "source_file_name": str(row.get("source_file_name") or "workflow_records.json"),
+        "tran_kind": str(row.get("tran_kind") or "metadata"),
+        "collected_at": str(row.get("collected_at") or ""),
+        "exported_at": str(row.get("exported_at") or ""),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+# parquet 변환 화면에서 허용된 outputs 상대경로를 실제 파일로 해석한다.
+def _resolve_parquet_converter_path(relative_path: str | Path) -> Path:
+    raw = str(relative_path or "").strip().replace("\\", "/")
+    if not raw:
+        raise HTTPException(status_code=400, detail="parquet 경로가 비어 있습니다.")
+    if raw.startswith("/") or raw.startswith("//") or re.match(r"^[A-Za-z]:", raw):
+        raise HTTPException(status_code=400, detail="outputs 기준 상대경로만 사용할 수 있습니다.")
+    parts = [part for part in raw.split("/") if part]
+    if any(part == ".." for part in parts):
+        raise HTTPException(status_code=400, detail="상위 경로 접근은 허용되지 않습니다.")
+    if len(parts) != 3 or parts[1] != "tran" or not parts[2].endswith(".parquet"):
+        raise HTTPException(status_code=400, detail="outputs/<name>/tran/*.parquet 형식만 지원합니다.")
+
+    outputs_root = (BASE_DIR / "outputs").resolve()
+    candidate = (outputs_root / Path(*parts)).resolve()
+    try:
+        candidate.relative_to(outputs_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="outputs 밖의 파일은 접근할 수 없습니다.") from exc
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="parquet 파일을 찾을 수 없습니다.")
+    return candidate
+
+
+# parquet 파일명 prefix에서 kind를 추정한다.
+def _kind_from_parquet_name(file_name: str) -> str:
+    prefix = str(file_name or "").split("_", 1)[0].casefold()
+    if prefix in {"metadata", "download", "text", "file"}:
+        return prefix
+    return "file"
+
+
+# HTTP 다운로드용 Content-Disposition 값을 만든다.
+def _content_disposition(file_name: str) -> str:
+    safe_name = _safe_download_file_name(file_name)
+    ascii_fallback = safe_name.encode("ascii", "ignore").decode("ascii") or "download.bin"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(safe_name)}"
+
+
+# 브라우저/ZIP에서 위험한 파일명 문자를 제거한다.
+def _safe_download_file_name(file_name: Any) -> str:
+    raw = Path(str(file_name or "download.bin").replace("\\", "/")).name.strip()
+    cleaned = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", raw).strip(" .")
+    return cleaned or "download.bin"
+
+
+# ZIP 내부 경로를 output/parquet_stem/source_file_name 형태로 만든다.
+def _zip_member_name(item: dict[str, Any], used_names: set[str]) -> str:
+    output_name = _safe_zip_segment(item.get("output_name") or "output")
+    parquet_stem = _safe_zip_segment(item.get("parquet_stem") or "parquet")
+    source_file_name = _safe_download_file_name(item.get("source_file_name") or "download.bin")
+    base = f"{output_name}/{parquet_stem}/{source_file_name}"
+    candidate = base
+    suffix = 1
+    while candidate in used_names:
+        stem = Path(source_file_name).stem or "download"
+        ext = Path(source_file_name).suffix
+        candidate = f"{output_name}/{parquet_stem}/{stem}_{suffix:03d}{ext}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
+
+
+# ZIP 경로 segment에서 구분자와 위험 문자를 제거한다.
+def _safe_zip_segment(value: Any) -> str:
+    cleaned = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", str(value or "")).strip(" .")
+    return cleaned or "item"
 
 
 # assert same origin post 값을 계산해 반환한다.

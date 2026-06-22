@@ -187,6 +187,53 @@ table {
   table-layout: fixed;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
+.parquet-tools,
+.parquet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.parquet-tools label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.parquet-tools input {
+  min-width: 220px;
+}
+
+.parquet-table {
+  min-width: 1280px;
+}
+
+.parquet-table .file-cell,
+.parquet-table .path-cell {
+  max-width: 320px;
+  word-break: break-all;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 th,
 td {
   border-bottom: 1px solid var(--line);
