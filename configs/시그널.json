@@ -7,7 +7,11 @@
   "headless": true,
   "ignore_https_errors": false,
   "notes": "시그널은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 Deal 최신 목록을 수집한 뒤 필터 목록 키워드로 분리한다. 소스코드 수정 없이 최신 기사 목록의 기사 링크를 열고 제목과 본문을 추출한다.",
-  "search_terms": [],
+  "search_terms": [
+    "1",
+    "2",
+    "3"
+  ],
   "filter_terms": [
     "최태원",
     "SK"

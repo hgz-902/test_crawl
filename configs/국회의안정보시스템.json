@@ -13,7 +13,10 @@
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "filter_terms": [
+    "항공",
+    "철도"
+  ],
   "steps": [
     {
       "name": "open_detail",

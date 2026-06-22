@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "카드형 기사 구조에 loop 하나만으로 수집할 수 없어, AI의 도움을 받아 XPath 설정. (소스코드는 수정하지 않았음)",
   "search_terms": [
-    "1"
+    "1",
+    "2"
   ],
   "filter_terms": [],
   "steps": [

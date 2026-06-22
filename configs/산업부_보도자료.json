@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
   "search_terms": [
-    "1"
+    "1",
+    "2"
   ],
   "filter_terms": [
     "석유",

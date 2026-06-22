@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "사이트 내 모든 게시물이 같은 URL로 저장되어, 수집을 하다가 최종 저장 시 같은 URL 중복으로 판단해 수집이 제대로 되지 않고 있음. 코드 수정이 필요해보임",
   "search_terms": [
-    "1"
+    "1",
+    "2"
   ],
   "filter_terms": [],
   "steps": [

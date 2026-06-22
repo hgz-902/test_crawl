@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "download_text에서 받아와야 하는 것이 이미지 파일인데, 일부는 받아와지고 일부는 받아오지 못하고 있음.",
   "search_terms": [
-    "1"
+    "1",
+    "2"
   ],
   "filter_terms": [],
   "steps": [

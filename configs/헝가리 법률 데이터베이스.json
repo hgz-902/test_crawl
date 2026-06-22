@@ -8,7 +8,8 @@
   "ignore_https_errors": false,
   "notes": "title만 추출하려 하니 XPath가 불규칙적이라, body에서 title과 body를 모두 추출하는 것으로 설정.",
   "search_terms": [
-    "1"
+    "1",
+    "2"
   ],
   "filter_terms": [
     "ESG",

@@ -7,7 +7,11 @@
   "headless": true,
   "ignore_https_errors": false,
   "notes": "인베스트조선은 API/RSS형이 아니라 원본 연합뉴스형 뉴스 실행단계 구조로 관리한다. 검색어 목록이 비어 있으면 전체 기사 목록(catid=2) 1페이지의 최신 기사 목록을 수집한 뒤 필터 목록 키워드로 분리한다. 전체 기사 목록은 1페이지당 10개 기사만 노출되므로 loop_limit을 20으로 설정해도 실제 1페이지에서는 최대 10개만 수집된다.",
-  "search_terms": [],
+  "search_terms": [
+    "1",
+    "2",
+    "3"
+  ],
   "filter_terms": [
     "최태원",
     "SK",
