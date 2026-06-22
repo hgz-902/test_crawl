@@ -1,0 +1,49 @@
+{
+  "name": "ISO",
+  "start_url": "https://www.iso.org/insights",
+  "output_dir": "outputs/iso_org",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "open_detail이 반복이 되지 않는 구조라 설정 임시 중단.",
+  "search_terms": [],
+  "filter_terms": [
+    "Supply Chain",
+    "Chain of Custody",
+    "LCA",
+    "GHG accounting",
+    "Risk assessment"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/main/section[3]/div/div[2]/div/div[6]/div/figure/div/a",
+      "xpath_2": "/html/body/main/section[3]/div/div[2]/div/div[7]/div/figure/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:46:00+09:00",
+  "updated_at": "2026-05-27T15:08:24+09:00"
+}

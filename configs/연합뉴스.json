@@ -1,28 +1,38 @@
 {
   "name": "연합뉴스",
-  "start_url": "https://www.yna.co.kr/news",
+  "start_url": "https://www.yna.co.kr/news?site=navi_latest_depth01&page={search_term}",
   "output_dir": "outputs/yna",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
-  "notes": "",
-  "search_terms": [],
+  "notes": "연합뉴스 최신뉴스 전체 수집 설정. 원본 workflow는 URL page 파라미터를 직접 합성하는 pagination을 지원하지 않으므로, 소스코드 수정 없이 1~20페이지를 순회하기 위해 search_terms를 페이지 번호로 사용한다.",
+  "search_terms": [
+    "1"
+  ],
   "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[1]/div/div/strong/a",
-      "xpath_2": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[2]/div/div/strong/a",
+      "xpath": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[@data-cid][1]/div/div/strong/a",
+      "xpath_2": "//*[@id=\"container\"]/div[2]/div[2]/div[1]/section/div/ul/li[@data-cid][2]/div/div/strong/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
       "action": "click",
+      "open_mode": "same_tab",
       "wait_state": "attached"
     },
     {
-      "name": "download_text",
-      "xpath": "//*[@id=\"articleWrap\"]",
+      "name": "extract_title",
+      "xpath": "//*[@id=\"container\"]/div[2]/div[1]/header/h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"articleWrap\"]/div[1]",
       "loop": false,
       "action": "extract",
       "attr": "text",
@@ -30,5 +40,5 @@
     }
   ],
   "created_at": "2026-05-13T13:56:36+09:00",
-  "updated_at": "2026-05-13T13:57:44+09:00"
+  "updated_at": "2026-05-30T10:06:46+09:00"
 }

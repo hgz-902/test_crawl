@@ -90,23 +90,26 @@ DOM 선택 규칙은 CSS selector와 XPath를 모두 지원합니다.
 ### Naver News API 예시
 
 Naver News Search API는 환경변수 `NAVER_CLIENT_ID`와 `NAVER_CLIENT_SECRET`가 필요합니다.
-루트의 [`.env.example`](/D:/CompPjts/crawlFiles/.env.example#L1) 를 참고해 `.env` 파일을 만들면 자동으로 읽습니다.
+루트의 `.env.example` 를 참고해 `.env` 파일을 만들면 자동으로 읽습니다.
+Naver API parser는 UI와 CLI 모두에서 안전한 실행 범위를 요구합니다. `page_limit`은 최대 10, `loop_limit`은 1~100 사이로 명시해야 합니다.
 
 ```bash
-python main.py --crawler configurable --config "configs/네이버뉴스.json"
+python main.py --crawler configurable --config "configs/네이버.json"
 ```
 
 ```json
 {
   "name": "네이버뉴스",
-  "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
+  "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
   "output_dir": "outputs/naver_news",
   "search_terms": ["SK이노베이션", "최태원", "유가전망"],
   "steps": [
     {
       "name": "naver_news_api",
       "action": "parser",
-      "attr": "naver"
+      "attr": "naver",
+      "page_limit": 1,
+      "loop_limit": 20
     }
   ]
 }
@@ -156,3 +159,187 @@ else:
 - PDF 추출은 `pypdf` 의존성이 필요합니다.
 - 현재 PDF는 텍스트 레이어가 있는 파일만 지원합니다.
 - 구형 `hwp`는 아직 지원하지 않고 `hwpx`만 지원합니다.
+
+## Crawler Orchestration
+
+This feature is a common operations layer for existing `configs/*.json` crawlers. It does not add new site-specific crawler code. It keeps the existing JSON config workflow, `workflow_records.json`, outputs, and logging structure as the source of crawler behavior.
+
+### Run The UI
+
+```powershell
+python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
+```
+
+Open `http://127.0.0.1:3000/orchestration`.
+
+The orchestration page supports:
+
+- Selecting registered crawler configs.
+- Setting each selected crawler schedule as a five-field cron expression.
+- Editing keyword terms.
+- Editing notification recipients.
+- Switching between the `설정 LIST / 배치 config` tab and the `등록된 스케줄 / 스케줄 결과 보기` tab without leaving the page.
+- Saving local orchestration settings.
+- Running selected crawler jobs manually without changing scheduler registration.
+- Viewing recent run history, duplicate-stopped jobs, and mail dry-run/sent status.
+
+Settings and run history are stored in local runtime files:
+
+- `orchestration_state/settings.json`
+- `orchestration_state/run_history.json`
+
+`orchestration_state/` is ignored by git because it is machine-local runtime state.
+
+### Duplicate Stop Policy
+
+Before a batch run, the orchestration layer reads the configured output directory for the current crawler and builds duplicate state from `latest.json` plus any live `workflow_records.json` snapshots.
+
+Duplicate keys use normalized `final_url` only. Title-based duplicate checks are intentionally not used.
+
+`latest.json` is the boundary file used after `workflow_records.json` has been rolled up:
+
+- `records` keeps the newest boundary per search/filter group.
+- Numeric `search_terms` are treated as page parameters and share boundaries by `filter_term`.
+- Normal search terms keep boundaries by `search_term`.
+- Naver, Daum, and Google additionally keep `api_recent_records`, a source-wide recent URL index used to catch API articles that were already collected but are not the newest item of their search/filter group.
+
+When a previous-run duplicate boundary is found, the current search term is stopped as `duplicate_stopped` and the next search term or selected crawler job can continue. When the duplicate appears only inside the same active run, the item is skipped and the current search term continues.
+
+### Schedule Semantics
+
+Each enabled job stores:
+
+- `last_run_at`
+- `next_run_at`
+- `last_status`
+
+The UI stores orchestration settings in `orchestration_state/settings.json`, while runtime state is kept per crawler under `orchestration_state/jobs/<job_id>.json`. This avoids concurrent Windows scheduled jobs overwriting one shared status file. `next_run_at` is calculated from each row's cron expression when monitoring is started and after a crawl starts.
+
+The orchestration page separates settings, one-off runs, and background monitoring:
+
+- `설정 저장` validates the cron settings and saves JSON settings only. It does not create, update, delete, or run Windows Scheduler tasks.
+- `수동 실행` runs the currently selected jobs once with `force_due=True`. It does not change scheduler registration.
+- `모니터링 시작` validates the current settings, saves them, deletes/recreates this clone's managed Windows Scheduler tasks, and shows the registered schedule list.
+- `모니터링 종료` calls the checked-in `scripts/Stop-OrchestrationJobs.ps1` path, stops this clone's managed scheduled tasks, deletes their scheduler registrations, and clears the local scheduler registry. It preserves selected/enabled settings so `모니터링 시작` can recreate tasks from the saved JSON schedule. It never deletes `outputs/` or `workflow_records.json`.
+
+### Keyword Mail Notification
+
+Default keywords:
+
+- `SK`
+- `최태원`
+
+Default recipients:
+
+- `bloodknihts@gmail.com`
+- `superknihts@nate.com`
+
+SMTP credentials are never stored in code, config, README, logs, or UI settings. They are read only from environment variables:
+
+```powershell
+$env:SMTP_HOST="smtp.gmail.com"
+$env:SMTP_PORT="587"
+$env:SMTP_USER="bloodknihts@gmail.com"
+$env:SMTP_FROM="bloodknihts@gmail.com"
+$env:SMTP_PASSWORD="<Gmail app password>"
+```
+
+If `SMTP_PASSWORD` is missing, keyword notification runs in dry-run mode and records the dry-run result instead of sending mail. Even when SMTP credentials exist, the UI sends real mail only when the operator checks the saved "actual email send" option. Manual runs and scheduled runs re-read the saved setting before each run. Real Gmail sending should only be tested after the user provides an app password.
+
+### Windows Task Scheduler
+
+When `모니터링 시작` is pressed on Windows, the app synchronizes Windows Task Scheduler:
+
+1. Deletes only tasks managed by this clone under `\CrawlerOrchestration\<project_namespace>\crawler_*`.
+2. Recreates one task per enabled crawler config.
+3. Converts each enabled row's five-field cron expression to the closest supported Windows Task Scheduler command:
+   - `*/5 * * * *` -> every 5 minutes
+   - `0 */2 * * *` -> every 2 hours
+   - `0 3 * * *` -> daily at 03:00
+   - `0 0 */2 * *` -> every 2 days at 00:00
+   - `0 9 * * MON` -> weekly on Monday at 09:00
+4. Runs `scripts/Run-OrchestrationJob.ps1 -JobId <job_id>`, which loads local `.env` values into the scheduled process and executes that crawler through `crawler_app.scheduled_runner`.
+
+Unsupported cron forms are rejected before settings are saved to the scheduler. Each scheduled task uses its registered Windows trigger and runs with `force_due=True`; the trigger itself is the cadence source of truth. Different crawler tasks can run at the same time, while the same crawler is protected by a per-job lock under `orchestration_state/locks/<job_id>.lock`. Each crawler still follows the same item-level sequence: crawl, stop on a previous-run duplicate within the current search term, continue the next search term or next job, compare keywords, then send or dry-run email according to the saved setting.
+
+To stop this clone's monitoring jobs from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Stop-OrchestrationJobs.ps1 -ProjectRoot . -DeleteTasks
+```
+
+Use PowerShell `-WhatIf` with the script to preview the scoped task actions before stopping or deleting them.
+The web UI uses the same script path for `모니터링 종료`, so manual and UI stop behavior stay aligned.
+
+Secrets must stay out of git. Use Windows user environment variables or an ignored local `.env` file:
+
+```powershell
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=bloodknihts@gmail.com
+SMTP_FROM=bloodknihts@gmail.com
+SMTP_PASSWORD=<Gmail app password>
+NAVER_CLIENT_ID=<Naver client id>
+NAVER_CLIENT_SECRET=<Naver client secret>
+KAKAO_REST_API_KEY=<Kakao REST API key>
+```
+
+Scheduled run logs are written under `runtime/scheduled-task/`, which is ignored by git.
+
+### Workflow Records Rollup
+
+When the crawler web server is running (`python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000`), a Python background scheduler inside the server process rolls `outputs/*/filter/workflow_records.json` at the configured daily time. The rollup uses the same `crawler_app.workflow_records_rollup.rollup_workflow_records()` function as the manual PowerShell script, so file locking, archive placement, latest-first archive sorting, and keep-count pruning stay consistent.
+
+The default rollup time is defined by `DEFAULT_ROLLUP_TIME` in `crawler_app/workflow_records_rollup.py`. The running web server rereads that source value on each scheduler check, so changing and saving the constant can take effect without restarting the server. A rollup is only skipped when the same `date + rollup time` has already run; changing the time later in the day allows that new daily boundary to run once. Rollup archives are stored under each crawler's `outputs/<crawler>/filter/rollup/` folder, and server-side rollup logs are written under `runtime/scheduled-task/`.
+
+If the web server is not running at the configured time, the Python scheduler cannot run. For a manual one-off rollup, run `python -m crawler_app.workflow_records_rollup` from the project virtual environment.
+
+### Validation
+
+```powershell
+python -m unittest discover -s tests
+python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
+```
+
+Then verify `/orchestration` in a browser by saving settings and running a small selected batch. Without SMTP credentials, mail notification should report dry-run.
+
+## Workflow Records API
+
+The app exposes a POST API that reads the current and rolled `workflow_records.json` files and returns records in the same record shape stored on disk.
+
+Endpoint:
+
+```text
+POST /api/workflow-records
+POST /api/workflow-records/search
+```
+
+Example single-day request:
+
+```json
+{
+  "date": "2026-05-29",
+  "source_name": "naver_news",
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Example range request across all sources:
+
+```json
+{
+  "from_date": "2026-05-01",
+  "to_date": "2026-05-29",
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Rules:
+
+- `date` reads one rollup date. If it is today, the live `outputs/<source>/filter/workflow_records.json` file is used.
+- `from_date` and `to_date` read matching rollup files for past dates and the live file when today's date is included.
+- `source_name` is optional. When omitted, all `outputs/<source>/` folders are searched.
+- Default pagination is `page=1`, `page_size=20`; `page_size` is capped at 100.
+- `sort_by` defaults to `pub_date`, and `published_at` is accepted as an alias.

@@ -1,0 +1,54 @@
+{
+  "name": "한국에너지공단",
+  "start_url": "https://www.energy.or.kr/front/board/List2.do?searchfield=ALL&page={search_term}",
+  "output_dir": "outputs/korea_energy",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "사이트 내 모든 게시물이 같은 URL로 저장되어, 수집을 하다가 최종 저장 시 같은 URL 중복으로 판단해 수집이 제대로 되지 않고 있음. 코드 수정이 필요해보임",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"frm\"]/div[2]/table/tbody/tr[1]/td[2]/a/span",
+      "xpath_2": "//*[@id=\"frm\"]/div[2]/table/tbody/tr[2]/td[2]/a/span",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 4,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"frm\"]/div[1]/p",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"frm\"]/div[2]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"frm\"]/div[4]/ul[1]/li/div/div[1]/a",
+      "xpath_2": "//*[@id=\"frm\"]/div[4]/ul[1]/li/div/div[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T11:38:44+09:00",
+  "updated_at": "2026-05-30T10:09:41+09:00"
+}

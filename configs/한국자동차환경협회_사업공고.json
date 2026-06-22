@@ -1,0 +1,53 @@
+{
+  "name": "한국자동차환경협회_사업공고",
+  "start_url": "https://www.aea.or.kr/notify/businessList.do?pageIndex={search_term}&idx=&searchValue=",
+  "output_dir": "outputs/aea_business",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "download_text에서 받아와야 하는 것이 이미지 파일인데, 일부는 받아와지고 일부는 받아오지 못하고 있음.",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"listForm\"]/div[2]/div[6]/a",
+      "xpath_2": "//*[@id=\"listForm\"]/div[2]/div[7]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 2,
+      "action": "click",
+      "wait_state": "visible"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"sub\"]/div/section[3]/div[1]/div[1]/span",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"sub\"]//img[contains(@src,\"/data/bbsUpload/\")]",
+      "loop": false,
+      "action": "download",
+      "attr": "src",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"sub\"]/div/section[3]/div[1]/div[2]/strong[1]/a",
+      "xpath_2": "//*[@id=\"sub\"]/div/section[3]/div[1]/div[2]/strong[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T13:47:41+09:00",
+  "updated_at": "2026-05-30T10:10:19+09:00"
+}

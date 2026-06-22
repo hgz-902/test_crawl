@@ -1,32 +1,30 @@
 {
   "name": "청와대브리핑",
-  "start_url": "https://www.president.go.kr/briefings",
-  "output_dir": "outputs/president",
+  "start_url": "https://www.president.go.kr/cms/com/index.do?MENU_CD=nFSy219D",
+  "output_dir": "outputs/president_cms",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
-  "notes": "",
+  "notes": "상세 페이지를 들어가려 하면 오류가 발생하여(사이트 문제), 설정 중단",
   "search_terms": [],
+  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
-      "xpath": "//*[@id=\"tbody\"]/li[1]/div/a",
-      "xpath_2": "//*[@id=\"tbody\"]/li[2]/div/a",
-      "loop": true,
-      "loop_limit": 3,
+      "xpath": "//a[1]",
+      "loop": false,
       "action": "click",
-      "wait_state": "attached"
+      "wait_state": "visible"
     },
     {
-      "name": "download_text",
-      "xpath": "//*[@id=\"containerArea\"]/div/div[2]/article/div/div[1]/dl/dd/div",
+      "name": "download_file",
+      "xpath": "//a[contains(@href, 'download')]",
       "loop": false,
-      "action": "extract",
-      "attr": "text",
+      "action": "download",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-29T09:17:37+09:00",
-  "updated_at": "2026-04-29T09:17:41+09:00"
+  "created_at": "2026-05-28T09:13:11+09:00",
+  "updated_at": "2026-05-28T09:34:43+09:00"
 }

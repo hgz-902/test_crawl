@@ -72,7 +72,7 @@
         </td>
         <td class="actions">
           <a class="button" href="/configs/{{ config.path.stem }}">편집</a>
-          <form method="post" action="/configs/{{ config.path.stem }}/run">
+          <form method="post" action="/configs/{{ config.path.stem }}/run" data-confirm="이 설정을 실행할까요? 외부 사이트 접속과 파일 저장이 발생할 수 있습니다.">
             <button type="submit">실행</button>
           </form>
           <form method="post" action="/configs/{{ config.path.stem }}/delete" data-confirm="이 설정을 삭제할까요?">

@@ -1,3 +1,4 @@
+// 경로 값을 설정한다.
 function setPath(target, path, value) {
   const parts = path.split(".");
   let current = target;
@@ -11,6 +12,7 @@ function setPath(target, path, value) {
 
 const SCROLL_STATE_KEY = "crawler-manager:scroll-state";
 
+// scroll 상태를 저장한다.
 function saveScrollState(targetPath = window.location.pathname) {
   try {
     sessionStorage.setItem(
@@ -27,6 +29,7 @@ function saveScrollState(targetPath = window.location.pathname) {
   }
 }
 
+// 브라우저에서 focus 설정 row 쿼리 동작을 담당한다.
 function focusConfigRowFromQuery() {
   try {
     const focus = new URLSearchParams(window.location.search).get("focus");
@@ -49,6 +52,7 @@ function focusConfigRowFromQuery() {
   }
 }
 
+// 브라우저에서 restore scroll 상태 동작을 담당한다.
 function restoreScrollState() {
   try {
     const raw = sessionStorage.getItem(SCROLL_STATE_KEY);
@@ -72,12 +76,121 @@ function restoreScrollState() {
   }
 }
 
+// 오케스트레이션 페이지의 탭 전환 UI를 초기화한다.
+function initOrchestrationTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-tab-target]"));
+  const panels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+  if (!tabs.length || !panels.length) return;
+
+  // 브라우저에서 activate 동작을 담당한다.
+  function activate(targetId, updateHash = true) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel) return;
+    tabs.forEach((tab) => {
+      const isActive = tab.dataset.tabTarget === targetId;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      tab.tabIndex = isActive ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.id === targetId;
+      panel.hidden = !isActive;
+      panel.classList.toggle("is-active", isActive);
+    });
+    if (updateHash) {
+      const url = new URL(window.location.href);
+      url.hash = targetId;
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tabTarget || ""));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = tabs.indexOf(tab);
+      let nextIndex = currentIndex;
+      if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = tabs.length - 1;
+      tabs[nextIndex].focus();
+      activate(tabs[nextIndex].dataset.tabTarget || "");
+    });
+  });
+
+  const hashTarget = window.location.hash.replace("#", "");
+  if (hashTarget && panels.some((panel) => panel.id === hashTarget)) {
+    activate(hashTarget, false);
+  } else {
+    activate(tabs[0].dataset.tabTarget || "", false);
+  }
+}
+
+// 등록된 스케줄러 상세 상태를 비동기로 불러와 화면에 반영한다.
+function initSchedulerDetailsLazyLoad() {
+  const container = document.querySelector("[data-scheduler-status-url]");
+  if (!container) return;
+  const statusUrl = container.dataset.schedulerStatusUrl;
+  if (!statusUrl) return;
+  const refreshState = container.querySelector("[data-scheduler-refresh-state]");
+
+  // refresh 상태 값을 설정한다.
+  function setRefreshState(state, text) {
+    if (!refreshState) return;
+    refreshState.textContent = text;
+    refreshState.classList.toggle("is-loading", state === "loading");
+    refreshState.classList.toggle("is-ready", state === "ready");
+    refreshState.classList.toggle("is-error", state === "error");
+  }
+
+  setRefreshState("loading", "Windows Scheduler 상태 확인 중");
+
+  fetch(statusUrl, { headers: { Accept: "application/json" } })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      if (!payload || !Array.isArray(payload.scheduler_rows)) return;
+      for (const row of payload.scheduler_rows) {
+        const taskName = row.task_name || "";
+        if (!taskName) continue;
+        const tr = document.querySelector(`[data-scheduler-task="${CSS.escape(taskName)}"]`);
+        if (!tr) continue;
+        for (const field of [
+          "scheduler_status",
+          "scheduler_last_run_at_display",
+          "scheduler_next_run_at_display",
+          "scheduler_last_result_display",
+          "task_action_path",
+        ]) {
+          const cell = tr.querySelector(`[data-scheduler-field="${field}"]`);
+          if (!cell) continue;
+          cell.textContent = row[field] || "-";
+          if (field === "scheduler_last_result_display") cell.title = row.scheduler_last_result || "";
+        }
+      }
+      if (payload.scheduler_error) {
+        setRefreshState("error", "registry만 표시 중: 실제 Windows 상태 확인 실패");
+      } else {
+        setRefreshState("ready", "실제 Windows 상태 갱신됨");
+      }
+    })
+    .catch(() => {
+      setRefreshState("error", "registry만 표시 중: 실제 Windows 상태 확인 불가");
+    });
+}
+
+// value를 읽어 반환한다.
 function readValue(input) {
   if (input.type === "checkbox") return input.checked;
   if (input.type === "number") return Number(input.value || 0);
   return input.value;
 }
 
+// 실행 단계를 정리한다.
 function cleanStep(step) {
   for (const key of Object.keys(step)) {
     if (key === "loop_limit" && step[key] === 0) {
@@ -89,6 +202,7 @@ function cleanStep(step) {
   return step;
 }
 
+// 검색 검색어 목록을 읽어 반환한다.
 function readSearchTerms(form) {
   const textarea = form.querySelector("[data-search-terms]");
   if (!textarea) return [];
@@ -98,6 +212,7 @@ function readSearchTerms(form) {
     .filter(Boolean);
 }
 
+// 필터 검색어 목록을 읽어 반환한다.
 function readFilterTerms(form) {
   const textarea = form.querySelector("[data-filter-terms]");
   if (!textarea) return [];
@@ -158,6 +273,7 @@ const STEP_ACTION_RULES = {
     attr: [
       { value: "google", label: "google" },
       { value: "naver", label: "naver" },
+      { value: "daum", label: "daum" },
     ],
     supportsXPath: false,
     supportsLoop: false,
@@ -166,10 +282,12 @@ const STEP_ACTION_RULES = {
   },
 };
 
+// 실행 단계 rules를 가져온다.
 function getStepRules(action) {
   return STEP_ACTION_RULES[action] || STEP_ACTION_RULES.click;
 }
 
+// select options 값을 설정한다.
 function setSelectOptions(select, options, selectedValue) {
   if (!select) return;
   const targetValue = selectedValue ?? "";
@@ -193,11 +311,13 @@ function setSelectOptions(select, options, selectedValue) {
   select.value = hasTarget ? targetValue : options[0].value;
 }
 
+// 실행 단계 row index를 가져온다.
 function getStepRowIndex(row) {
   if (!row || !row.parentElement) return 0;
   return Array.from(row.parentElement.querySelectorAll("[data-step-row]")).indexOf(row);
 }
 
+// 실행 단계 loop를 현재 설정과 동기화한다.
 function syncStepLoop(row) {
   if (!row) return;
   const action = row.querySelector('[data-step-prop="action"]')?.value || "";
@@ -247,6 +367,7 @@ function syncStepLoop(row) {
   }
 }
 
+// 실행 단계 XPath를 현재 설정과 동기화한다.
 function syncStepXPath(row) {
   if (!row) return;
   const action = row.querySelector('[data-step-prop="action"]')?.value || "";
@@ -263,6 +384,7 @@ function syncStepXPath(row) {
   });
 }
 
+// 실행 단계 attr를 현재 설정과 동기화한다.
 function syncStepAttr(row) {
   if (!row) return;
   const action = row.querySelector('[data-step-prop="action"]')?.value || "";
@@ -294,6 +416,7 @@ function syncStepAttr(row) {
 
 }
 
+// 브라우저에서 renumber 실행 단계 목록 동작을 담당한다.
 function renumberSteps() {
   document.querySelectorAll("[data-step-row]").forEach((row, index) => {
     row.querySelector(".step-order").textContent = String(index + 1);
@@ -303,6 +426,7 @@ function renumberSteps() {
   });
 }
 
+// 실행 단계를 읽어 반환한다.
 function readStep(row) {
   const step = {};
   const action = row.querySelector('[data-step-prop="action"]')?.value || "";
@@ -340,8 +464,21 @@ function readStep(row) {
   return cleanStep(step);
 }
 
+// 최초 config JSON을 읽어 UI에 없는 custom 필드도 저장 시 보존한다.
+function readInitialConfigPayload(form) {
+  const script = form.querySelector("#initial-config-json");
+  if (!script || !script.textContent.trim()) return {};
+  try {
+    const payload = JSON.parse(script.textContent);
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+// 설정 편집 form 값을 config JSON payload로 조립한다.
 function buildPayload(form) {
-  const config = {};
+  const config = readInitialConfigPayload(form);
   form.querySelectorAll("[data-path]").forEach((input) => {
     setPath(config, input.dataset.path, readValue(input));
   });
@@ -351,6 +488,7 @@ function buildPayload(form) {
   return config;
 }
 
+// 실행 단계 row를 생성한다.
 function createStepRow() {
   const row = document.createElement("div");
   row.className = "workflow-step";
@@ -484,10 +622,15 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  const confirmForm = event.target.closest("[data-confirm]");
-  if (confirmForm && !window.confirm(confirmForm.dataset.confirm)) {
+  const confirmTarget = (event.submitter && event.submitter.closest("[data-confirm]")) || event.target.closest("[data-confirm]");
+  if (confirmTarget && !window.confirm(confirmTarget.dataset.confirm)) {
     event.preventDefault();
     return;
+  }
+
+  if (event.target.id === "orchestration-form") {
+    guardOrchestrationSchedulerSubmit(event);
+    if (event.defaultPrevented) return;
   }
 
   if (event.target.id === "config-form") {
@@ -497,9 +640,91 @@ document.addEventListener("submit", (event) => {
     }
     document.getElementById("payload").value = JSON.stringify(buildPayload(event.target));
   }
+
+  showGlobalProgressOverlay(progressMessageForSubmit(event));
 });
 
+// 긴 작업 중 화면을 덮는 진행 상태 오버레이를 표시한다.
+function showGlobalProgressOverlay(options = {}) {
+  const overlay = document.getElementById("global-progress-overlay");
+  if (!overlay) return;
+  const title = overlay.querySelector("[data-progress-title]");
+  const message = overlay.querySelector("[data-progress-message]");
+  if (title) title.textContent = options.title || "작업을 처리하는 중입니다";
+  if (message) message.textContent = options.message || "요청이 완료될 때까지 잠시 기다려 주세요.";
+  overlay.hidden = false;
+  document.body.classList.add("is-progress-active");
+}
+
+// 제출된 form 종류에 맞는 진행 메시지를 고른다.
+function progressMessageForSubmit(event) {
+  const form = event.target;
+  const submitter = event.submitter;
+  const hiddenAction = form.querySelector('input[name="action"]');
+  const action = submitter && submitter.name === "action" ? submitter.value : hiddenAction ? hiddenAction.value : "";
+  const buttonText = submitter ? submitter.textContent.trim() : "";
+  const targetAction = submitter && submitter.formAction ? submitter.formAction : form.action;
+  if (form.id === "orchestration-form") {
+    const messages = {
+      save: ["오케스트레이션 설정 저장 중", "입력한 설정을 JSON 상태 파일에 저장하고 있습니다."],
+      run: ["오케스트레이션 수동 실행 중", "선택한 크롤러를 실행하고 결과와 중복 기록을 정리하고 있습니다."],
+      sync: ["모니터링 시작 중", "설정을 저장하고 Windows Task Scheduler 작업을 동기화하고 있습니다."],
+      stop_monitoring: ["모니터링 종료 중", "이 프로젝트가 관리하는 스케줄러 작업을 종료하고 정리하고 있습니다."],
+    };
+    if (messages[action]) return { title: messages[action][0], message: messages[action][1] };
+  }
+  if (form.id === "config-form") {
+    if (targetAction && targetAction.includes("/preview")) {
+      return { title: "미리보기 실행 중", message: "XPath와 실행 단계 매칭 상태를 확인하고 있습니다." };
+    }
+    return { title: "크롤러 설정 저장 중", message: "현재 설정 내용을 저장하고 화면을 갱신하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/preview")) {
+    return { title: "미리보기 실행 중", message: "XPath와 실행 단계 매칭 상태를 확인하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/run")) {
+    return { title: "크롤링 실행 중", message: "외부 사이트 또는 API 응답을 수집하고 결과 파일을 저장하고 있습니다." };
+  }
+  if (targetAction && targetAction.includes("/delete")) {
+    return { title: "삭제 처리 중", message: "선택한 항목을 삭제하고 목록을 갱신하고 있습니다." };
+  }
+  if (action === "delete_scheduler") {
+    return { title: "스케줄러 삭제 중", message: "선택한 Windows Task Scheduler 작업을 삭제하고 상태를 갱신하고 있습니다." };
+  }
+  return { title: buttonText ? `${buttonText} 처리 중` : "작업을 처리하는 중입니다", message: "요청이 완료될 때까지 잠시 기다려 주세요." };
+}
+
+// 모니터링 시작/종료 중복 클릭을 막기 위해 버튼을 잠근다.
+function guardOrchestrationSchedulerSubmit(event) {
+  const form = event.target;
+  const submitter = event.submitter;
+  const action = submitter && submitter.name === "action" ? submitter.value : "";
+  if (action !== "sync" && action !== "stop_monitoring") return;
+  if (form.dataset.schedulerSubmitPending === "true") {
+    event.preventDefault();
+    return;
+  }
+  form.dataset.schedulerSubmitPending = "true";
+  if (submitter && submitter.name) {
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = submitter.name;
+    hidden.value = submitter.value;
+    hidden.dataset.schedulerSubmitAction = "true";
+    form.appendChild(hidden);
+  }
+  for (const button of form.querySelectorAll('button[name="action"][value="sync"], button[name="action"][value="stop_monitoring"]')) {
+    if (!button.dataset.originalText) button.dataset.originalText = button.textContent.trim();
+    if (button === submitter) button.textContent = action === "sync" ? "모니터링 시작 중..." : "모니터링 종료 중...";
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+    button.classList.add("is-pending");
+  }
+}
+
 renumberSteps();
+initOrchestrationTabs();
+initSchedulerDetailsLazyLoad();
 if (!focusConfigRowFromQuery()) {
   restoreScrollState();
 }

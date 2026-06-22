@@ -1,13 +1,15 @@
 {
   "name": "산업부_행정예고",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCLa6723dc7b",
-  "output_dir": "outputs/motir_admin",
+  "start_url": "https://www.motir.go.kr/kor/article/ATCLa6723dc7b?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
+  "output_dir": "outputs/motir_administration",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "",
-  "search_terms": [],
+  "search_terms": [
+    "1"
+  ],
   "filter_terms": [],
   "steps": [
     {
@@ -16,8 +18,17 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[2]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
+      "loop_limit": 2,
       "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[1]/span",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
       "wait_state": "attached"
     },
     {
@@ -39,6 +50,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-28T18:25:20+09:00",
-  "updated_at": "2026-04-30T14:37:55+09:00"
+  "created_at": "2026-05-26T09:48:50+09:00",
+  "updated_at": "2026-05-30T10:08:53+09:00"
 }

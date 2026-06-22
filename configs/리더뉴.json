@@ -1,0 +1,43 @@
+{
+  "name": "리더뉴",
+  "start_url": "https://lookerstudio.google.com/embed/reporting/09ac2e4d-cac1-4a4f-9cb9-5d64beff379f/page/KQObF",
+  "output_dir": "outputs/rethenew",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "iFrame안에 있는 구조이며, 각 내용이 구글 RSS에서 가져오는 것이라서\n내용 클릭 시 모두 다른 언론사의 기사로 이동하여 크롤링이 힘듬.",
+  "search_terms": [],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"g-jjujmod3wd\"]/div/div/canvas-component-container/ng2-canvas-component/div/div/div/div/table-wrapper/div/upgraded-table/div/div[3]/div[2]/div[2]/div[3]/a",
+      "xpath_2": "//*[@id=\"g-jjujmod3wd\"]/div/div/canvas-component-container/ng2-canvas-component/div/div/div/div/table-wrapper/div/upgraded-table/div/div[3]/div[2]/div[3]/div[3]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"container\"]/div[3]/div[1]/div/div[2]/div[1]/div/div/h2",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"news_body_area\"]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T15:07:33+09:00",
+  "updated_at": "2026-05-26T17:17:55+09:00"
+}

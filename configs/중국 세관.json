@@ -1,0 +1,48 @@
+{
+  "name": "중국 세관",
+  "start_url": "http://english.customs.gov.cn/newsroom/news?p={search_term}",
+  "output_dir": "outputs/customs_cn",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [
+    "关税",
+    "出口管制"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/div[2]/div[4]/div[3]/div[3]/div[1]/ul/li[1]/a",
+      "xpath_2": "/html/body/div[2]/div[4]/div[3]/div[3]/div[1]/ul/li[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "/html/body/div[2]/div[3]/div[1]/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "/html/body/div[2]/div[3]/div[2]/div[1]/div[2]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:43:00+09:00",
+  "updated_at": "2026-05-30T10:18:28+09:00"
+}

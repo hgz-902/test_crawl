@@ -7,9 +7,11 @@ from crawler_app.base import BaseCrawler, CrawlResult, utc_now
 from crawler_app.workflow import load_workflow_config, run_workflow_config
 
 
+# configurable 크롤러의 상태와 실행 동작을 관리한다.
 class ConfigurableCrawler(BaseCrawler):
     name = "configurable"
 
+    # 객체 생성 시 필요한 초기 상태를 설정한다.
     def __init__(
         self,
         config_path: str | Path | None = None,
@@ -22,9 +24,11 @@ class ConfigurableCrawler(BaseCrawler):
         self.max_retries = max_retries
         self.logger = logger or logging.getLogger("crawler_orchestrator")
 
+    # 실행에 사용할 크롤러 설정 파일 경로를 교체한다.
     def set_config_path(self, config_path: str | Path | None) -> None:
         self.config_path = Path(config_path) if config_path else None
 
+    # 현재 설정을 기준으로 크롤링을 실행하고 결과 객체를 반환한다.
     def crawl(self) -> CrawlResult:
         started_at = utc_now()
         config_name: str | None = None

@@ -1,0 +1,46 @@
+{
+  "name": "사회공헌플랫폼_배분사업",
+  "start_url": "https://csrhub.chest.or.kr/projects?searchKey=&page={search_term}&sort=NAME_ASC",
+  "output_dir": "outputs/csrhub_projects",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"projects-index-wrap\"]/div/table/tbody/tr[1]",
+      "xpath_2": "//*[@id=\"projects-index-wrap\"]/div/table/tbody/tr[2]",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 2,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "/html/body/div[1]/div/div[2]/div/div[2]/div[1]/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "/html/body/div[1]/div/div[2]/div/div[2]/div[2]/div/table/tbody/tr[1]/td",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T14:47:11+09:00",
+  "updated_at": "2026-05-26T17:17:59+09:00"
+}

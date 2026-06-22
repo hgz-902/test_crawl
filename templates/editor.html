@@ -50,11 +50,14 @@
 <form id="config-form" method="post" action="/configs">
   <input type="hidden" name="payload" id="payload">
   <input type="hidden" name="original_id" value="{{ config_id }}">
+  <script type="application/json" id="initial-config-json">{{ config | tojson }}</script>
 
   <section class="panel">
     <h2>기본정보</h2>
     <div class="grid">
       <label>이름<input data-path="name" value="{{ config.name }}"></label>
+      <label>카테고리<input data-path="category" value="{{ config.category or '' }}"></label>
+      <label>크롤링 타입<input data-path="crawling_type" value="{{ config.crawling_type or '' }}"></label>
       <label>시작 URL<input data-path="start_url" value="{{ config.start_url }}"></label>
       <label>출력 경로<input data-path="output_dir" value="{{ config.output_dir }}"></label>
       <label>페이지 타임아웃(ms)<input type="number" min="1" data-path="timeout_ms" value="{{ config.timeout_ms or 30000 }}"></label>
@@ -129,7 +132,7 @@
         <button
           type="button"
           class="help-tip"
-          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver.&#10;click: 사용하지 않습니다."
+          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver, daum.&#10;click: 사용하지 않습니다."
           aria-label="Attr 설명"
         >?</button>
       </span>
@@ -233,7 +236,8 @@
           <option value="html" {% if step.attr == "html" %}selected{% endif %}>html</option>
           <option value="google" {% if step.attr == "google" %}selected{% endif %}>google</option>
           <option value="naver" {% if step.attr == "naver" %}selected{% endif %}>naver</option>
-          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver"] %}
+          <option value="daum" {% if step.attr == "daum" %}selected{% endif %}>daum</option>
+          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver", "daum"] %}
           <option value="{{ step.attr }}" selected>{{ step.attr }}</option>
           {% endif %}
         </select>

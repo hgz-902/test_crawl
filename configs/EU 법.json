@@ -1,0 +1,39 @@
+{
+  "name": "EU 법",
+  "start_url": "https://eur-lex.europa.eu/search.html?scope=EURLEX&lang=en&type=quick",
+  "output_dir": "outputs/eur_lex2",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "EU법(관보)와 동일한 사이트로 보임. 크롤링 위치 가이드가 필요.",
+  "search_terms": [],
+  "filter_terms": [
+    "IAA",
+    "Battery Passport",
+    "Battery booster",
+    "EV",
+    "ESS",
+    "Lithum ion battery"
+  ],
+  "steps": [
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:33:00+09:00",
+  "updated_at": "2026-05-27T11:14:00+09:00"
+}

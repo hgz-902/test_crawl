@@ -1,0 +1,44 @@
+{
+  "name": "The butter",
+  "start_url": "https://www.thebutter.org/news/articleList.html?page={search_term}&total=1275&box_idxno=0",
+  "output_dir": "outputs/butter",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"section-list\"]/ul/li[1]/div/h2/a",
+      "xpath_2": "//*[@id=\"section-list\"]/ul/li[2]/div/h2/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"article-view\"]/div/header/div/h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"snsAnchor\"]/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T17:17:23+09:00",
+  "updated_at": "2026-05-30T10:11:11+09:00"
+}

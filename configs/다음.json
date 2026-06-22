@@ -1,0 +1,37 @@
+{
+  "name": "다음",
+  "category": "",
+  "crawling_type": "",
+  "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=recency&page=1&size=50",
+  "output_dir": "outputs/daum",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "Kakao Daum Web Search API를 사용. 환경변수 KAKAO_REST_API_KEY가 필요하다. Action=parser, attr=daum으로 실행한다. 다음 뉴스 전용 API가 아니라 카카오 웹 검색 API에 검색어와 site:v.daum.net 조건을 넣어 최신순 결과를 수집한다.",
+  "search_terms": [
+    "최태원",
+    "SK",
+    "SK이노베이션",
+    "SK E&S",
+    "SK에너지",
+    "SK지오센트릭",
+    "SK어스온"
+  ],
+  "filter_terms": [
+    "정유",
+    "석유",
+    "SK",
+    "주가",
+    "KOSPI"
+  ],
+  "steps": [
+    {
+      "name": "Kakao_api",
+      "action": "parser",
+      "attr": "daum"
+    }
+  ],
+  "created_at": "2026-05-15T00:00:00+09:00",
+  "updated_at": "2026-06-04T13:39:24+09:00"
+}

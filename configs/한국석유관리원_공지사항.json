@@ -1,0 +1,54 @@
+{
+  "name": "한국석유관리원_공지사항",
+  "start_url": "https://www.kpetro.or.kr/lay1/bbs/S1T52C254/A/1/list.do?rows=10&cpage={search_term}",
+  "output_dir": "outputs/kpetro_notice",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"subContent\"]/table/tbody/tr[1]/td[2]/a",
+      "xpath_2": "//*[@id=\"subContent\"]/table/tbody/tr[2]/td[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 2,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"subContent\"]/table[1]/thead/tr/th",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"subContent\"]/table[1]/tbody/tr[2]/td",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"subContent\"]/table[1]/tbody/tr[3]/td/ul[1]/li/a",
+      "xpath_2": "//*[@id=\"subContent\"]/table[1]/tbody/tr[3]/td/ul[2]/li/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T13:38:25+09:00",
+  "updated_at": "2026-05-30T10:10:15+09:00"
+}

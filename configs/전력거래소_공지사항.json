@@ -1,0 +1,54 @@
+{
+  "name": "전력거래소_공지사항",
+  "start_url": "https://new.kpx.or.kr/board.es?mid=a10501010000&bid=0042&nPage={search_term}&keyField=T",
+  "output_dir": "outputs/kpx_notice",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"contents_body\"]/div/div[2]/table/tbody/tr[1]/td[2]/a",
+      "xpath_2": "//*[@id=\"contents_body\"]/div/div[2]/table/tbody/tr[2]/td[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 2,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"contents_body\"]/div/article/div[1]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"contents_body\"]/div/article/div[2]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"contents_body\"]/div/article/div[3]/ul/li[1]/span[2]/a",
+      "xpath_2": "//*[@id=\"contents_body\"]/div/article/div[3]/ul/li[2]/span[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T11:26:38+09:00",
+  "updated_at": "2026-05-30T10:09:26+09:00"
+}

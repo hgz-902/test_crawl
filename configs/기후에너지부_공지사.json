@@ -1,0 +1,53 @@
+{
+  "name": "기후에너지부_공지사항",
+  "start_url": "https://mcee.go.kr/home/web/board/list.do?maxPageItems=10&maxIndexPages=10&searchKey=&searchValue=&boardMasterId=39&menuId=10524&boardCategoryId=&condition.hideCate=&condition.createDeptCode=&condition.createDeptName=&condition.fromDate=&condition.toDate=&order=&condition.createId=&decorator=&condition.proxyParam1=&condition.proxyParam2=&condition.proxyParam3=&proxyListPath=&proxyReadPath=&initialLoad=&pagerOffset={search_term}",
+  "output_dir": "outputs/mcee_notice",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "0"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"content_body\"]/div[2]/table/tbody/tr[3]/td[2]/a",
+      "xpath_2": "//*[@id=\"content_body\"]/div[2]/table/tbody/tr[4]/td[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/header",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[1]/a",
+      "xpath_2": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T11:05:09+09:00",
+  "updated_at": "2026-05-30T10:09:19+09:00"
+}

@@ -1,0 +1,55 @@
+{
+  "name": "국회의안정보시스템",
+  "category": "",
+  "crawling_type": "",
+  "start_url": "https://likms.assembly.go.kr/bill/bi/bill/state/finishBillPage.do?mainProcYn=Y&page={search_term}&rows=10",
+  "output_dir": "outputs/billinformation",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "검색어 목록란에 반드시 페이지 번호를 넣어야 함.",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"state-list\"]/div[1]/table/tbody/tr[1]/td[2]/a",
+      "xpath_2": "//*[@id=\"state-list\"]/div[1]/table/tbody/tr[2]/td[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"content\"]/div[1]/div/h3",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_text",
+      "xpath": "//*[@id=\"content\"]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"meta-info-sect\"]//a[contains(@data-url, \"/bill/bi/bill/detail/downloadDtlZip.do\")]",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-22T16:07:30+09:00",
+  "updated_at": "2026-06-08T16:17:32+09:00"
+}

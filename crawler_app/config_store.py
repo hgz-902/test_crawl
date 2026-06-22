@@ -20,6 +20,7 @@ from crawler_app.workflow import (
 CONFIG_DIR = Path("configs")
 
 
+# 설정 summary 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class ConfigSummary:
     name: str
@@ -32,6 +33,7 @@ class ConfigSummary:
     created_at: str
 
 
+# 설정 디렉터리의 JSON config 목록을 UI 표시용으로 읽는다.
 def list_configs(config_dir: str | Path = CONFIG_DIR) -> list[ConfigSummary]:
     root = Path(config_dir)
     if not root.exists():
@@ -62,10 +64,12 @@ def list_configs(config_dir: str | Path = CONFIG_DIR) -> list[ConfigSummary]:
     )
 
 
+# 설정 이름에 해당하는 JSON config 내용을 읽는다.
 def get_config(name: str, config_dir: str | Path = CONFIG_DIR) -> dict[str, Any]:
     return load_workflow_config(config_name_to_path(name, config_dir))
 
 
+# config payload를 기존 이름 기준으로 저장한다.
 def save_config(config: dict[str, Any], config_dir: str | Path = CONFIG_DIR) -> Path:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
@@ -74,6 +78,7 @@ def save_config(config: dict[str, Any], config_dir: str | Path = CONFIG_DIR) -> 
     return path
 
 
+# config payload를 지정한 새 이름으로 저장한다.
 def save_config_as(config: dict[str, Any], name: str, config_dir: str | Path = CONFIG_DIR) -> Path:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
@@ -82,6 +87,7 @@ def save_config_as(config: dict[str, Any], name: str, config_dir: str | Path = C
     return path
 
 
+# 정규화된 config 내용을 JSON 파일로 기록한다.
 def write_config_file(config: dict[str, Any], path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,26 +99,38 @@ def write_config_file(config: dict[str, Any], path: str | Path) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+# 설정 이름에 해당하는 JSON config 파일을 삭제한다.
 def delete_config(name: str, config_dir: str | Path = CONFIG_DIR) -> None:
     path = config_name_to_path(name, config_dir)
     if path.exists():
         path.unlink()
 
 
+# 설정 이름을 실제 config 파일 경로로 변환한다.
 def config_name_to_path(name: str, config_dir: str | Path = CONFIG_DIR) -> Path:
+    root = Path(config_dir)
+    raw_name = str(name).strip()
+    exact_stem = Path(raw_name).name
+    if exact_stem and exact_stem == raw_name:
+        exact_path = root / f"{exact_stem}.json"
+        if exact_path.exists():
+            return exact_path
     cleaned = config_file_stem(name)
-    return Path(config_dir) / f"{cleaned}.json"
+    return root / f"{cleaned}.json"
 
 
+# config 이름을 안전한 파일 stem 값으로 변환한다.
 def config_file_stem(name: str) -> str:
     normalized = re.sub(r"\s+", "_", name.strip())
     return safe_name(normalized).lower()
 
 
+# 현재 시각을 config 메타데이터용 ISO 문자열로 만든다.
 def _timestamp_now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+# 기존 config 파일의 created_at 값을 보존용으로 읽는다.
 def _read_existing_created_at(path: Path) -> str | None:
     if not path.exists():
         return None

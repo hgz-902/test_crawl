@@ -1,0 +1,63 @@
+{
+  "name": "EU 법(관보)",
+  "start_url": "https://eur-lex.europa.eu/search.html?page={search_term}&lang=en&type=quick",
+  "output_dir": "outputs/eur_lex",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "페이지 파라미터는 있으나, 각 기사로 들어가는 링크가 완전한 반복구조가 아님. 페이지가 넘어가도 XPath가 초기화되지 않고 XPath 내의 넘버링이 계속 늘어나는 구조",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport",
+    "Battery",
+    "EV",
+    "ESS"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"cellar_1\"]",
+      "xpath_2": "//*[@id=\"cellar_2\"]",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 11,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"title\"]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"document1\"]/div/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"format_language_table_PDF_EN\"]",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:32:00+09:00",
+  "updated_at": "2026-05-27T11:04:22+09:00"
+}

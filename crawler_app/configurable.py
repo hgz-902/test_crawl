@@ -25,6 +25,7 @@ USER_AGENT = (
 )
 
 
+# 설정 list item 관련 데이터를 표현하는 객체다.
 @dataclass(slots=True)
 class ConfigListItem:
     values: dict[str, Any]
@@ -32,16 +33,19 @@ class ConfigListItem:
     detail_url: str
 
 
+# 설정 detail item 관련 데이터를 표현하는 객체다.
 @dataclass(slots=True)
 class ConfigDetailItem:
     values: dict[str, Any]
     attachments: list[dict[str, Any]]
 
 
+# 설정 validation 오류 상황을 표현하는 예외 타입이다.
 class ConfigValidationError(ValueError):
     """Raised when a crawler JSON config is missing required settings."""
 
 
+# 크롤러 설정을 로드한다.
 def load_crawler_config(path: str | Path) -> dict[str, Any]:
     config_path = Path(path)
     try:
@@ -55,6 +59,7 @@ def load_crawler_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
+# 크롤러 설정 유효성을 검증한다.
 def validate_crawler_config(config: dict[str, Any]) -> None:
     for key in ("name", "start_url", "list", "detail"):
         if key not in config:
@@ -72,6 +77,7 @@ def validate_crawler_config(config: dict[str, Any]) -> None:
         _require_mapping(attachment_config.get("item_selector"), "detail.attachments.item_selector")
 
 
+# list 페이지를 파싱한다.
 def parse_list_page(html_text: str, config: dict[str, Any]) -> list[ConfigListItem]:
     list_config = _require_mapping(config["list"], "list")
     soup = BeautifulSoup(html_text, "html.parser")
@@ -107,6 +113,7 @@ def parse_list_page(html_text: str, config: dict[str, Any]) -> list[ConfigListIt
     return items
 
 
+# detail 페이지를 파싱한다.
 def parse_detail_page(html_text: str, config: dict[str, Any], list_item: ConfigListItem) -> ConfigDetailItem:
     detail_config = _require_mapping(config["detail"], "detail")
     soup = BeautifulSoup(html_text, "html.parser")
@@ -135,6 +142,7 @@ def parse_detail_page(html_text: str, config: dict[str, Any], list_item: ConfigL
     return ConfigDetailItem(values=values, attachments=attachments)
 
 
+# 첨부파일 목록을 파싱한다.
 def parse_attachments(
     container: Any,
     attachments_config: Any,
@@ -170,6 +178,7 @@ def parse_attachments(
     return attachments
 
 
+# 조건에 맞는 node 목록을 선택한다.
 def select_nodes(context: Any, selector: dict[str, Any]) -> list[Any]:
     selector_type = str(selector.get("type") or "css").lower()
     value = str(selector.get("value") or "")
@@ -189,11 +198,13 @@ def select_nodes(context: Any, selector: dict[str, Any]) -> list[Any]:
     raise ConfigValidationError(f"Unsupported selector type: {selector_type}")
 
 
+# 조건에 맞는 first를 선택한다.
 def select_first(context: Any, selector: dict[str, Any]) -> Any | None:
     nodes = select_nodes(context, selector)
     return nodes[0] if nodes else None
 
 
+# apply 부모 levels 값을 계산해 반환한다.
 def _apply_parent_levels(node: Any, parent_levels: int) -> Any:
     current = node
     for _ in range(parent_levels):
@@ -204,6 +215,7 @@ def _apply_parent_levels(node: Any, parent_levels: int) -> Any:
     return current
 
 
+# field를 추출한다.
 def extract_field(context: Any, field_config: dict[str, Any], values: dict[str, Any], base_url: str) -> Any:
     if "template" in field_config:
         try:
@@ -237,12 +249,14 @@ def extract_field(context: Any, field_config: dict[str, Any], values: dict[str, 
     return _clean_text(str(raw_value)) if isinstance(raw_value, str) else raw_value
 
 
+# HTML 텍스트 값을 계산해 반환한다.
 def html_to_text(value: str) -> str:
     decoded = unescape(value)
     soup = BeautifulSoup(decoded, "html.parser")
     return _clean_text(soup.get_text("\n", strip=True))
 
 
+# extract 첨부파일을 다운로드한다.
 def download_and_extract_attachment(
     session: requests.Session,
     output_dir: Path,
@@ -320,6 +334,7 @@ def download_and_extract_attachment(
     return record
 
 
+# HTTP 요청에 사용할 session을 생성한다.
 def build_session() -> requests.Session:
     session = requests.Session()
     session.trust_env = False
@@ -327,6 +342,7 @@ def build_session() -> requests.Session:
     return session
 
 
+# 출력 경로를 생성해 반환한다.
 def build_output_path(
     output_dir: Path,
     post_date: date,
@@ -348,6 +364,7 @@ def build_output_path(
     return target_dir / f"{post_date.strftime('%Y%m%d')}_{safe_name(post_id)}_{stem}{suffix}"
 
 
+# 다운로드 파일 이름을 실제 실행 값으로 해석한다.
 def resolve_download_file_name(
     content_disposition: str | None,
     fallback_name: str,
@@ -375,6 +392,7 @@ def resolve_download_file_name(
     return fallback_name or parsed_name or "attachment"
 
 
+# raw value를 추출한다.
 def _extract_raw_value(node: Any, attr: str) -> Any:
     if attr == "text":
         if isinstance(node, Tag):
@@ -392,18 +410,21 @@ def _extract_raw_value(node: Any, attr: str) -> Any:
     return None
 
 
+# lxml 값을 계산해 반환한다.
 def _to_lxml(context: Any) -> Any:
     if callable(getattr(context, "xpath", None)):
         return context
     return lxml_html.fromstring(_node_to_html(context))
 
 
+# node HTML 값을 계산해 반환한다.
 def _node_to_html(context: Any) -> str:
     if isinstance(context, str):
         return context
     return str(context)
 
 
+# 날짜를 기대 타입으로 변환한다.
 def _coerce_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
@@ -420,21 +441,25 @@ def _coerce_date(value: Any) -> date | None:
     return None
 
 
+# 필수 mapping 값이 올바른지 확인한다.
 def _require_mapping(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigValidationError(f"Config value must be an object: {name}")
     return value
 
 
+# 텍스트를 정리한다.
 def _clean_text(value: str) -> str:
     return " ".join(value.replace("\xa0", " ").split())
 
 
+# 안전한 이름 값을 계산해 반환한다.
 def safe_name(value: str) -> str:
     cleaned = re.sub(r'[<>:"/\\|?*]+', "_", value).strip().rstrip(".")
     return cleaned or "file"
 
 
+# json 안전한 값을 계산해 반환한다.
 def json_safe(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()

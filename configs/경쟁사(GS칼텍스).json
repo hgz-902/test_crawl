@@ -1,0 +1,67 @@
+{
+  "name": "경쟁사(GS칼텍스)",
+  "start_url": "https://gscaltexmediahub.com/page/{search_term}/?s",
+  "output_dir": "outputs/gscaltex",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1"
+  ],
+  "filter_terms": [
+    "SK",
+    "SK 이노베이션",
+    "SK E&S",
+    "SK 에너지",
+    "SK 지오센트릭",
+    "SK어스온",
+    "SK엔무브",
+    "SK아이이테크놀로지",
+    "SK인천석유화학",
+    "SK온",
+    "석유",
+    "정유",
+    "화학",
+    "유가",
+    "주유소",
+    "LNG",
+    "전력",
+    "수소",
+    "재생에너지",
+    "태앙광",
+    "풍력"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/main/section/div/div/div[1]/div/div/h3/a",
+      "xpath_2": "/html/body/main/section/div/div/div[2]/div/div/h3/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "/html/body/main/section/div/div/div[1]/div/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:59:00+09:00",
+  "updated_at": "2026-05-30T10:20:03+09:00"
+}

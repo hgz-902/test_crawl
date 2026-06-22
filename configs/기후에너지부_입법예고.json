@@ -1,20 +1,30 @@
 {
   "name": "기후에너지부_입법예고",
   "start_url": "https://mcee.go.kr/home/web/index.do?menuId=68",
-  "output_dir": "outputs/mcee_68",
+  "output_dir": "outputs/mcee_lowmaking",
+  "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
-  "notes": "",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "아직 1페이지밖에 없기 때문에, 시작 URL에 파라미터가 들어가지 않음.\n내용의 경우, 기후에너지부가 아닌 법제처로 이동하며, 다운로드 링크가 두 종류로 되어 있음.",
   "search_terms": [],
+  "filter_terms": [],
   "steps": [
     {
       "name": "open_detail",
       "xpath": "//*[@id=\"content_body\"]/div/table/tbody/tr[1]/td[2]/a",
       "xpath_2": "//*[@id=\"content_body\"]/div/table/tbody/tr[2]/td[2]/a",
       "loop": true,
-      "loop_limit": 3,
+      "loop_mode": "items",
       "action": "click",
-      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"ogLmPpVo\"]/div[1]/p[1]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
       "wait_state": "attached"
     },
     {
@@ -26,14 +36,24 @@
       "wait_state": "attached"
     },
     {
-      "name": "download_file",
+      "name": "download_file1",
       "xpath": "//*[@id=\"ogLmPpVo\"]/div[4]/div/table/tbody/tr[1]/td/ul/li[1]/button[1]",
       "xpath_2": "//*[@id=\"ogLmPpVo\"]/div[4]/div/table/tbody/tr[1]/td/ul/li[2]/button[1]",
       "loop": true,
+      "loop_mode": "items",
+      "action": "download",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file2",
+      "xpath": "//*[@id=\"ogLmPpVo\"]/div[4]/div/table/tbody/tr[2]/td/ul/li/button[1]",
+      "xpath_2": "//*[@id=\"ogLmPpVo\"]/div[4]/div/table/tbody/tr[3]/td/ul/li/button[1]",
+      "loop": true,
+      "loop_mode": "items",
       "action": "download",
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-27T18:34:52+09:00",
-  "updated_at": "2026-04-27T18:43:45+09:00"
+  "created_at": "2026-05-26T10:54:51+09:00",
+  "updated_at": "2026-05-26T17:18:43+09:00"
 }

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from crawler_app.workflow import (
@@ -43,6 +45,7 @@ from crawler_app.workflow import (
     normalize_workflow_config,
     validate_workflow_config,
 )
+from crawler_app.daum_news_api import parse_daum_web_search_items
 from crawler_app.google_news_rss import parse_google_news_rss_items
 from crawler_app.naver_news_api import fetch_naver_news_api_items, parse_naver_news_api_items
 
@@ -123,6 +126,14 @@ class FakeDownloadContext:
     @property
     def value(self) -> FakeDownload:
         return self.download
+
+
+def make_zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
 
 
 class FakeLocator:
@@ -1007,6 +1018,47 @@ class WorkflowDownloadTests(unittest.TestCase):
 
         validate_workflow_config(config)
 
+    def test_validate_workflow_config_allows_daum_news_api_parser_step(self) -> None:
+        config = {
+            "name": "daum",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "steps": [
+                {
+                    "name": "Kakao_api",
+                    "action": "parser",
+                    "attr": "daum",
+                    "loop_limit": 3,
+                }
+            ],
+        }
+
+        validate_workflow_config(config)
+
+    def test_parse_daum_web_search_items_extracts_expected_fields(self) -> None:
+        items = parse_daum_web_search_items(
+            """
+            {
+              "documents": [
+                {
+                  "title": "다음 <b>뉴스</b>",
+                  "contents": "<b>요약</b> 문장",
+                  "url": "https://v.daum.net/v/202604290001",
+                  "datetime": "2026-04-29T09:00:00.000+09:00"
+                }
+              ]
+            }
+            """.encode("utf-8")
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "다음 뉴스")
+        self.assertEqual(items[0]["detail_url"], "https://v.daum.net/v/202604290001")
+        self.assertEqual(items[0]["link"], "https://v.daum.net/v/202604290001")
+        self.assertEqual(items[0]["description"], "요약 문장")
+        self.assertEqual(items[0]["pubDate"], "2026-04-29T09:00:00.000+09:00")
+        self.assertEqual(items[0]["source_api"], "kakao_daum_web_search")
+
     def test_run_workflow_config_parses_naver_news_api_without_playwright(self) -> None:
         config = {
             "name": "naver-news",
@@ -1058,7 +1110,215 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.records[0]["extracts"]["title"], "네이버 뉴스")
             self.assertEqual(Path(execution.extracted_files[0]).name, "naver_news_api.json")
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
-            self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+            record_output = Path(execution.records[0]["output_file"])
+            self.assertTrue(record_output.exists())
+            self.assertRegex(record_output.name, r"^NAVER_\d{8}_\d{6}_1\.json$")
+
+    def test_parser_duplicate_stop_applies_to_current_search_term_only(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["first", "second"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        duplicate_item = {
+            "post_id": "dup",
+            "title": "Duplicate",
+            "link": "https://example.com/dup",
+            "originallink": "https://example.com/dup",
+            "description": "old",
+        }
+        fresh_item = {
+            "post_id": "fresh",
+            "title": "Fresh",
+            "link": "https://example.com/fresh",
+            "originallink": "https://example.com/fresh",
+            "description": "new",
+        }
+
+        def fake_fetch(source_url: str, *, timeout: float, item_limit: int | None = None):
+            if "first" in source_url:
+                return [duplicate_item], source_url
+            return [fresh_item], source_url
+
+        def policy(record: dict[str, object]) -> dict[str, object]:
+            title = ((record.get("extracts") or {}).get("title") if isinstance(record.get("extracts"), dict) else "")
+            if title == "Duplicate":
+                return {"include": False, "stop": True, "reason": "duplicate_stopped", "metadata": {"duplicate_key": "duplicate"}}
+            return {"include": True, "stop": False}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "naver")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config, record_policy=policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual([record["extracts"]["title"] for record in execution.records], ["Fresh"])
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+
+    def test_duplicate_stop_without_new_records_is_not_no_items_error(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        duplicate_item = {
+            "title": "Duplicate",
+            "link": "https://example.com/dup",
+            "originallink": "https://example.com/dup",
+        }
+
+        def policy(record: dict[str, object]) -> dict[str, object]:
+            return {"include": False, "stop": True, "reason": "duplicate_stopped", "metadata": {"duplicate_key": "duplicate"}}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "naver")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", return_value=([duplicate_item], "https://example.com/api")):
+                execution = run_workflow_config(config, record_policy=policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.records, [])
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertNotIn("error_type", execution.diagnostics)
+
+    def test_filter_split_removes_unclassified_root_parser_outputs(self) -> None:
+        config = {
+            "name": "naver",
+            "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=20&start=1&sort=date",
+            "output_dir": "outputs/naver",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "filter_terms": ["match"],
+            "steps": [{"name": "naver_news_api", "action": "parser", "attr": "naver"}],
+        }
+        api_items = [
+            {
+                "post_id": "match",
+                "title": "Match",
+                "link": "https://example.com/match",
+                "originallink": "https://example.com/match",
+                "description": "match keyword",
+            },
+            {
+                "post_id": "other",
+                "title": "Other",
+                "link": "https://example.com/other",
+                "originallink": "https://example.com/other",
+                "description": "plain",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "naver"
+            config["output_dir"] = str(output_dir)
+            output_dir.mkdir(parents=True)
+            operator_note = output_dir / "operator-note.txt"
+            operator_note.write_text("keep me", encoding="utf-8")
+            with patch("crawler_app.workflow.fetch_naver_news_api_items", return_value=(api_items, "https://example.com/api")):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            root_files = [path for path in output_dir.rglob("*") if path.is_file() and "filter" not in path.parts and "nonfilter" not in path.parts]
+            self.assertEqual(root_files, [operator_note])
+            self.assertTrue(list((output_dir / "filter" / "001_SK").rglob("naver_news_api.json")))
+            self.assertTrue(list((output_dir / "nonfilter" / "001_SK").rglob("naver_news_api.json")))
+
+    def test_filter_split_removes_generated_files_excluded_by_record_policy(self) -> None:
+        config = {
+            "name": "signal",
+            "output_dir": "outputs/signal",
+            "filter_terms": [],
+            "steps": [{"name": "extract_title", "action": "extract", "attr": "text"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            old_cwd = Path.cwd()
+            os.chdir(tmp_path)
+            try:
+                output_dir = Path("outputs") / "signal"
+                generated_dir = output_dir / "001_SK" / "texts" / "20260519"
+                generated_dir.mkdir(parents=True)
+                generated_file = generated_dir / "duplicate.txt"
+                generated_file.write_text("duplicate", encoding="utf-8")
+                operator_note = output_dir / "operator-note.txt"
+                operator_note.parent.mkdir(parents=True, exist_ok=True)
+                operator_note.write_text("keep me", encoding="utf-8")
+                execution = WorkflowExecution(
+                    config_name="signal",
+                    output_dir=output_dir,
+                    records=[],
+                    generated_files=[str(generated_file)],
+                )
+
+                _apply_workflow_result_filters(execution, config)
+                self.assertFalse(generated_file.exists())
+                self.assertFalse((output_dir / "001_SK").exists())
+                self.assertTrue(operator_note.exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_run_workflow_config_parses_daum_news_api_without_playwright(self) -> None:
+        config = {
+            "name": "daum",
+            "start_url": "https://dapi.kakao.com/v2/search/web?query={search_term}+site%3Av.daum.net&sort=recency&page=1&size=50",
+            "output_dir": "outputs/daum",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [
+                {
+                    "name": "Kakao_api",
+                    "action": "parser",
+                    "attr": "daum",
+                }
+            ],
+        }
+        api_items = [
+            {
+                "post_id": "https://v.daum.net/v/1",
+                "title": "다음 뉴스",
+                "detail_url": "https://v.daum.net/v/1",
+                "link": "https://v.daum.net/v/1",
+                "pubDate": "2026-05-14T09:00:00.000+09:00",
+                "description": "요약 문장",
+                "source_domain": "v.daum.net",
+                "source_api": "kakao_daum_web_search",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "daum")
+            with patch(
+                "crawler_app.workflow.fetch_daum_news_api_items",
+                return_value=(api_items, "https://dapi.kakao.com/v2/search/web?query=SK+site%3Av.daum.net&sort=recency&page=1&size=50"),
+            ):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.diagnostics["parser_name"], "daum")
+            self.assertEqual(execution.diagnostics["parser_item_count"], 1)
+            self.assertEqual(len(execution.records), 1)
+            self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
+            self.assertEqual(execution.records[0]["extracts"]["title"], "다음 뉴스")
+            self.assertEqual(Path(execution.extracted_files[0]).name, "daum_news_api.json")
+            self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            record_output = Path(execution.records[0]["output_file"])
+            self.assertEqual(record_output.parent.parent.name, "items")
+            self.assertRegex(record_output.parent.name, r"^\d{8}$")
+            self.assertRegex(record_output.name, r"^DAUM_\d{8}_\d{6}_1\.json$")
+            self.assertTrue(record_output.exists())
+            workflow_records = Path(config["output_dir"]) / "filter" / "workflow_records.json"
+            snapshot = json.loads(workflow_records.read_text(encoding="utf-8"))
+            self.assertEqual(len(snapshot["records"]), 1)
+            snapshot_output = Path(snapshot["records"][0]["output_file"])
+            self.assertEqual(snapshot_output.parent.parent.name, "items")
+            self.assertRegex(snapshot_output.parent.name, r"^\d{8}$")
+            self.assertEqual(snapshot_output, record_output)
+            self.assertTrue(snapshot_output.exists())
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {
@@ -1118,6 +1378,10 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(len(execution.extracted_files), 1)
             self.assertTrue(Path(execution.extracted_files[0]).exists())
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
+            self.assertRegex(Path(execution.records[1]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_2\.json$")
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1161,6 +1425,411 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("001_default", saved_path.parts)
             self.assertEqual(saved_path.name, "google_news_rss.json")
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
+
+    def test_run_workflow_config_record_policy_stops_parser_after_kept_record(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+        rss_items = [
+            {
+                "post_id": "fresh",
+                "title": "Fresh",
+                "detail_url": "https://example.com/fresh",
+                "link": "https://example.com/fresh",
+            },
+            {
+                "post_id": "dup",
+                "title": "Duplicate",
+                "detail_url": "https://example.com/dup",
+                "link": "https://example.com/dup",
+            },
+        ]
+
+        def record_policy(record: dict[str, object]) -> dict[str, object]:
+            extracts = record.get("extracts")
+            title = str(extracts.get("title") if isinstance(extracts, dict) else "")
+            if title == "Duplicate":
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_stopped",
+                    "metadata": {"duplicate_key": "duplicate"},
+                }
+            return {"include": True, "stop": False}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch(
+                "crawler_app.workflow.fetch_google_news_rss_items",
+                return_value=(rss_items, "https://news.google.com/rss/search?q=SK&hl=ko&gl=KR&ceid=KR:ko"),
+            ):
+                execution = run_workflow_config(config, record_policy=record_policy)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(execution.records), 1)
+            self.assertEqual(execution.records[0]["extracts"]["title"], "Fresh")
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(execution.diagnostics["record_policy_stop_reason"], "duplicate_stopped")
+            saved_path = Path(execution.extracted_files[0])
+            saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved_payload["item_count"], 1)
+            self.assertEqual([item["title"] for item in saved_payload["items"]], ["Fresh"])
+
+    def test_run_workflow_config_skips_parser_same_run_duplicate_detail_url_across_terms(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["트럼프", "이란"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "%ED%8A%B8%EB%9F%BC%ED%94%84" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "first",
+                            "title": "First title",
+                            "detail_url": "https://example.com/shared#fragment",
+                            "link": "https://example.com/shared#fragment",
+                        },
+                        {
+                            "post_id": "unique-1",
+                            "title": "Unique 1",
+                            "detail_url": "https://example.com/unique-1",
+                            "link": "https://example.com/unique-1",
+                        },
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "same-url-new-title",
+                        "title": "Changed title should still duplicate",
+                        "detail_url": " https://example.com/shared/ ",
+                        "link": " https://example.com/shared/ ",
+                    },
+                    {
+                        "post_id": "unique-2",
+                        "title": "First title",
+                        "detail_url": "https://example.com/unique-2",
+                        "link": "https://example.com/unique-2",
+                    },
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(execution.records), 3)
+            self.assertEqual(execution.diagnostics["same_run_duplicate_skipped_count"], 1)
+            detail_urls = [record["extracts"]["detail_url"].strip().split("#", 1)[0].rstrip("/") for record in execution.records]
+            self.assertEqual(detail_urls.count("https://example.com/shared"), 1)
+            workflow_records = list(Path(config["output_dir"]).rglob("workflow_records.json"))
+            self.assertEqual(len(workflow_records), 1)
+            payload = json.loads(workflow_records[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 3)
+            saved_details = [record["extracts"]["detail_url"].strip().split("#", 1)[0].rstrip("/") for record in payload["records"]]
+            self.assertEqual(saved_details.count("https://example.com/shared"), 1)
+
+    def test_run_workflow_config_skips_google_same_run_duplicate_description_after_detail_url(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["one", "two"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "one" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "first",
+                            "title": "First source",
+                            "detail_url": "https://news.google.com/rss/articles/source-a?oc=5",
+                            "link": "https://news.google.com/rss/articles/source-a?oc=5",
+                            "description": "Same underlying article",
+                        }
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "different-detail-same-description",
+                        "title": "Portal copy",
+                        "detail_url": "https://news.google.com/rss/articles/source-b?oc=5",
+                        "link": "https://news.google.com/rss/articles/source-b?oc=5",
+                        "description": "  same underlying ARTICLE  ",
+                    },
+                    {
+                        "post_id": "new-description",
+                        "title": "Another",
+                        "detail_url": "https://news.google.com/rss/articles/source-c?oc=5",
+                        "link": "https://news.google.com/rss/articles/source-c?oc=5",
+                        "description": "Different article",
+                    },
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config["output_dir"] = str(Path(tmp_dir) / "google")
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.diagnostics["same_run_duplicate_skipped_count"], 1)
+            details = [record["extracts"]["detail_url"] for record in execution.records]
+            self.assertEqual(
+                details,
+                [
+                    "https://news.google.com/rss/articles/source-a?oc=5",
+                    "https://news.google.com/rss/articles/source-c?oc=5",
+                ],
+            )
+            item_files = [path for path in Path(config["output_dir"]).rglob("*.json") if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_files), 2)
+
+    def test_run_workflow_config_stops_current_parser_term_on_previous_workflow_record_duplicate(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["첫검색", "둘검색"],
+            "steps": [
+                {
+                    "name": "google_rss",
+                    "action": "parser",
+                    "attr": "google",
+                }
+            ],
+        }
+        fetch_calls: list[str] = []
+
+        def fake_fetch(source_url: str, **kwargs):
+            fetch_calls.append(source_url)
+            if "%EC%B2%AB%EA%B2%80%EC%83%89" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "old",
+                            "title": "Previously saved",
+                            "detail_url": "https://example.com/old",
+                            "link": "https://example.com/old",
+                        },
+                        {
+                            "post_id": "should-not-save",
+                            "title": "After duplicate",
+                            "detail_url": "https://example.com/after-duplicate",
+                            "link": "https://example.com/after-duplicate",
+                        },
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "new",
+                        "title": "New after stopped term",
+                        "detail_url": "https://example.com/new",
+                        "link": "https://example.com/new",
+                    }
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            previous_snapshot_dir = output_dir / "filter"
+            previous_snapshot_dir.mkdir(parents=True)
+            (previous_snapshot_dir / "workflow_records.json").write_text(
+                json.dumps(
+                    {
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {"title": "Old title", "detail_url": "https://example.com/old"},
+                                "final_url": "https://news.google.com/rss/search?q=old",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(len(fetch_calls), 2)
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(execution.diagnostics["record_policy_stop_metadata"]["stop_scope"], "search_term")
+            self.assertEqual([record["extracts"]["detail_url"] for record in execution.records], ["https://example.com/new"])
+            item_files = list(output_dir.rglob("*.json"))
+            item_file_names = [path.name for path in item_files if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_file_names), 1)
+            self.assertFalse(any("after-duplicate" in path.read_text(encoding="utf-8") for path in item_files))
+            previous_payload = json.loads((previous_snapshot_dir / "workflow_records.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [record["extracts"]["detail_url"] for record in previous_payload["records"]],
+                ["https://example.com/old", "https://example.com/new"],
+            )
+
+    def test_run_workflow_config_preserves_existing_snapshot_when_duplicate_first_record_saves_nothing(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+        rss_items = [
+            {
+                "post_id": "old",
+                "title": "Already saved",
+                "detail_url": "https://example.com/old",
+                "link": "https://example.com/old",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            snapshot_dir = output_dir / "filter"
+            snapshot_dir.mkdir(parents=True)
+            snapshot_path = snapshot_dir / "workflow_records.json"
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "item_count": 1,
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {"title": "Old", "detail_url": "https://example.com/old"},
+                                "final_url": "https://news.google.com/rss/search?q=SK",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "crawler_app.workflow.fetch_google_news_rss_items",
+                return_value=(rss_items, "https://news.google.com/rss/search?q=SK&hl=ko&gl=KR&ceid=KR:ko"),
+            ):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertEqual(execution.records, [])
+            self.assertEqual(execution.diagnostics["filter_output_skipped"], "duplicate_stopped_without_new_records")
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["item_count"], 1)
+            self.assertEqual(payload["records"][0]["extracts"]["detail_url"], "https://example.com/old")
+            self.assertEqual(list(output_dir.rglob("GOOGLE_*.json")), [])
+
+    def test_run_workflow_config_stops_google_term_on_previous_description_duplicate(self) -> None:
+        config = {
+            "name": "google",
+            "start_url": "https://news.google.com/rss/search?q={search_term}&hl=ko&gl=KR&ceid=KR:ko",
+            "output_dir": "outputs/google",
+            "timeout_ms": 1000,
+            "search_terms": ["SK", "next"],
+            "steps": [{"name": "google_rss", "action": "parser", "attr": "google"}],
+        }
+
+        def fake_fetch(source_url: str, **kwargs):
+            if "SK" in source_url:
+                return (
+                    [
+                        {
+                            "post_id": "same-desc",
+                            "title": "Different source",
+                            "detail_url": "https://news.google.com/rss/articles/new-detail?oc=5",
+                            "link": "https://news.google.com/rss/articles/new-detail?oc=5",
+                            "description": "Same article desc",
+                        }
+                    ],
+                    source_url,
+                )
+            return (
+                [
+                    {
+                        "post_id": "next",
+                        "title": "Next term continues",
+                        "detail_url": "https://news.google.com/rss/articles/next?oc=5",
+                        "link": "https://news.google.com/rss/articles/next?oc=5",
+                        "description": "Next article",
+                    }
+                ],
+                source_url,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "google"
+            config["output_dir"] = str(output_dir)
+            snapshot_dir = output_dir / "filter"
+            snapshot_dir.mkdir(parents=True)
+            (snapshot_dir / "workflow_records.json").write_text(
+                json.dumps(
+                    {
+                        "records": [
+                            {
+                                "parser_name": "google",
+                                "extracts": {
+                                    "title": "Original",
+                                    "detail_url": "https://news.google.com/rss/articles/old-detail?oc=5",
+                                    "description": "same ARTICLE desc",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("crawler_app.workflow.fetch_google_news_rss_items", side_effect=fake_fetch):
+                execution = run_workflow_config(config)
+
+            self.assertTrue(execution.success)
+            self.assertTrue(execution.diagnostics["record_policy_stopped"])
+            self.assertEqual(
+                [record["extracts"]["detail_url"] for record in execution.records],
+                ["https://news.google.com/rss/articles/next?oc=5"],
+            )
+            item_files = [path for path in output_dir.rglob("*.json") if path.name.startswith("GOOGLE_")]
+            self.assertEqual(len(item_files), 1)
 
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
         config = {
@@ -1283,6 +1952,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("nonfilter", nonfilter_path.parts)
             self.assertEqual(execution.records[0]["record_key"], "term001_item001")
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
+            self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
+            self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
 
             matched_payload = matched_path.read_text(encoding="utf-8")
             nonfilter_payload = nonfilter_path.read_text(encoding="utf-8")
@@ -1915,12 +2586,13 @@ class WorkflowDownloadTests(unittest.TestCase):
                 output_dir=Path(tmp_dir),
                 timeout_ms=1000,
             )
+            downloaded_path = result.paths[0]
 
-            self.assertTrue(result.exists())
-            self.assertEqual(result.read_bytes(), b"pdf-bytes")
+            self.assertTrue(downloaded_path.exists())
+            self.assertEqual(downloaded_path.read_bytes(), b"pdf-bytes")
             self.assertEqual(request.calls, [("https://example.com/sample.pdf", 1000)])
             self.assertFalse(locator.clicked)
-            self.assertTrue(result.name.startswith("record_step01_download_"))
+            self.assertTrue(downloaded_path.name.startswith("record_step01_download_"))
 
     def test_download_switches_to_click_for_javascript_href(self) -> None:
         response = FakeResponse(body=b"should-not-be-used")
@@ -1943,12 +2615,120 @@ class WorkflowDownloadTests(unittest.TestCase):
                 output_dir=Path(tmp_dir),
                 timeout_ms=1000,
             )
+            downloaded_path = result.paths[0]
 
             self.assertTrue(locator.clicked)
-            self.assertTrue(result.exists())
-            self.assertEqual(result.read_bytes(), b"download-bytes")
-            self.assertEqual(download.saved_to, str(result))
-            self.assertTrue(result.name.startswith("record_step01_download_"))
+            self.assertTrue(downloaded_path.exists())
+            self.assertEqual(downloaded_path.read_bytes(), b"download-bytes")
+            self.assertEqual(download.saved_to, str(downloaded_path))
+            self.assertTrue(downloaded_path.name.startswith("record_step01_download_"))
+
+    def test_download_extracts_browser_zip_and_removes_archive(self) -> None:
+        zip_bytes = make_zip_bytes(
+            {
+                "nested/report.html": b"<html>report</html>",
+                "image/logo.png": b"png-bytes",
+            }
+        )
+        page = FakePage(FakeRequest(FakeResponse(body=b"unused")), FakeDownload("bundle.zip", zip_bytes))
+        locator = FakeLocator("javascript:downloadZip()")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = _download_step(
+                page=page,
+                locator=locator,
+                step={"attr": "href"},
+                output_dir=Path(tmp_dir),
+                timeout_ms=1000,
+                record_key="DART-3CWG5VZPC2FKO",
+            )
+
+            self.assertEqual(
+                [path.name for path in result.paths],
+                [
+                    "DART-3CWG5VZPC2FKO_report.html",
+                    "DART-3CWG5VZPC2FKO_logo.png",
+                ],
+            )
+            self.assertTrue(all(path.exists() for path in result.paths))
+            self.assertEqual({path.parent for path in result.paths}, {Path(result.source_path or "").parent})
+            self.assertFalse(Path(result.source_path or "").exists())
+            self.assertIsNone(result.zip_extract_error)
+
+    def test_download_extracts_response_zip_with_flattened_unique_names(self) -> None:
+        zip_bytes = make_zip_bytes(
+            {
+                "a/report.html": b"first",
+                "b/report.html": b"second",
+            }
+        )
+        response = FakeResponse(
+            body=zip_bytes,
+            headers={"Content-Disposition": 'attachment; filename="bundle.zip"'},
+        )
+        page = FakePage(FakeRequest(response), FakeDownload("unused.pdf"))
+        locator = FakeLocator("https://example.com/bundle.zip")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = _download_step(
+                page=page,
+                locator=locator,
+                step={"attr": "href"},
+                output_dir=Path(tmp_dir),
+                timeout_ms=1000,
+                record_key="DART-3CWG5VZPC2FKO",
+            )
+
+            self.assertEqual(
+                [path.name for path in result.paths],
+                ["DART-3CWG5VZPC2FKO_report.html", "DART-3CWG5VZPC2FKO_report_1.html"],
+            )
+            self.assertEqual([path.read_bytes() for path in result.paths], [b"first", b"second"])
+            self.assertEqual({path.parent for path in result.paths}, {Path(result.source_path or "").parent})
+            self.assertFalse(Path(result.source_path or "").exists())
+
+    def test_download_zip_skips_unsafe_members(self) -> None:
+        zip_bytes = make_zip_bytes(
+            {
+                "../evil.txt": b"evil",
+                "/absolute.txt": b"absolute",
+                "safe/good.txt": b"good",
+            }
+        )
+        page = FakePage(FakeRequest(FakeResponse(body=b"unused")), FakeDownload("bundle.zip", zip_bytes))
+        locator = FakeLocator("javascript:downloadZip()")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = _download_step(
+                page=page,
+                locator=locator,
+                step={"attr": "href"},
+                output_dir=Path(tmp_dir),
+                timeout_ms=1000,
+                record_key="DART-3CWG5VZPC2FKO",
+            )
+
+            self.assertEqual([path.name for path in result.paths], ["DART-3CWG5VZPC2FKO_good.txt"])
+            self.assertEqual(result.paths[0].read_bytes(), b"good")
+            self.assertFalse((Path(tmp_dir) / "evil.txt").exists())
+
+    def test_download_keeps_invalid_zip_as_original_file(self) -> None:
+        page = FakePage(FakeRequest(FakeResponse(body=b"unused")), FakeDownload("broken.zip", b"not-a-zip"))
+        locator = FakeLocator("javascript:downloadZip()")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = _download_step(
+                page=page,
+                locator=locator,
+                step={"attr": "href"},
+                output_dir=Path(tmp_dir),
+                timeout_ms=1000,
+            )
+
+            self.assertEqual(len(result.paths), 1)
+            self.assertTrue(result.paths[0].exists())
+            self.assertEqual(result.paths[0].suffix.lower(), ".zip")
+            self.assertIn("Invalid ZIP archive", result.zip_extract_error or "")
 
     def test_download_multiple_step_downloads_each_unique_href(self) -> None:
         response = FakeResponse(
