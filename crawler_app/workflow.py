@@ -1225,7 +1225,7 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
     source_records = list(execution.records)
-    raw_records, duplicate_skipped = _dedupe_execution_records(source_records)
+    raw_records, duplicate_skipped = _dedupe_execution_records(source_records, filter_terms=filter_terms)
     raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
     raw_generated_files.extend(_collect_record_files(source_records, "downloaded_files"))
     raw_generated_files.extend(_collect_record_files(source_records, "extracted_files"))
@@ -1699,17 +1699,21 @@ def _split_records_by_filter_terms(
 
 
 # dedupe execution records 값을 계산해 반환한다.
-def _dedupe_execution_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def _dedupe_execution_records(records: list[dict[str, Any]], filter_terms: list[str] | None = None) -> tuple[list[dict[str, Any]], int]:
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
+    record_by_key: dict[str, dict[str, Any]] = {}
     skipped = 0
     for record in records:
         keys = duplicate_keys_for_record(record)
-        if any(key in seen for key in keys):
+        duplicate_record = next((record_by_key[key] for key in keys if key in record_by_key), None)
+        if duplicate_record is not None:
+            _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms or [])
             skipped += 1
             continue
         for key in keys:
             seen.add(key)
+            record_by_key[key] = record
         deduped.append(record)
     return deduped, skipped
 
@@ -1973,7 +1977,7 @@ def _write_workflow_record_snapshot_unlocked(
     existing_payload = _read_existing_workflow_record_snapshot(output_path)
     if existing_payload:
         existing_records = existing_payload.get("records") if isinstance(existing_payload.get("records"), list) else []
-        records = _merge_workflow_record_snapshot_records(existing_records, records)
+        records = _merge_workflow_record_snapshot_records(existing_records, records, filter_terms=filter_terms)
     if file_name == "workflow_records.json":
         snapshot_records: list[dict[str, Any]] = []
         for record in records:
@@ -2012,11 +2016,11 @@ def _save_latest_record_snapshot(
 
     current_entries: list[dict[str, str]] = []
     for record in matched_records:
-        terms = _matched_filter_terms(record, filter_terms) if filter_terms else [""]
+        terms = _record_filter_terms(record, filter_terms) if filter_terms else [""]
         for term in terms:
-            current_entries.append(_latest_record_entry(config, record, filter_term=term))
+            current_entries.extend(_latest_record_entries(config, record, filter_term=term))
     for record in nonfilter_records:
-        current_entries.append(_latest_record_entry(config, record, filter_term="nonfilter"))
+        current_entries.extend(_latest_record_entries(config, record, filter_term="nonfilter"))
 
     records = _merge_latest_records(
         existing_records,
@@ -2037,14 +2041,18 @@ def _save_latest_record_snapshot(
     return output_path
 
 
-# latest record entry 값을 계산해 반환한다.
-def _latest_record_entry(config: dict[str, Any], record: dict[str, Any], *, filter_term: str) -> dict[str, str]:
-    return {
-        "search_term": str(record.get("search_term") or ""),
-        "filter_term": str(filter_term or ""),
-        "final_url": _record_final_url(config, record),
-        "pub_date": _record_pub_date(record),
-    }
+# latest record entry 목록을 계산해 반환한다.
+def _latest_record_entries(config: dict[str, Any], record: dict[str, Any], *, filter_term: str) -> list[dict[str, str]]:
+    search_terms = _record_search_terms(record) or [""]
+    return [
+        {
+            "search_term": search_term,
+            "filter_term": str(filter_term or ""),
+            "final_url": _record_final_url(config, record),
+            "pub_date": _record_pub_date(record),
+        }
+        for search_term in search_terms
+    ]
 
 
 # 기존 값과 새 latest records를 병합한다.
@@ -2164,16 +2172,16 @@ def _api_recent_record_is_within_pub_date_window(record: dict[str, str], cutoff:
 
 # latest record group key 값을 계산해 반환한다.
 def _latest_record_group_key(record: dict[str, Any]) -> tuple[str, str]:
-    search_term = str(record.get("search_term") or "")
+    search_term = _first_record_text(record.get("search_term"))
     search_key = "__numeric_page_param__" if NUMERIC_SEARCH_TERM_RE.fullmatch(search_term.strip()) else search_term
-    return search_key, str(record.get("filter_term") or "")
+    return search_key, _first_record_text(record.get("filter_term"))
 
 
 # latest record를 표준 형태로 정규화한다.
 def _normalize_latest_record(record: dict[str, Any]) -> dict[str, str]:
     return {
-        "search_term": str(record.get("search_term") or ""),
-        "filter_term": str(record.get("filter_term") or ""),
+        "search_term": _first_record_text(record.get("search_term")),
+        "filter_term": _first_record_text(record.get("filter_term")),
         "final_url": str(record.get("final_url") or ""),
         "pub_date": str(record.get("pub_date") or ""),
     }
@@ -2195,8 +2203,8 @@ def build_latest_duplicate_index(
         )
         if not keys and boundary.pub_datetime is None:
             continue
-        search_term = str(record.get("search_term") or "")
-        filter_term = str(record.get("filter_term") or "")
+        search_term = _first_record_text(record.get("search_term"))
+        filter_term = _first_record_text(record.get("filter_term"))
         if _is_numeric_search_term(search_term):
             target = index.numeric_by_filter.setdefault(filter_term, set())
             index.numeric_boundaries_by_filter.setdefault(filter_term, []).append(boundary)
@@ -2268,7 +2276,7 @@ def latest_duplicate_decision_for_record(
     if not keys and record_datetime is None:
         return None
 
-    search_term = str(record.get("search_term") or "")
+    search_term = _first_record_text(record.get("search_term"))
     if _is_numeric_search_term(search_term):
         candidate_filters = _latest_filter_candidates_for_record(record, list(filter_terms or []))
         for filter_term in candidate_filters:
@@ -2407,13 +2415,66 @@ def _workflow_record_snapshot_record(
         record["record_key"] = _build_stable_record_key(config, record)
     return {
         "record_key": str(record.get("record_key") or ""),
-        "search_term": str(record.get("search_term") or ""),
-        "filter_term": ", ".join(_matched_filter_terms(record, filter_terms)),
+        "search_term": _record_search_terms(record),
+        "filter_term": _record_filter_terms(record, filter_terms),
         "extract_title": _record_title(record),
         "description": _record_description(record),
         "pub_date": _record_pub_date(record),
         "final_url": _record_final_url(config, record),
     }
+
+
+# record search_term 값을 항상 배열로 반환한다.
+def _record_search_terms(record: dict[str, Any]) -> list[str]:
+    return _term_list(record.get("search_term"))
+
+
+# record filter_term 값을 항상 배열로 반환한다.
+def _record_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    explicit = _term_list(record.get("filter_term"))
+    matched = _matched_filter_terms(record, filter_terms)
+    return _merge_term_lists(explicit, matched)
+
+
+# record term 필드를 병합한다.
+def _merge_record_term_arrays(target: dict[str, Any], source: dict[str, Any], *, filter_terms: list[str] | None = None) -> None:
+    merged_search_terms = _merge_term_lists(_term_list(target.get("search_term")), _term_list(source.get("search_term")))
+    if merged_search_terms:
+        target["search_term"] = merged_search_terms
+
+    if filter_terms is not None:
+        target_filter_terms = _record_filter_terms(target, filter_terms)
+        source_filter_terms = _record_filter_terms(source, filter_terms)
+        merged_filter_terms = _merge_term_lists(target_filter_terms, source_filter_terms)
+        if merged_filter_terms:
+            target["filter_term"] = merged_filter_terms
+
+
+# term 목록을 중복 없이 병합한다.
+def _merge_term_lists(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for term in group:
+            normalized = str(term or "").strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+# scalar/list term 값을 배열로 정규화한다.
+def _term_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return _merge_term_lists([str(item).strip() for item in value if str(item or "").strip()])
+    text = str(value).strip()
+    return [text] if text else []
 
 
 # matched 필터 검색어 목록 값을 계산해 반환한다.
@@ -2475,6 +2536,21 @@ def _record_pub_date(record: dict[str, Any]) -> str:
 # record final URL 값을 계산해 반환한다.
 def _record_final_url(config: dict[str, Any], record: dict[str, Any]) -> str:
     extracts = _record_extracts(record)
+    if _config_parser_name(config) is not None:
+        return canonicalize_article_url(
+            _first_record_text(
+                record.get("detail_url"),
+                extracts.get("detail_url"),
+                record.get("originallink"),
+                extracts.get("originallink"),
+                record.get("link"),
+                extracts.get("link"),
+                record.get("url"),
+                extracts.get("url"),
+                record.get("final_url"),
+                extracts.get("final_url"),
+            )
+        )
     return canonicalize_article_url(
         _first_record_text(
             record.get("final_url"),
@@ -2512,21 +2588,60 @@ def _read_existing_workflow_record_snapshot(path: Path) -> dict[str, Any]:
 def _merge_workflow_record_snapshot_records(
     existing_records: list[dict[str, Any]],
     new_records: list[dict[str, Any]],
+    *,
+    filter_terms: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     existing = [record for record in existing_records if isinstance(record, dict)]
-    existing_keys = {key for record in existing for key in duplicate_keys_for_record(record)}
-    seen = set(existing_keys)
-    prepend_records: list[dict[str, Any]] = []
+    record_by_key: dict[str, dict[str, Any]] = {}
+    for record in existing:
+        for key in duplicate_keys_for_record(record):
+            record_by_key.setdefault(key, record)
+    seen = set(record_by_key)
+    append_records: list[dict[str, Any]] = []
     for record in new_records:
         if not isinstance(record, dict):
             continue
         keys = duplicate_keys_for_record(record)
-        if any(key in seen for key in keys):
+        duplicate_record = next((record_by_key[key] for key in keys if key in record_by_key), None)
+        if duplicate_record is not None:
+            _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms or [])
             continue
         for key in keys:
             seen.add(key)
-        prepend_records.append(record)
-    return _sort_parser_api_records_latest_first(prepend_records) + existing
+            record_by_key[key] = record
+        append_records.append(record)
+    return existing + _sort_parser_api_records_latest_first(append_records)
+
+
+# 기존 workflow_records.json에 있는 중복 record의 term 배열을 갱신한다.
+def _merge_terms_into_existing_workflow_records(
+    output_dir: Path,
+    config: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    filter_terms: list[str] | None = None,
+) -> bool:
+    keys = set(duplicate_keys_for_record(record))
+    if not keys or not output_dir.exists():
+        return False
+    for path in output_dir.rglob("workflow_records.json"):
+        payload = _read_existing_workflow_record_snapshot(path)
+        records = payload.get("records") if isinstance(payload.get("records"), list) else []
+        changed = False
+        for existing_record in records:
+            if not isinstance(existing_record, dict):
+                continue
+            existing_keys = set(duplicate_keys_for_record(_record_for_duplicate_index(config, existing_record)))
+            if keys.isdisjoint(existing_keys):
+                continue
+            before = json.dumps(existing_record, ensure_ascii=False, sort_keys=True)
+            _merge_record_term_arrays(existing_record, record, filter_terms=filter_terms or [])
+            after = json.dumps(existing_record, ensure_ascii=False, sort_keys=True)
+            changed = changed or before != after
+        if changed:
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+    return False
 
 
 # parser API records latest first를 정렬한다.
@@ -2659,6 +2774,7 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
     latest_duplicate_index = build_latest_duplicate_index([output_dir], config)
     filter_terms = _config_filter_terms(config)
     same_run_seen: set[str] = set()
+    same_run_record_by_key: dict[str, dict[str, Any]] = {}
     state["previous_duplicate_index_count"] = len(previous_duplicate_index)
     state["previous_boundary_duplicate_index_count"] = len(boundary_duplicate_index)
     state["latest_duplicate_index_count"] = len(latest_duplicate_index.all_keys)
@@ -2671,6 +2787,7 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
         if latest_duplicate_index.has_records:
             latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
             if latest_decision is not None:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
                 if not latest_decision.get("stop"):
                     state["latest_cross_group_duplicate_skipped_count"] = (
                         int(state.get("latest_cross_group_duplicate_skipped_count") or 0) + 1
@@ -2679,6 +2796,7 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
         else:
             boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
             if boundary_duplicate_key:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
                 return {
                     "include": False,
                     "stop": True,
@@ -2692,6 +2810,7 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
 
             duplicate_key = next((key for key in keys if key in previous_duplicate_index), "")
             if duplicate_key:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
                 return {
                     "include": False,
                     "stop": True,
@@ -2701,6 +2820,9 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
 
         same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
         if same_run_duplicate_key:
+            duplicate_record = same_run_record_by_key.get(same_run_duplicate_key)
+            if duplicate_record is not None:
+                _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms)
             state["same_run_duplicate_skipped_count"] = int(state.get("same_run_duplicate_skipped_count") or 0) + 1
             return {
                 "include": False,
@@ -2711,6 +2833,7 @@ def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any
 
         for key in keys:
             same_run_seen.add(key)
+            same_run_record_by_key[key] = record
         return {"include": True, "stop": False}
 
     return record_policy
@@ -2744,6 +2867,7 @@ def _run_parser_workflow(
         existing_duplicate_index, boundary_duplicate_index = _build_existing_workflow_duplicate_indexes(execution.output_dir, config)
         latest_duplicate_index = build_latest_duplicate_index([execution.output_dir], config)
     same_run_seen: set[str] = set()
+    same_run_record_by_key: dict[str, dict[str, Any]] = {}
     same_run_duplicate_skipped_count = 0
     latest_cross_group_duplicate_skipped_count = 0
     for search_term_index, search_term in enumerate(effective_terms):
@@ -2812,6 +2936,7 @@ def _run_parser_workflow(
                 if latest_duplicate_index.has_records:
                     latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
                     if latest_decision is not None:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
                         if latest_decision.get("stop"):
                             stop_exc = WorkflowRecordPolicyStop(
                                 reason=str(latest_decision.get("reason") or "duplicate_boundary_stopped"),
@@ -2824,6 +2949,7 @@ def _run_parser_workflow(
                 else:
                     boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
                     if boundary_duplicate_key:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
                         stop_exc = WorkflowRecordPolicyStop(
                             reason="duplicate_boundary_stopped",
                             metadata={
@@ -2836,6 +2962,7 @@ def _run_parser_workflow(
                         break
                     duplicate_key = next((key for key in keys if key in existing_duplicate_index), "")
                     if duplicate_key:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
                         stop_exc = WorkflowRecordPolicyStop(
                             reason="duplicate_stopped",
                             metadata={"duplicate_key": duplicate_key, "stop_scope": _duplicate_stop_scope_for_record(record)},
@@ -2844,10 +2971,14 @@ def _run_parser_workflow(
                         break
                 same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
                 if same_run_duplicate_key:
+                    duplicate_record = same_run_record_by_key.get(same_run_duplicate_key)
+                    if duplicate_record is not None:
+                        _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms)
                     same_run_duplicate_skipped_count += 1
                     continue
                 for key in keys:
                     same_run_seen.add(key)
+                    same_run_record_by_key[key] = record
                 include, stop, reason, metadata = True, False, "record_policy_stopped", {}
             else:
                 include, stop, reason, metadata = _record_policy_decision(record_policy, record)

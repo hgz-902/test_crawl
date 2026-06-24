@@ -33,6 +33,7 @@ from crawler_app.workflow import (
     _render_template_value,
     _save_extract_outputs,
     _select_board_item_scope,
+    _merge_terms_into_existing_workflow_records,
     _build_board_loop_spec,
     _attach_dialog_handler,
     _run_nested_click_loops,
@@ -1105,14 +1106,14 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.diagnostics["parser_name"], "naver")
             self.assertEqual(execution.diagnostics["parser_item_count"], 1)
             self.assertEqual(len(execution.records), 1)
-            self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertTrue(execution.records[0]["record_key"].startswith("NAVER-"))
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "네이버 뉴스")
             self.assertEqual(Path(execution.extracted_files[0]).name, "naver_news_api.json")
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
             record_output = Path(execution.records[0]["output_file"])
             self.assertTrue(record_output.exists())
-            self.assertRegex(record_output.name, r"^NAVER_\d{8}_\d{6}_1\.json$")
+            self.assertRegex(record_output.name, r"^NAVER-[A-Z0-9]+\.json$")
 
     def test_parser_duplicate_stop_applies_to_current_search_term_only(self) -> None:
         config = {
@@ -1226,7 +1227,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             root_files = [path for path in output_dir.rglob("*") if path.is_file() and "filter" not in path.parts and "nonfilter" not in path.parts]
             self.assertEqual(root_files, [operator_note])
             self.assertTrue(list((output_dir / "filter" / "001_SK").rglob("naver_news_api.json")))
-            self.assertTrue(list((output_dir / "nonfilter" / "001_SK").rglob("naver_news_api.json")))
+            self.assertTrue(execution.diagnostics["nonfilter_output_suppressed"])
+            self.assertFalse((output_dir / "nonfilter").exists())
 
     def test_filter_split_removes_generated_files_excluded_by_record_policy(self) -> None:
         config = {
@@ -1309,16 +1311,16 @@ class WorkflowDownloadTests(unittest.TestCase):
             record_output = Path(execution.records[0]["output_file"])
             self.assertEqual(record_output.parent.parent.name, "items")
             self.assertRegex(record_output.parent.name, r"^\d{8}$")
-            self.assertRegex(record_output.name, r"^DAUM_\d{8}_\d{6}_1\.json$")
+            self.assertRegex(record_output.name, r"^DAUM-[A-Z0-9]+\.json$")
             self.assertTrue(record_output.exists())
             workflow_records = Path(config["output_dir"]) / "filter" / "workflow_records.json"
             snapshot = json.loads(workflow_records.read_text(encoding="utf-8"))
             self.assertEqual(len(snapshot["records"]), 1)
-            snapshot_output = Path(snapshot["records"][0]["output_file"])
-            self.assertEqual(snapshot_output.parent.parent.name, "items")
-            self.assertRegex(snapshot_output.parent.name, r"^\d{8}$")
-            self.assertEqual(snapshot_output, record_output)
-            self.assertTrue(snapshot_output.exists())
+            self.assertEqual(snapshot["records"][0]["record_key"], execution.records[0]["record_key"])
+            self.assertEqual(snapshot["records"][0]["search_term"], ["SK"])
+            self.assertEqual(snapshot["records"][0]["filter_term"], [])
+            self.assertEqual(snapshot["records"][0]["final_url"], "https://v.daum.net/v/1")
+            self.assertEqual(snapshot["records"][0]["extract_title"], "다음 뉴스")
 
     def test_run_workflow_config_parses_google_news_rss_without_playwright(self) -> None:
         config = {
@@ -1372,7 +1374,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.diagnostics["parser_name"], "google")
             self.assertEqual(execution.diagnostics["parser_item_count"], 2)
             self.assertEqual(len(execution.records), 2)
-            self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertTrue(execution.records[0]["record_key"].startswith("GOOGLE-"))
             self.assertEqual(execution.records[0]["steps"][0]["action"], "parser")
             self.assertEqual(execution.records[0]["extracts"]["title"], "둘째 기사")
             self.assertEqual(len(execution.extracted_files), 1)
@@ -1380,8 +1382,8 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("filter", Path(execution.extracted_files[0]).parts)
             self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
             self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
-            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
-            self.assertRegex(Path(execution.records[1]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_2\.json$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE-[A-Z0-9]+\.json$")
+            self.assertRegex(Path(execution.records[1]["output_file"]).name, r"^GOOGLE-[A-Z0-9]+\.json$")
 
     def test_run_workflow_config_parses_google_news_rss_without_search_terms_uses_indexed_dir(self) -> None:
         config = {
@@ -1424,10 +1426,10 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertIn("filter", saved_path.parts)
             self.assertIn("001_default", saved_path.parts)
             self.assertEqual(saved_path.name, "google_news_rss.json")
-            self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertTrue(execution.records[0]["record_key"].startswith("GOOGLE-"))
             self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
             self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
-            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE_\d{8}_\d{6}_1\.json$")
+            self.assertRegex(Path(execution.records[0]["output_file"]).name, r"^GOOGLE-[A-Z0-9]+\.json$")
 
     def test_run_workflow_config_record_policy_stops_parser_after_kept_record(self) -> None:
         config = {
@@ -1556,8 +1558,11 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(len(workflow_records), 1)
             payload = json.loads(workflow_records[0].read_text(encoding="utf-8"))
             self.assertEqual(payload["item_count"], 3)
-            saved_details = [record["extracts"]["detail_url"].strip().split("#", 1)[0].rstrip("/") for record in payload["records"]]
+            saved_details = [record["final_url"].strip().split("#", 1)[0].rstrip("/") for record in payload["records"]]
             self.assertEqual(saved_details.count("https://example.com/shared"), 1)
+            shared_record = next(record for record in payload["records"] if record["final_url"] == "https://example.com/shared")
+            self.assertEqual(shared_record["search_term"], ["트럼프", "이란"])
+            self.assertEqual(shared_record["filter_term"], [])
 
     def test_run_workflow_config_skips_google_same_run_duplicate_description_after_detail_url(self) -> None:
         config = {
@@ -1618,8 +1623,53 @@ class WorkflowDownloadTests(unittest.TestCase):
                     "https://news.google.com/rss/articles/source-c?oc=5",
                 ],
             )
-            item_files = [path for path in Path(config["output_dir"]).rglob("*.json") if path.name.startswith("GOOGLE_")]
+            item_files = [path for path in Path(config["output_dir"]).rglob("*.json") if path.name.startswith("GOOGLE-")]
             self.assertEqual(len(item_files), 2)
+
+    def test_existing_workflow_record_duplicate_merges_search_and_filter_term_arrays(self) -> None:
+        config = {"name": "sample", "output_dir": "outputs/sample"}
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "sample"
+            snapshot_path = output_dir / "filter" / "workflow_records.json"
+            snapshot_path.parent.mkdir(parents=True)
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "item_count": 1,
+                        "records": [
+                            {
+                                "record_key": "SAMPLE-OLD",
+                                "search_term": ["SK"],
+                                "filter_term": ["SK"],
+                                "extract_title": "ABC SK 기사",
+                                "description": "",
+                                "pub_date": "2026-06-24T09:00:00+09:00",
+                                "final_url": "https://example.com/abc",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            changed = _merge_terms_into_existing_workflow_records(
+                output_dir,
+                config,
+                {
+                    "search_term": "SK하이닉스",
+                    "filter_term": ["SK하이닉스"],
+                    "extracts": {"title": "ABC SK하이닉스 기사"},
+                    "final_url": "https://example.com/abc",
+                },
+                filter_terms=["SK", "SK하이닉스"],
+            )
+
+            self.assertTrue(changed)
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["records"][0]["search_term"], ["SK", "SK하이닉스"])
+            self.assertEqual(payload["records"][0]["filter_term"], ["SK", "SK하이닉스"])
 
     def test_run_workflow_config_stops_current_parser_term_on_previous_workflow_record_duplicate(self) -> None:
         config = {
@@ -1698,14 +1748,16 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.diagnostics["record_policy_stop_metadata"]["stop_scope"], "search_term")
             self.assertEqual([record["extracts"]["detail_url"] for record in execution.records], ["https://example.com/new"])
             item_files = list(output_dir.rglob("*.json"))
-            item_file_names = [path.name for path in item_files if path.name.startswith("GOOGLE_")]
+            item_file_names = [path.name for path in item_files if path.name.startswith("GOOGLE-")]
             self.assertEqual(len(item_file_names), 1)
             self.assertFalse(any("after-duplicate" in path.read_text(encoding="utf-8") for path in item_files))
             previous_payload = json.loads((previous_snapshot_dir / "workflow_records.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                [record["extracts"]["detail_url"] for record in previous_payload["records"]],
-                ["https://example.com/old", "https://example.com/new"],
-            )
+            saved_urls = [
+                ((record.get("extracts") or {}).get("detail_url") if isinstance(record.get("extracts"), dict) else None)
+                or record.get("final_url")
+                for record in previous_payload["records"]
+            ]
+            self.assertEqual(saved_urls, ["https://example.com/old", "https://example.com/new"])
 
     def test_run_workflow_config_preserves_existing_snapshot_when_duplicate_first_record_saves_nothing(self) -> None:
         config = {
@@ -1758,7 +1810,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["item_count"], 1)
             self.assertEqual(payload["records"][0]["extracts"]["detail_url"], "https://example.com/old")
-            self.assertEqual(list(output_dir.rglob("GOOGLE_*.json")), [])
+            self.assertEqual(list(output_dir.rglob("GOOGLE-*.json")), [])
 
     def test_run_workflow_config_stops_google_term_on_previous_description_duplicate(self) -> None:
         config = {
@@ -1828,7 +1880,7 @@ class WorkflowDownloadTests(unittest.TestCase):
                 [record["extracts"]["detail_url"] for record in execution.records],
                 ["https://news.google.com/rss/articles/next?oc=5"],
             )
-            item_files = [path for path in output_dir.rglob("*.json") if path.name.startswith("GOOGLE_")]
+            item_files = [path for path in output_dir.rglob("*.json") if path.name.startswith("GOOGLE-")]
             self.assertEqual(len(item_files), 1)
 
     def test_run_workflow_config_limits_google_news_rss_items_with_loop_limit(self) -> None:
@@ -1883,7 +1935,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertTrue(execution.success)
             self.assertEqual(execution.diagnostics["parser_item_count"], 1)
             self.assertEqual(len(execution.records), 1)
-            self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertTrue(execution.records[0]["record_key"].startswith("GOOGLE-"))
             self.assertEqual(execution.records[0]["extracts"]["title"], "둘째 기사")
             saved_path = Path(execution.extracted_files[0])
             saved_payload = json.loads(saved_path.read_text(encoding="utf-8"))
@@ -1898,7 +1950,7 @@ class WorkflowDownloadTests(unittest.TestCase):
             "output_dir": "outputs/google",
             "timeout_ms": 1000,
             "search_terms": ["SK이노베이션"],
-            "filter_terms": ["SK"],
+            "filter_terms": ["SK", "SK이노베이션"],
             "steps": [
                 {
                     "name": "google_rss",
@@ -1945,21 +1997,21 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.diagnostics["matched_record_count"], 1)
             self.assertEqual(execution.diagnostics["nonfilter_record_count"], 1)
             matched_path = Path(execution.diagnostics["matched_output_files"][0])
-            nonfilter_path = Path(execution.diagnostics["nonfilter_records_file"])
             self.assertTrue(matched_path.exists())
-            self.assertTrue(nonfilter_path.exists())
             self.assertIn("filter", matched_path.parts)
-            self.assertIn("nonfilter", nonfilter_path.parts)
-            self.assertEqual(execution.records[0]["record_key"], "term001_item001")
+            self.assertTrue(execution.records[0]["record_key"].startswith("GOOGLE-"))
             self.assertTrue(Path(execution.records[0]["output_file"]).exists())
             self.assertEqual(Path(execution.records[0]["output_file"]).parent.parent.name, "items")
             self.assertRegex(Path(execution.records[0]["output_file"]).parent.name, r"^\d{8}$")
 
             matched_payload = matched_path.read_text(encoding="utf-8")
-            nonfilter_payload = nonfilter_path.read_text(encoding="utf-8")
             self.assertIn("SK이노베이션, 1분기 실적 발표", matched_payload)
             self.assertNotIn("정유 업황 점검", matched_payload)
-            self.assertIn("정유 업황 점검", nonfilter_payload)
+            workflow_records = list(Path(config["output_dir"]).rglob("workflow_records.json"))
+            self.assertEqual(len(workflow_records), 1)
+            snapshot = json.loads(workflow_records[0].read_text(encoding="utf-8"))
+            self.assertEqual(snapshot["records"][0]["search_term"], ["SK이노베이션"])
+            self.assertEqual(snapshot["records"][0]["filter_term"], ["SK", "SK이노베이션"])
 
     def test_preview_workflow_config_reports_parser_item_count(self) -> None:
         config = {
@@ -2267,9 +2319,9 @@ class WorkflowDownloadTests(unittest.TestCase):
             self.assertEqual(execution.downloaded_files, [str(output_dir / "filter" / "downloads" / "a.pdf")])
             self.assertEqual(execution.extracted_files, [str(output_dir / "filter" / "texts" / "a.txt")])
             self.assertIn("filter", Path(execution.diagnostics["matched_records_file"]).parts)
-            self.assertIn("nonfilter", Path(execution.diagnostics["nonfilter_records_file"]).parts)
+            self.assertTrue(execution.diagnostics["nonfilter_output_suppressed"])
             self.assertTrue(Path(execution.diagnostics["matched_records_file"]).exists())
-            self.assertTrue(Path(execution.diagnostics["nonfilter_records_file"]).exists())
+            self.assertNotIn("nonfilter_records_file", execution.diagnostics)
 
     def test_config_primary_loop_step_index_uses_first_loop_step_anywhere(self) -> None:
         config = {

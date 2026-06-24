@@ -218,14 +218,31 @@ def rebuild_filter_options(conn: sqlite3.Connection) -> None:
         WHERE source_site IS NOT NULL AND source_site != ''
         """
     )
-    conn.execute(
+    for row in conn.execute(
         """
-        INSERT OR IGNORE INTO crawl_filter_options(option_group, option_name)
-        SELECT 'search_term', search_term
+        SELECT search_term
         FROM crawl_articles
         WHERE search_term IS NOT NULL AND search_term != ''
         """
-    )
+    ):
+        for term in _split_option_terms(row["search_term"]):
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO crawl_filter_options(option_group, option_name)
+                VALUES ('search_term', ?)
+                """,
+                (term,),
+            )
+
+
+# joined search_term 값을 UI 옵션용 개별 term으로 분리한다.
+def _split_option_terms(value: str | None) -> list[str]:
+    terms: list[str] = []
+    for term in str(value or "").split(","):
+        stripped = term.strip()
+        if stripped and stripped not in terms:
+            terms.append(stripped)
+    return terms
 
 
 # 개발팀이 공유한 article_sentiment 확장 컬럼을 기존 SQLite DB에도 안전하게 추가한다.

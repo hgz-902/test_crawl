@@ -242,4 +242,6 @@ def _positive_int(value: Any, *, default: int, field_name: str) -> int:
 
 # 텍스트 값을 계산해 반환한다.
 def _text(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item).strip() for item in value if str(item or "").strip())
     return str(value or "").strip()

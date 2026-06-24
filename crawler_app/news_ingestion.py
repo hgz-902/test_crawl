@@ -409,6 +409,8 @@ def _format_dt(value: datetime | None) -> str | None:
 
 # 값에서 공백 제거 문자열을 얻는다.
 def _text(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item).strip() for item in value if str(item or "").strip())
     return str(value or "").strip()
 
 

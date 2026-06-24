@@ -117,12 +117,13 @@ class WorkflowRecordsApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             outputs = tmp_path / "outputs"
+            today = datetime.now(timezone.utc).date().isoformat()
             self._write_records(
                 outputs / "naver_news" / "filter" / "workflow_records.json",
-                [{"record_key": "NAVER-LIVE", "pub_date": "Fri, 29 May 2026 12:00:00 +0900"}],
+                [{"record_key": "NAVER-LIVE", "pub_date": f"{today}T12:00:00+09:00"}],
             )
             with patch.object(web, "BASE_DIR", tmp_path), TestClient(web.app) as client:
-                response = client.post("/api/workflow-records", json={"date": "2026-05-29", "source_name": "naver_news"})
+                response = client.post("/api/workflow-records", json={"date": today, "source_name": "naver_news"})
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["items"][0]["record_key"], "NAVER-LIVE")

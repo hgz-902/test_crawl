@@ -25,28 +25,52 @@ Write-RunLog "JobId=$JobId"
 Write-RunLog "AllowEmailSend=$AllowEmailSend"
 Write-RunLog "PowerShell=$($PSVersionTable.PSVersion)"
 
-$envPath = Join-Path $ProjectRoot ".env"
-if (Test-Path -LiteralPath $envPath) {
+function Load-DotEnvFile {
+  param(
+    [Parameter(Mandatory=$true)][string]$Path,
+    [switch]$Override
+  )
+  if (-not (Test-Path -LiteralPath $Path)) {
+    Write-RunLog ".env not found. path=$Path"
+    return
+  }
   $envCount = 0
   try {
-    Get-Content -LiteralPath $envPath -Encoding UTF8 | ForEach-Object {
+    Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
       $line = $_.Trim()
       if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) { return }
       $parts = $line.Split("=", 2)
       $name = $parts[0].Trim()
       $value = $parts[1].Trim().Trim('"').Trim("'")
       if ($name) {
-        [Environment]::SetEnvironmentVariable($name, $value, "Process")
-        $script:envCount += 1
+        $existing = [Environment]::GetEnvironmentVariable($name, "Process")
+        if ($Override -or [string]::IsNullOrEmpty($existing)) {
+          [Environment]::SetEnvironmentVariable($name, $value, "Process")
+          $script:envCount += 1
+        }
       }
     }
-    Write-RunLog ".env loaded. entries=$envCount"
+    Write-RunLog ".env loaded. path=$Path entries=$envCount override=$Override"
   } catch {
-    Write-RunLog ".env load failed: $($_.Exception.Message)"
+    Write-RunLog ".env load failed. path=$Path error=$($_.Exception.Message)"
     exit 1
   }
+}
+
+$projectEnvPath = Join-Path $ProjectRoot ".env"
+$sharedEnvPath = $env:CRAWLER_SHARED_ENV_FILE
+if (-not $sharedEnvPath) {
+  $desktopPath = [Environment]::GetFolderPath("Desktop")
+  $sharedEnvPath = Get-ChildItem -LiteralPath $desktopPath -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "00. HGZ\.env" } |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+}
+Load-DotEnvFile -Path $projectEnvPath -Override
+if ($sharedEnvPath) {
+  Load-DotEnvFile -Path $sharedEnvPath
 } else {
-  Write-RunLog ".env not found."
+  Write-RunLog "shared .env not found under Desktop\\*\\00. HGZ\\.env"
 }
 
 $args = @("-m", "crawler_app.scheduled_runner")

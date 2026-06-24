@@ -112,7 +112,7 @@ class NewsUiApiTests(unittest.TestCase):
                             {
                                 "record_key": "NAVER-2",
                                 "source_name": "연합뉴스",
-                                "search_term": "SK",
+                                "search_term": ["SK", "SK하이닉스"],
                                 "extract_title": "SK온 배터리 투자 확대 발표",
                                 "pub_date": "Fri, 29 May 2026 09:05:00 +0900",
                                 "final_url": "https://www.yna.co.kr/view/AKR1",
@@ -161,6 +161,8 @@ class NewsUiApiTests(unittest.TestCase):
                 self.assertEqual(options.status_code, 200)
                 self.assertIn("연합뉴스", options.json()["sources"])
                 self.assertIn("SK", options.json()["search_terms"])
+                self.assertIn("SK하이닉스", options.json()["search_terms"])
+                self.assertNotIn("SK, SK하이닉스", options.json()["search_terms"])
 
                 news = client.get("/api/news", params={"user_id": "tester", "page_size": 10})
                 self.assertEqual(news.status_code, 200)

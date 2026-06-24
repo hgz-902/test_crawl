@@ -27,6 +27,8 @@ from crawler_app.workflow import (
     LatestDuplicateIndex,
     build_latest_duplicate_index,
     latest_duplicate_decision_for_record,
+    _merge_record_term_arrays,
+    _merge_terms_into_existing_workflow_records,
     _merge_workflow_record_snapshot_records,
     load_workflow_config,
     run_workflow_config,
@@ -34,6 +36,7 @@ from crawler_app.workflow import (
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_SHARED_ENV_PATH = Path(r"C:\Users\ThinkBook\Desktop\업무\00. HGZ\.env")
 DEFAULT_STATE_DIR = APP_ROOT / "orchestration_state"
 DEFAULT_SETTINGS_PATH = DEFAULT_STATE_DIR / "settings.json"
 DEFAULT_HISTORY_PATH = DEFAULT_STATE_DIR / "run_history.json"
@@ -206,11 +209,9 @@ def load_orchestration_env() -> None:
     if load_dotenv is None:
         return
     load_dotenv(APP_ROOT / ".env", override=False)
-    shared_env_file = os.environ.get("CRAWLER_SHARED_ENV_FILE")
-    if shared_env_file:
-        shared_env = Path(shared_env_file)
-        if shared_env.exists():
-            load_dotenv(shared_env, override=False)
+    shared_env = Path(os.environ.get("CRAWLER_SHARED_ENV_FILE") or DEFAULT_SHARED_ENV_PATH)
+    if shared_env.exists():
+        load_dotenv(shared_env, override=False)
 
 
 # default sender 값을 계산해 반환한다.
@@ -787,6 +788,11 @@ def run_job(
     duplicate: dict[str, Any] = {}
     same_run_duplicate_skipped_count = 0
     latest_cross_group_duplicate_skipped_count = 0
+    same_run_record_by_key: dict[str, dict[str, Any]] = {}
+    job_config = load_workflow_config(Path(job.config_path))
+    job_output_dir = Path(job.output_dir)
+    if not job_output_dir.is_absolute():
+        job_output_dir = APP_ROOT / job_output_dir
 
     # scope record를 중지한다.
     def stop_scope_for_record(record: dict[str, Any]) -> str:
@@ -803,6 +809,7 @@ def run_job(
                 filter_terms=job.filter_terms,
             )
             if latest_decision is not None:
+                _merge_terms_into_existing_workflow_records(job_output_dir, job_config, record, filter_terms=job.filter_terms)
                 if latest_decision.get("stop"):
                     duplicate.update(
                         {
@@ -818,6 +825,7 @@ def run_job(
         else:
             boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
             if boundary_duplicate_key:
+                _merge_terms_into_existing_workflow_records(job_output_dir, job_config, record, filter_terms=job.filter_terms)
                 duplicate.update({"key": boundary_duplicate_key, "record": record, "boundary": True})
                 return {
                     "include": False,
@@ -831,6 +839,7 @@ def run_job(
                 }
             duplicate_key = next((key for key in keys if key in duplicate_index), "")
             if duplicate_key:
+                _merge_terms_into_existing_workflow_records(job_output_dir, job_config, record, filter_terms=job.filter_terms)
                 duplicate.update({"key": duplicate_key, "record": record})
                 return {
                     "include": False,
@@ -840,6 +849,9 @@ def run_job(
                 }
         same_run_duplicate_key = next((key for key in keys if key in seen), "")
         if same_run_duplicate_key:
+            duplicate_record = same_run_record_by_key.get(same_run_duplicate_key)
+            if duplicate_record is not None:
+                _merge_record_term_arrays(duplicate_record, record, filter_terms=job.filter_terms)
             same_run_duplicate_skipped_count += 1
             return {
                 "include": False,
@@ -849,6 +861,7 @@ def run_job(
             }
         for key in keys:
             seen.add(key)
+            same_run_record_by_key[key] = record
         return {"include": True, "stop": False}
 
     try:
