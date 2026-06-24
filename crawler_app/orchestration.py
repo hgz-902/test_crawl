@@ -21,6 +21,7 @@ from crawler_app.base import CrawlResult
 from crawler_app.config_store import CONFIG_DIR, config_file_stem, list_configs
 from crawler_app.duplicate_keys import duplicate_key_for_record, duplicate_keys_for_record
 from crawler_app.logging_utils import log_result
+from crawler_app.news_ingestion import sync_news_ui_output_dir
 from crawler_app.runtime_maintenance import cleanup_runtime_files
 from crawler_app.workflow import (
     LatestDuplicateIndex,
@@ -205,6 +206,11 @@ def load_orchestration_env() -> None:
     if load_dotenv is None:
         return
     load_dotenv(APP_ROOT / ".env", override=False)
+    shared_env_file = os.environ.get("CRAWLER_SHARED_ENV_FILE")
+    if shared_env_file:
+        shared_env = Path(shared_env_file)
+        if shared_env.exists():
+            load_dotenv(shared_env, override=False)
 
 
 # default sender 값을 계산해 반환한다.
@@ -871,6 +877,7 @@ def run_job(
         )
         status = "duplicate_stopped" if duplicate else ("succeeded" if normalized["success"] else "failed")
         success = status in {"succeeded", "duplicate_stopped"}
+        _sync_news_ui_from_job_output(job, metadata)
         return JobRunResult(
             job_id=job.job_id,
             config_name=job.config_name,
@@ -913,6 +920,18 @@ def run_job(
                 "error": str(exc),
             },
         )
+
+
+# 오케스트레이션/스케줄러 실행 결과를 뉴스 검토 UI용 SQLite DB에 반영한다.
+def _sync_news_ui_from_job_output(job: RegisteredJob, metadata: dict[str, Any]) -> None:
+    output_dir = metadata.get("output_dir") or job.output_dir
+    if not output_dir:
+        return
+    try:
+        summary = sync_news_ui_output_dir(project_root=APP_ROOT, output_dir=str(output_dir))
+        metadata["news_ui_sync"] = summary.to_dict()
+    except Exception as exc:  # noqa: BLE001 - 뉴스 UI 동기화 실패가 크롤링 성공을 실패로 바꾸면 안 된다.
+        metadata["news_ui_sync_error"] = f"{type(exc).__name__}: {exc}"
 
 
 # config 파일을 로드해 공통 workflow 실행 함수로 위임한다.

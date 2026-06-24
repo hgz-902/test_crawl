@@ -2754,12 +2754,38 @@ def _run_parser_workflow(
             len(effective_terms),
         )
         source_url = _render_template_value(str(config["start_url"]), search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(
-            parser_name,
-            source_url,
-            timeout=timeout_ms / 1000,
-            item_limit=item_limit,
-        )
+        try:
+            items, final_url = _fetch_parser_items(
+                parser_name,
+                source_url,
+                timeout=timeout_ms / 1000,
+                item_limit=item_limit,
+            )
+        except Exception as exc:  # noqa: BLE001 - parser 검색어 1개 실패가 전체 job을 중단하지 않게 기록한다.
+            execution.diagnostics.setdefault("parser_failed_terms", []).append(
+                {
+                    "search_term_index": search_term_index,
+                    "search_term": search_term,
+                    "url": source_url,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            execution.diagnostics.setdefault("search_term_runs", []).append(
+                {
+                    "search_term_index": search_term_index,
+                    "search_term": search_term,
+                    "item_count": 0,
+                    "empty": True,
+                    "rss_url": source_url,
+                    "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
+                    "final_url": source_url,
+                    "output_file": "",
+                    "fetched_item_count": 0,
+                    "error": str(exc),
+                }
+            )
+            continue
         if item_limit is not None:
             items = items[:item_limit]
         accepted_items: list[dict[str, Any]] = []

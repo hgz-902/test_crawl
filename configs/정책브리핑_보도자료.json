@@ -1,16 +1,5 @@
 {
-  "name": "정책브리핑 보도자료",
-  "start_url": "https://www.korea.kr/briefing/pressReleaseList.do?pageIndex={search_term}",
-  "output_dir": "outputs/korea_press",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
-  "headless": true,
-  "ignore_https_errors": false,
-  "notes": "",
-  "search_terms": [
-    "1",
-    "2"
-  ],
+  "created_at": "2026-05-22T17:09:12+09:00",
   "filter_terms": [
     "석유",
     "석유화학",
@@ -42,18 +31,19 @@
     "전기화",
     "에너지솔루션",
     "데이터센터",
-    "나프타",
-    "윤활유",
-    "기유",
-    "합성수지",
-    "폐플라스틱",
-    "정책금융",
-    "사업재편",
-    "울산",
-    "NCC",
-    "원유 도입 다변화",
-    "sanction"
+    "나프타"
   ],
+  "headless": true,
+  "ignore_https_errors": false,
+  "name": "정책브리핑 보도자료",
+  "notes": "",
+  "output_dir": "outputs/korea_press",
+  "renderer": "playwright",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "start_url": "https://www.korea.kr/briefing/pressReleaseList.do?pageIndex={search_term}",
   "steps": [
     {
       "name": "open_detail",
@@ -92,6 +82,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-22T17:09:12+09:00",
-  "updated_at": "2026-05-30T10:08:33+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-06-23T17:24:33+09:00",
+  "category": "",
+  "crawling_type": ""
 }

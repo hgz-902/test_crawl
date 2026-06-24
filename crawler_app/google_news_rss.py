@@ -8,7 +8,9 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
 import json
+import os
 import re
+import time
 
 import requests
 
@@ -28,7 +30,22 @@ def fetch_google_news_rss_items(rss_url: str, timeout: float = 30.0) -> tuple[li
     session = requests.Session()
     session.trust_env = False
     session.headers.update(_headers())
-    response = session.get(rss_url, timeout=timeout, allow_redirects=False)
+    retries = max(_int_env("GOOGLE_NEWS_RSS_RETRIES", 5), 1)
+    base_sleep = max(_float_env("GOOGLE_NEWS_RSS_BACKOFF_SECONDS", 1.0), 0.0)
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            response = session.get(rss_url, timeout=timeout, allow_redirects=False)
+            break
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt >= retries:
+                raise
+            time.sleep(min(base_sleep * attempt, 8.0))
+    else:
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Google News RSS request failed without exception.")
     if response.is_redirect:
         raise ValueError("Google News RSS redirects are not followed.")
     response.raise_for_status()
@@ -235,3 +252,17 @@ def _google_news_rss_item_sort_key(item: dict[str, Any]) -> float:
         return -dt.timestamp()
     except (OverflowError, OSError, ValueError):
         return float("inf")
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, ""))
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, ""))
+    except ValueError:
+        return default

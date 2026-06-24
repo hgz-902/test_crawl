@@ -1,16 +1,5 @@
 {
-  "name": "산업부_보도자료",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
-  "output_dir": "outputs/motir_news",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
-  "headless": true,
-  "ignore_https_errors": false,
-  "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
-  "search_terms": [
-    "1",
-    "2"
-  ],
+  "created_at": "2026-04-28T18:13:20+09:00",
   "filter_terms": [
     "석유",
     "정유",
@@ -18,8 +7,28 @@
     "유가",
     "주유소",
     "LNG",
-    "전력"
+    "전력",
+    "수소",
+    "재생에너지",
+    "태양광",
+    "풍력",
+    "도시가스",
+    "SMR",
+    "ESS",
+    "배터리",
+    "전기차"
   ],
+  "headless": true,
+  "ignore_https_errors": false,
+  "name": "산업부_보도자료",
+  "notes": "headless 실행 체크 해제해야 오류가 발생하지 않음.",
+  "output_dir": "outputs/motir_news",
+  "renderer": "playwright",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "start_url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
   "steps": [
     {
       "name": "open_detail",
@@ -59,6 +68,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-28T18:13:20+09:00",
-  "updated_at": "2026-05-30T10:06:28+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-06-23T17:23:09+09:00",
+  "category": "",
+  "crawling_type": ""
 }

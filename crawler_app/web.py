@@ -46,6 +46,8 @@ from crawler_app.windows_scheduler import (
     validate_windows_schedule_settings,
 )
 from crawler_app.workflow import preview_workflow_config
+from crawler_app.news_ingestion import sync_news_ui_output_dir
+from crawler_app.news_ui_api import init_news_ui_database, router as news_ui_router
 from crawler_app.workflow_records_api import build_workflow_records_response
 from crawler_app.workflow_records_rollup_scheduler import WorkflowRecordsRollupScheduler
 from crawlers.configurable_crawler import ConfigurableCrawler
@@ -65,11 +67,13 @@ WORKFLOW_RECORDS_ROLLUP_SCHEDULER = WorkflowRecordsRollupScheduler(project_root=
 app = FastAPI(title="Crawler Config Manager")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(news_ui_router)
 
 
 # workflow records rollup 스케줄러를 시작한다.
 @app.on_event("startup")
 async def start_workflow_records_rollup_scheduler() -> None:
+    init_news_ui_database(BASE_DIR)
     WORKFLOW_RECORDS_ROLLUP_SCHEDULER.start()
 
 
@@ -456,6 +460,7 @@ async def run_config_route(request: Request, name: str) -> HTMLResponse:
         result.items_count,
         result.metadata.get("output_dir"),
     )
+    await asyncio.to_thread(_sync_news_ui_from_result, result)
     result_dict = result.to_dict()
     recent_data = result_dict.get("data", [])[:20]
     return templates.TemplateResponse(
@@ -468,6 +473,18 @@ async def run_config_route(request: Request, name: str) -> HTMLResponse:
         },
         status_code=200 if result.success else 500,
     )
+
+
+# 크롤링 결과 output_dir을 뉴스 검토 UI용 SQLite DB에 동기화한다.
+def _sync_news_ui_from_result(result: Any) -> None:
+    output_dir = result.metadata.get("output_dir") if isinstance(result.metadata, dict) else None
+    if not output_dir:
+        return
+    try:
+        summary = sync_news_ui_output_dir(project_root=BASE_DIR, output_dir=output_dir)
+        result.metadata["news_ui_sync"] = summary.to_dict()
+    except Exception as exc:  # noqa: BLE001 - 크롤링 결과 페이지를 DB 동기화 실패로 막지 않는다.
+        result.metadata["news_ui_sync_error"] = f"{type(exc).__name__}: {exc}"
 
 
 # default 설정 값을 계산해 반환한다.
