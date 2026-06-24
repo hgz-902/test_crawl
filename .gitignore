@@ -10,6 +10,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+tests/
 
 # Virtual environments
 .venv/
@@ -21,7 +22,38 @@ logs/
 *.log
 outputs/
 qa-artifacts/
+orchestration_state/
+attach/
+runtime/
+imsi/
+configs copy/
 $outDir/
+naver_news_문제*/
+
+# Harness/session-local documents
+codex_app_agents.md
+docs/codex-app/
+docs/operator-ux-change-rationale-*.md
+DECISION_RULING.md
+RUN_CONTEXT.md
+RUN_CONTEXT_ROLLING_CHECKPOINT.md
+RUN_CONTEXT_ROLLING_CHECKPOINT.json
+TASK_CONTRACT.md
+TASK_PLAN.md
+TASK_CLASSIFICATION.md
+GUI_QA_PLAN.md
+GUI_QA_RESULT.md
+ORCHESTRATION_ALPHA_STATE.md
+THREAT_MODEL.md
+SECURITY_TEST_CHECKLIST.md
+SOURCE_CHANGE_GUARDRAIL.md
+AGENT_ACTIVITY_LOG.md
+CRITICAL_REVIEW.md
+QA_TEST_RESULT.md
+RED_TEAM_REVIEW.md
+VALIDATION_EVIDENCE.md
+UX_*.md
+memory/
 
 # Build artifacts
 build/

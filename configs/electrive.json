@@ -1,0 +1,53 @@
+{
+  "name": "electrive",
+  "start_url": "https://www.electrive.com",
+  "output_dir": "outputs/electrive",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "open_detail에 반복 구조를 넣을 수 없는 XPath 구조라 설정 임시 중단.",
+  "search_terms": [],
+  "filter_terms": [
+    "EU",
+    "EU Union",
+    "EU delegation",
+    "Energy",
+    "Delegation",
+    "Lithum ion Battery",
+    "EV",
+    "Electric vehicle",
+    "ESS"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/main/article/div[4]/div[1]/a[2]",
+      "xpath_2": "/html/body/main/article/div[4]/div[1]/a[3]",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:34:00+09:00",
+  "updated_at": "2026-05-27T11:19:30+09:00"
+}

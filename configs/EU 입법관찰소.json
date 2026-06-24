@@ -1,0 +1,61 @@
+{
+  "name": "EU 입법관찰소",
+  "start_url": "https://oeil.europarl.europa.eu/oeil/en/search?fullText.term={search_term}&fullText.mode=EXACT_WORD",
+  "output_dir": "outputs/oeil_eu",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "페이지 파라미터 이용불가한 사이트라, 검색어 목록에서 실제 검색어를 사용.\n일부 상세 페이지의 DOM 구조가 달라서 몇몇은 수집이 잘되지만 몇몇은 수집이 안됨.",
+  "search_terms": [
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport",
+    "Battery",
+    "EV",
+    "ESS"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"website-body\"]/div[1]/div[2]/div[2]/div[2]/div/div/div[1]/div[1]/div[1]/h3/a",
+      "xpath_2": "//*[@id=\"website-body\"]/div[1]/div[2]/div[2]/div[2]/div/div/div[2]/div[1]/div[1]/h3/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "popup",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/h2",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/div[4]/div/div",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "download_file",
+      "xpath": "//*[@id=\"website-body\"]/div/div/div[1]/div[1]/div[2]/div/ul/li/a",
+      "loop": false,
+      "action": "download",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:31:00+09:00",
+  "updated_at": "2026-05-27T13:39:53+09:00"
+}

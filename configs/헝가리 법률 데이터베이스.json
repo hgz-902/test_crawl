@@ -1,0 +1,49 @@
+{
+  "name": "헝가리 법률 데이터베이스",
+  "start_url": "https://njt.jog.gov.hu/search/-:-:-:-:-:-:-:-:-:-:1:-:-:-:-:-/{search_term}/10",
+  "output_dir": "outputs/njt_jog_hu",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "title만 추출하려 하니 XPath가 불규칙적이라, body에서 title과 body를 모두 추출하는 것으로 설정.",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [
+    "ESG",
+    "Hungary ESG Act",
+    "Act CVIII",
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"results\"]/div[1]/div/a",
+      "xpath_2": "//*[@id=\"results\"]/div[2]/div/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"jogszab\"]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:54:00+09:00",
+  "updated_at": "2026-05-30T10:19:40+09:00"
+}

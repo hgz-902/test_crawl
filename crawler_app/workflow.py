@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import shutil
+import zipfile
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from email.header import decode_header
-from pathlib import Path
-from typing import Any
+from email.utils import format_datetime, parsedate_to_datetime
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable
 from urllib.parse import quote_plus, unquote, urljoin, urlparse
 import json
 import re
@@ -16,6 +21,9 @@ import time
 from lxml import html as lxml_html
 import requests
 
+from crawler_app.daum_news_api import DAUM_NEWS_API_ATTR, fetch_daum_news_api_items, save_daum_news_api_items
+from crawler_app.duplicate_keys import canonicalize_article_url, duplicate_keys_for_record, normalize_duplicate_url
+from crawler_app.file_lock import FileLock
 from crawler_app.google_news_rss import GOOGLE_NEWS_RSS_ATTR, fetch_google_news_rss_items, save_google_news_rss_items
 from crawler_app.naver_news_api import (
     NAVER_NEWS_API_ATTR,
@@ -28,7 +36,7 @@ SUPPORTED_ACTIONS = {"click", "goto", "download", "extract", "parser"}
 SUPPORTED_LOOP_MODES = {"items", "pagination"}
 SUPPORTED_PAGINATION_MODES = {"next_button", "page_number"}
 SUPPORTED_OPEN_MODES = {"auto", "same_tab", "popup"}
-SUPPORTED_PARSER_ATTRS = {GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR}
+SUPPORTED_PARSER_ATTRS = {DAUM_NEWS_API_ATTR, GOOGLE_NEWS_RSS_ATTR, NAVER_NEWS_API_ATTR}
 SUPPORTED_ATTRS = {"href", "src", "text", "html", *SUPPORTED_PARSER_ATTRS}
 STEP_ATTR_ALLOWED_VALUES = {
     "click": set(),
@@ -41,8 +49,10 @@ SUPPORTED_WAIT_STATES = {"attached", "visible", "hidden", "detached"}
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_STEP_WAIT_MS = 10000
 BOARD_LOOP_MAX_ITEMS = 1000
-NAVER_NEWS_API_MAX_PAGE_LIMIT = 10
-NAVER_NEWS_API_MAX_LOOP_LIMIT = 100
+API_RECENT_URL_INDEX_LIMIT = 2000
+API_RECENT_PUB_DATE_RETENTION = timedelta(hours=1)
+KST = timezone(timedelta(hours=9))
+NUMERIC_SEARCH_TERM_RE = re.compile(r"^\d+$")
 BOARD_CONTAINER_CHILD_XPATHS = {
     "ol": ("./li",),
     "tbody": ("./tr",),
@@ -53,8 +63,18 @@ BOARD_ITEM_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)\[(?P<index>\d+)\]$")
 BOARD_PATH_SEGMENT_RE = re.compile(r"^(?P<tag>[\w:-]+)(?:\[(?P<index>\d+)\])?$")
 BOARD_TRAILING_NUMBER_SEGMENT_RE = re.compile(r"^(?P<prefix>.*?)(?P<index>\d+)(?P<suffix>[^0-9]*)$")
 ITEM_NUMBER_PLACEHOLDER = "{item_number}"
+PARSER_RECORD_DATE_FIELDS = (
+    ("pub_date",),
+    ("extracts", "pubDate"),
+    ("extracts", "published_at"),
+    ("extracts", "date"),
+    ("published_at",),
+    ("created_at",),
+    ("crawled_at",),
+)
 
 
+# workflow execution 관련 데이터를 표현하는 객체다.
 @dataclass(slots=True)
 class WorkflowExecution:
     config_name: str
@@ -62,33 +82,162 @@ class WorkflowExecution:
     records: list[dict[str, Any]] = field(default_factory=list)
     downloaded_files: list[str] = field(default_factory=list)
     extracted_files: list[str] = field(default_factory=list)
+    generated_files: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
+    # success 값을 계산해 반환한다.
     @property
     def success(self) -> bool:
         return self.error is None and all(record.get("success", False) for record in self.records)
 
 
+# 다운로드 후 최종 수집 대상으로 기록할 파일 목록을 표현한다.
+@dataclass(slots=True)
+class DownloadedFileResult:
+    paths: list[Path]
+    source_path: Path | None = None
+    zip_extract_error: str | None = None
+
+
+RecordPolicy = Callable[[dict[str, Any]], Any]
+
+
+# workflow record policy stop 관련 데이터를 표현하는 객체다.
+class WorkflowRecordPolicyStop(RuntimeError):
+    """Raised internally when an optional record policy asks to stop a workflow."""
+
+    # 객체 생성 시 필요한 초기 상태를 설정한다.
+    def __init__(
+        self,
+        reason: str = "record_policy_stopped",
+        metadata: dict[str, Any] | None = None,
+        records: list[dict[str, Any]] | None = None,
+        generated_files: list[str] | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.metadata = metadata or {}
+        self.records = records or []
+        self.generated_files = generated_files or []
+
+
+# latest duplicate index 정보를 담는 데이터 객체다.
+@dataclass(slots=True)
+class LatestDuplicateIndex:
+    normal_by_search: dict[str, set[str]] = field(default_factory=dict)
+    numeric_by_filter: dict[str, set[str]] = field(default_factory=dict)
+    normal_boundaries_by_search: dict[str, list["LatestBoundary"]] = field(default_factory=dict)
+    numeric_boundaries_by_filter: dict[str, list["LatestBoundary"]] = field(default_factory=dict)
+    api_recent_keys: set[str] = field(default_factory=set)
+    all_keys: set[str] = field(default_factory=set)
+
+    # has records 값을 계산해 반환한다.
+    @property
+    def has_records(self) -> bool:
+        return bool(
+            self.all_keys
+            or self.api_recent_keys
+            or self.normal_boundaries_by_search
+            or self.numeric_boundaries_by_filter
+        )
+
+
+# latest boundary 정보를 담는 데이터 객체다.
+@dataclass(slots=True)
+class LatestBoundary:
+    keys: set[str] = field(default_factory=set)
+    pub_datetime: datetime | None = None
+    pub_date: str = ""
+
+
+# record key를 생성해 반환한다.
 def _build_record_key(search_term_index: int | None, item_index: int | None) -> str:
     term_number = (search_term_index + 1) if isinstance(search_term_index, int) else 1
     item_label = f"item{item_index + 1:03d}" if isinstance(item_index, int) else "single"
     return f"term{term_number:03d}_{item_label}"
 
 
+# stable record key를 생성해 반환한다.
+def _build_stable_record_key(config: dict[str, Any], record: dict[str, Any]) -> str:
+    prefix = _record_key_prefix(config, record)
+    identity = f"{_record_identity_for_key(record)}|{datetime.now(KST).strftime('%Y%m%d')}"
+    digest = hashlib.blake2b(identity.encode("utf-8"), digest_size=8).digest()
+    token = base64.b32encode(digest).decode("ascii").rstrip("=")
+    return f"{prefix}-{token}"
+
+
+# record key prefix 값을 계산해 반환한다.
+def _record_key_prefix(config: dict[str, Any], record: dict[str, Any]) -> str:
+    parser_name = _record_parser_name(record)
+    if parser_name in {NAVER_NEWS_API_ATTR, "naver_news_api"}:
+        return "NAVER"
+    if parser_name in {DAUM_NEWS_API_ATTR, "kakao_daum_web_search"}:
+        return "DAUM"
+    if parser_name in {GOOGLE_NEWS_RSS_ATTR, "google_news_rss"}:
+        return "GOOGLE"
+    output_name = Path(str(config.get("output_dir") or config.get("name") or "crawler")).name
+    normalized = re.sub(r"[^A-Za-z0-9]+", "", output_name).upper()
+    return (normalized or "CRAWLER")[:12]
+
+
+# record 식별자 key 값을 계산해 반환한다.
+def _record_identity_for_key(record: dict[str, Any]) -> str:
+    for key in duplicate_keys_for_record(record):
+        normalized = normalize_duplicate_url(key)
+        if normalized:
+            return normalized
+    extracts = record.get("extracts") if isinstance(record.get("extracts"), dict) else {}
+    candidates = [
+        record.get("final_url"),
+        extracts.get("final_url"),
+        extracts.get("extract_title"),
+        extracts.get("title"),
+        record.get("start_url"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return normalize_duplicate_url(text) or text
+    return json.dumps(record, ensure_ascii=False, sort_keys=True)
+
+
+# record parser 이름 값을 계산해 반환한다.
+def _record_parser_name(record: dict[str, Any]) -> str:
+    extracts = record.get("extracts") if isinstance(record.get("extracts"), dict) else {}
+    candidates: list[Any] = [
+        record.get("parser_name"),
+        extracts.get("parser_name"),
+        extracts.get("source_provider"),
+        extracts.get("source_api"),
+    ]
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            candidates.append(step.get("attr"))
+    for candidate in candidates:
+        text = str(candidate or "").strip().casefold()
+        if text:
+            return text
+    return ""
+
+
+# artifact prefix를 생성해 반환한다.
 def _build_artifact_prefix(record_key: str, step_index: int, step_name: str) -> str:
     return safe_name(f"{record_key}_step{step_index:02d}_{step_name}")
 
 
+# record 출력 경로 값을 계산해 반환한다.
 def _record_output_path(output_dir: Path, record_key: str, step_index: int, step_name: str, file_name: str) -> Path:
     prefix = _build_artifact_prefix(record_key, step_index, step_name)
     return output_dir / safe_name(f"{prefix}_{file_name}")
 
 
+# 결과 category root 값을 계산해 반환한다.
 def _result_category_root(output_dir: Path, category: str) -> Path:
     return output_dir / category
 
 
+# relocate 경로 값을 계산해 반환한다.
 def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     source_path = Path(path)
     try:
@@ -103,6 +252,7 @@ def _relocate_path(path: str, source_root: Path, target_root: Path) -> str:
     return str(target_path)
 
 
+# relocate record 파일 lists 값을 계산해 반환한다.
 def _relocate_record_file_lists(
     records: list[dict[str, Any]],
     source_root: Path,
@@ -148,6 +298,7 @@ def _relocate_record_file_lists(
                 ]
 
 
+# empty dirs를 정리한다.
 def _cleanup_empty_dirs(root: Path, protected_roots: list[Path] | tuple[Path, ...] = ()) -> None:
     protected = tuple(protected_roots)
     for path in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
@@ -162,12 +313,14 @@ def _cleanup_empty_dirs(root: Path, protected_roots: list[Path] | tuple[Path, ..
             continue
 
 
+# board repeat spec 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class BoardRepeatSpec:
     item_xpath: str | None
     item_tag: str | None
 
 
+# board loop spec 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class BoardLoopSpec:
     anchor_xpath_1: str
@@ -178,32 +331,39 @@ class BoardLoopSpec:
     suffix_segments: tuple[str, ...]
     start_index: int
 
+    # item segment를 템플릿/화면 표시용 값으로 렌더링한다.
     def render_item_segment(self, item_number: int) -> str:
         return self.item_segment_template.replace(ITEM_NUMBER_PLACEHOLDER, str(item_number))
 
+    # anchor XPath를 템플릿/화면 표시용 값으로 렌더링한다.
     def render_anchor_xpath(self, item_number: int) -> str:
         return _join_xpath(self.root_xpath, [self.render_item_segment(item_number)] + list(self.suffix_segments))
 
+    # item root XPath를 템플릿/화면 표시용 값으로 렌더링한다.
     def render_item_root_xpath(self, item_number: int) -> str:
         return _join_xpath(self.root_xpath, [self.render_item_segment(item_number)])
 
 
+# pagination loop spec 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class PaginationLoopSpec:
     pagination_mode: str
     xpath: str
     start_page: int = 1
 
+    # XPath를 템플릿/화면 표시용 값으로 렌더링한다.
     def render_xpath(self, page_number: int) -> str:
         if self.pagination_mode == "page_number":
             return self.xpath.replace("{page_number}", str(page_number))
         return self.xpath
 
 
+# workflow 설정 오류 상황을 표현하는 예외 타입이다.
 class WorkflowConfigError(ValueError):
     """Raised when an XPath workflow config is invalid."""
 
 
+# 워크플로우 JSON 설정을 읽고 기본 구조를 검증한다.
 def load_workflow_config(path: str | Path) -> dict[str, Any]:
     config_path = Path(path)
     try:
@@ -218,10 +378,9 @@ def load_workflow_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
+# workflow 설정을 표준 형태로 정규화한다.
 def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(config)
-    for credential_field in ("naver_client_id", "naver_client_secret"):
-        normalized.pop(credential_field, None)
     steps = normalized.get("steps")
     if not isinstance(steps, list):
         return normalized
@@ -279,27 +438,11 @@ def normalize_workflow_config(config: dict[str, Any]) -> dict[str, Any]:
             step.pop("loop", None)
             if not str(step.get("attr") or "").strip():
                 step["attr"] = _infer_parser_attr_from_start_url(str(normalized.get("start_url") or "")) or GOOGLE_NEWS_RSS_ATTR
-            if str(step.get("attr") or "").strip().lower() == NAVER_NEWS_API_ATTR:
-                for deprecated_field in (
-                    "fetch_detail",
-                    "detail_timeout_seconds",
-                    "detail_pause_seconds",
-                    "max_detail_chars",
-                    "allowed_detail_domains",
-                ):
-                    step.pop(deprecated_field, None)
-                naver_count = _positive_int_or_none(step.get("loop_limit"))
-                if naver_count is not None:
-                    step["display"] = naver_count
-                    normalized["start_url"] = _set_query_param(
-                        str(normalized.get("start_url") or ""),
-                        "display",
-                        str(naver_count),
-                    )
 
     return normalized
 
 
+# workflow config의 필수 필드와 실행 단계 값을 검증한다.
 def validate_workflow_config(config: dict[str, Any]) -> None:
     for key in ("name", "start_url", "output_dir", "steps"):
         if not config.get(key):
@@ -417,8 +560,6 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
                     raise WorkflowConfigError(f"steps[{index}].loop_limit must be a non-negative integer.") from exc
                 if parsed_limit < 0:
                     raise WorkflowConfigError(f"steps[{index}].loop_limit must be a non-negative integer.")
-            if attr == NAVER_NEWS_API_ATTR:
-                _validate_naver_parser_step(step, index)
             continue
         if not step.get("xpath"):
             raise WorkflowConfigError(f"steps[{index}].xpath is required.")
@@ -487,6 +628,7 @@ def validate_workflow_config(config: dict[str, Any]) -> None:
             )
 
 
+# config 실행 전 미리보기 데이터를 수집한다.
 def preview_workflow_config(config: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
@@ -620,7 +762,8 @@ def preview_workflow_config(config: dict[str, Any], timeout: int = 30) -> dict[s
     }
 
 
-def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
+# 설정 기반 크롤링 워크플로우를 실행하고 수집 결과를 만든다.
+def run_workflow_config(config: dict[str, Any], record_policy: RecordPolicy | None = None) -> WorkflowExecution:
     config = normalize_workflow_config(config)
     validate_workflow_config(config)
 
@@ -629,6 +772,10 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
     execution = WorkflowExecution(config_name=str(config["name"]), output_dir=output_dir)
     search_terms = _config_search_terms(config)
     parser_name = _config_parser_name(config)
+    effective_record_policy = record_policy
+    direct_record_policy_state: dict[str, Any] = {}
+    if parser_name is None and record_policy is None:
+        effective_record_policy = _build_direct_workflow_record_policy(output_dir, config, direct_record_policy_state)
     timeout_ms = int(config.get("timeout_ms") or DEFAULT_TIMEOUT_MS)
     step_wait_ms = int(config.get("step_wait_ms") or DEFAULT_STEP_WAIT_MS)
     parse_pause_seconds = _config_parse_pause_seconds(config)
@@ -652,7 +799,10 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                 config=config,
                 parser_name=parser_name,
                 timeout_ms=timeout_ms,
+                record_policy=record_policy,
             )
+        except WorkflowRecordPolicyStop as exc:
+            _mark_record_policy_stop(execution, exc)
         except Exception as exc:
             execution.error = str(exc)
             execution.diagnostics["error_type"] = type(exc).__name__
@@ -718,174 +868,182 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
         )
         try:
             for search_term_index, search_term in enumerate(search_terms or [None]):
-                term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
-                if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
-                    records = _run_nested_pagination_click_loops(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        page_loop_step_index=click_loop_step_indexes[0],
-                        item_loop_step_index=click_loop_step_indexes[1],
-                    )
-                    execution.records.extend(records)
-                    execution.downloaded_files.extend(
-                        path for record in records for path in record.get("downloaded_files", [])
-                    )
-                    execution.extracted_files.extend(
-                        path for record in records for path in record.get("extracted_files", [])
-                    )
-                elif primary_loop_mode == "pagination":
-                    page_numbers = _resolve_item_numbers_for_term(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        primary_loop_step_index=primary_loop_step_index,
-                        primary_loop_spec=None,
-                        primary_pagination_spec=primary_pagination_spec,
-                        board_repeat_spec=board_repeat_spec,
-                        configured_repeat=configured_repeat,
-                    )
-                    page_count = len(page_numbers)
-                    execution.diagnostics.setdefault("search_term_runs", []).append(
-                        {
-                            "search_term_index": search_term_index,
-                            "search_term": search_term,
-                            "board_item_count": page_count,
-                            "empty": page_count == 0,
-                        }
-                    )
-                    execution.diagnostics["board_item_count"] = page_count
-                    if page_count <= 0:
-                        continue
-                    limit = page_count
-                    if primary_loop_limit is not None:
-                        limit = min(limit, primary_loop_limit)
-                    for index, page_number in enumerate(page_numbers[:limit]):
-                        record = _run_one_item(
-                            context,
-                            config,
-                            index,
-                            timeout_ms,
-                            step_wait_ms,
-                            parse_pause_seconds=parse_pause_seconds,
-                            board_pagination_spec=primary_pagination_spec,
-                            board_repeat_spec=board_repeat_spec,
+                try:
+                    term_output_dir = _search_term_output_dir(output_dir, search_term, search_term_index, len(search_terms) or 1)
+                    if primary_loop_mode == "pagination" and len(click_loop_step_indexes) == 2 and click_loop_step_indexes[0] == primary_loop_step_index:
+                        records = _run_nested_pagination_click_loops(
+                            browser=context,
+                            config=config,
                             search_term=search_term,
                             search_term_index=search_term_index,
                             search_term_count=len(search_terms) or 1,
-                            output_dir_override=term_output_dir,
-                            primary_loop_step_index=primary_loop_step_index,
-                            board_item_number=page_number,
-                            board_page_number=page_number,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            page_loop_step_index=click_loop_step_indexes[0],
+                            item_loop_step_index=click_loop_step_indexes[1],
+                            record_policy=effective_record_policy,
                         )
-                        execution.records.append(record)
-                        execution.downloaded_files.extend(record.get("downloaded_files", []))
-                        execution.extracted_files.extend(record.get("extracted_files", []))
-                elif len(click_loop_step_indexes) == 2:
-                    records = _run_nested_click_loops(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        page_loop_step_index=click_loop_step_indexes[0],
-                        item_loop_step_index=click_loop_step_indexes[1],
-                    )
-                    execution.records.extend(records)
-                    execution.downloaded_files.extend(
-                        path for record in records for path in record.get("downloaded_files", [])
-                    )
-                    execution.extracted_files.extend(
-                        path for record in records for path in record.get("extracted_files", [])
-                    )
-                elif primary_loop_step_index is not None or board.get("enabled"):
-                    board_item_numbers = _resolve_item_numbers_for_term(
-                        browser=context,
-                        config=config,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir=term_output_dir,
-                        timeout_ms=timeout_ms,
-                        step_wait_ms=step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        primary_loop_step_index=primary_loop_step_index,
-                        primary_loop_spec=primary_loop_spec,
-                        primary_pagination_spec=primary_pagination_spec,
-                        board_repeat_spec=board_repeat_spec,
-                        configured_repeat=configured_repeat,
-                    )
-                    board_item_count = len(board_item_numbers)
-                    execution.diagnostics.setdefault("search_term_runs", []).append(
-                        {
-                            "search_term_index": search_term_index,
-                            "search_term": search_term,
-                            "board_item_count": board_item_count,
-                            "empty": board_item_count == 0,
-                        }
-                    )
-                    execution.diagnostics["board_item_count"] = board_item_count
-                    if board_item_count <= 0:
-                        continue
-                    limit = board_item_count
-                    if primary_loop_limit is not None:
-                        limit = min(limit, primary_loop_limit)
-                    elif board.get("enabled"):
-                        limit = min(limit, int(board.get("limit") or board_item_count))
+                        execution.records.extend(records)
+                        execution.downloaded_files.extend(
+                            path for record in records for path in record.get("downloaded_files", [])
+                        )
+                        execution.extracted_files.extend(
+                            path for record in records for path in record.get("extracted_files", [])
+                        )
+                    elif primary_loop_mode == "pagination":
+                        page_numbers = _resolve_item_numbers_for_term(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            primary_loop_step_index=primary_loop_step_index,
+                            primary_loop_spec=None,
+                            primary_pagination_spec=primary_pagination_spec,
+                            board_repeat_spec=board_repeat_spec,
+                            configured_repeat=configured_repeat,
+                        )
+                        page_count = len(page_numbers)
+                        execution.diagnostics.setdefault("search_term_runs", []).append(
+                            {
+                                "search_term_index": search_term_index,
+                                "search_term": search_term,
+                                "board_item_count": page_count,
+                                "empty": page_count == 0,
+                            }
+                        )
+                        execution.diagnostics["board_item_count"] = page_count
+                        if page_count <= 0:
+                            continue
+                        limit = page_count
+                        if primary_loop_limit is not None:
+                            limit = min(limit, primary_loop_limit)
+                        for index, page_number in enumerate(page_numbers[:limit]):
+                            record = _run_one_item(
+                                context,
+                                config,
+                                index,
+                                timeout_ms,
+                                step_wait_ms,
+                                parse_pause_seconds=parse_pause_seconds,
+                                board_pagination_spec=primary_pagination_spec,
+                                board_repeat_spec=board_repeat_spec,
+                                search_term=search_term,
+                                search_term_index=search_term_index,
+                                search_term_count=len(search_terms) or 1,
+                                output_dir_override=term_output_dir,
+                                primary_loop_step_index=primary_loop_step_index,
+                                board_item_number=page_number,
+                                board_page_number=page_number,
+                            )
+                            if _append_execution_record(execution, record, effective_record_policy):
+                                execution.downloaded_files.extend(record.get("downloaded_files", []))
+                                execution.extracted_files.extend(record.get("extracted_files", []))
+                    elif len(click_loop_step_indexes) == 2:
+                        records = _run_nested_click_loops(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            page_loop_step_index=click_loop_step_indexes[0],
+                            item_loop_step_index=click_loop_step_indexes[1],
+                            record_policy=effective_record_policy,
+                        )
+                        execution.records.extend(records)
+                        execution.downloaded_files.extend(
+                            path for record in records for path in record.get("downloaded_files", [])
+                        )
+                        execution.extracted_files.extend(
+                            path for record in records for path in record.get("extracted_files", [])
+                        )
+                    elif primary_loop_step_index is not None or board.get("enabled"):
+                        board_item_numbers = _resolve_item_numbers_for_term(
+                            browser=context,
+                            config=config,
+                            search_term=search_term,
+                            search_term_index=search_term_index,
+                            search_term_count=len(search_terms) or 1,
+                            output_dir=term_output_dir,
+                            timeout_ms=timeout_ms,
+                            step_wait_ms=step_wait_ms,
+                            parse_pause_seconds=parse_pause_seconds,
+                            primary_loop_step_index=primary_loop_step_index,
+                            primary_loop_spec=primary_loop_spec,
+                            primary_pagination_spec=primary_pagination_spec,
+                            board_repeat_spec=board_repeat_spec,
+                            configured_repeat=configured_repeat,
+                        )
+                        board_item_count = len(board_item_numbers)
+                        execution.diagnostics.setdefault("search_term_runs", []).append(
+                            {
+                                "search_term_index": search_term_index,
+                                "search_term": search_term,
+                                "board_item_count": board_item_count,
+                                "empty": board_item_count == 0,
+                            }
+                        )
+                        execution.diagnostics["board_item_count"] = board_item_count
+                        if board_item_count <= 0:
+                            continue
+                        limit = board_item_count
+                        if primary_loop_limit is not None:
+                            limit = min(limit, primary_loop_limit)
+                        elif board.get("enabled"):
+                            limit = min(limit, int(board.get("limit") or board_item_count))
 
-                    for index, item_number in enumerate(board_item_numbers[:limit]):
+                        for index, item_number in enumerate(board_item_numbers[:limit]):
+                            record = _run_one_item(
+                                context,
+                                config,
+                                index,
+                                timeout_ms,
+                                step_wait_ms,
+                                parse_pause_seconds=parse_pause_seconds,
+                                board_loop_spec=primary_loop_spec,
+                                board_repeat_spec=board_repeat_spec,
+                                search_term=search_term,
+                                search_term_index=search_term_index,
+                                search_term_count=len(search_terms) or 1,
+                                output_dir_override=term_output_dir,
+                                primary_loop_step_index=primary_loop_step_index,
+                                board_item_number=item_number,
+                            )
+                            if _append_execution_record(execution, record, effective_record_policy):
+                                execution.downloaded_files.extend(record.get("downloaded_files", []))
+                                execution.extracted_files.extend(record.get("extracted_files", []))
+                    else:
                         record = _run_one_item(
                             context,
                             config,
-                            index,
+                            None,
                             timeout_ms,
                             step_wait_ms,
                             parse_pause_seconds=parse_pause_seconds,
-                            board_loop_spec=primary_loop_spec,
-                            board_repeat_spec=board_repeat_spec,
                             search_term=search_term,
                             search_term_index=search_term_index,
                             search_term_count=len(search_terms) or 1,
                             output_dir_override=term_output_dir,
                             primary_loop_step_index=primary_loop_step_index,
-                            board_item_number=item_number,
                         )
-                        execution.records.append(record)
-                        execution.downloaded_files.extend(record.get("downloaded_files", []))
-                        execution.extracted_files.extend(record.get("extracted_files", []))
-                else:
-                    record = _run_one_item(
-                        context,
-                        config,
-                        None,
-                        timeout_ms,
-                        step_wait_ms,
-                        parse_pause_seconds=parse_pause_seconds,
-                        search_term=search_term,
-                        search_term_index=search_term_index,
-                        search_term_count=len(search_terms) or 1,
-                        output_dir_override=term_output_dir,
-                        primary_loop_step_index=primary_loop_step_index,
-                    )
-                    execution.records.append(record)
-                    execution.downloaded_files.extend(record.get("downloaded_files", []))
-                    execution.extracted_files.extend(record.get("extracted_files", []))
+                        if _append_execution_record(execution, record, effective_record_policy):
+                            execution.downloaded_files.extend(record.get("downloaded_files", []))
+                            execution.extracted_files.extend(record.get("extracted_files", []))
+                except WorkflowRecordPolicyStop as exc:
+                    _mark_record_policy_stop(execution, exc)
+                    if _stop_remaining_search_terms(exc):
+                        break
+                    continue
         except Exception as exc:
             execution.error = str(exc)
             execution.diagnostics["error_type"] = type(exc).__name__
@@ -897,11 +1055,28 @@ def run_workflow_config(config: dict[str, Any]) -> WorkflowExecution:
                 pass
             browser.close()
 
+    if direct_record_policy_state:
+        execution.diagnostics["previous_duplicate_index_count"] = direct_record_policy_state.get("previous_duplicate_index_count", 0)
+        execution.diagnostics["latest_duplicate_index_count"] = direct_record_policy_state.get("latest_duplicate_index_count", 0)
+        same_run_duplicate_skipped_count = int(direct_record_policy_state.get("same_run_duplicate_skipped_count") or 0)
+        if same_run_duplicate_skipped_count:
+            execution.diagnostics["same_run_duplicate_skipped_count"] = (
+                int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+            )
+        latest_cross_group_duplicate_skipped_count = int(
+            direct_record_policy_state.get("latest_cross_group_duplicate_skipped_count") or 0
+        )
+        if latest_cross_group_duplicate_skipped_count:
+            execution.diagnostics["latest_cross_group_duplicate_skipped_count"] = (
+                int(execution.diagnostics.get("latest_cross_group_duplicate_skipped_count") or 0)
+                + latest_cross_group_duplicate_skipped_count
+            )
     _finalize_workflow_execution(execution, config)
     _apply_workflow_result_filters(execution, config)
     return execution
 
 
+# item 번호 목록 검색어를 실제 실행 값으로 해석한다.
 def _resolve_item_numbers_for_term(
     browser: Any,
     config: dict[str, Any],
@@ -989,6 +1164,7 @@ def _resolve_item_numbers_for_term(
         page.close()
 
 
+# item count 검색어를 실제 실행 값으로 해석한다.
 def _resolve_item_count_for_term(
     browser: Any,
     config: dict[str, Any],
@@ -1024,8 +1200,11 @@ def _resolve_item_count_for_term(
     )
 
 
+# workflow 실행 후 필터링과 저장 후처리를 마무리한다.
 def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     if execution.error is not None or execution.records:
+        return
+    if execution.diagnostics.get("record_policy_stopped"):
         return
 
     has_loop_config = _config_primary_loop_step_index(config) is not None or bool((config.get("board") or {}).get("enabled"))
@@ -1042,22 +1221,57 @@ def _finalize_workflow_execution(execution: WorkflowExecution, config: dict[str,
     execution.diagnostics["error"] = message
 
 
+# 수집 records를 filter 기준으로 분리하고 최종 출력 구조를 갱신한다.
 def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[str, Any]) -> None:
     filter_terms = _config_filter_terms(config)
-    raw_records = list(execution.records)
-    matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
+    source_records = list(execution.records)
+    raw_records, duplicate_skipped = _dedupe_execution_records(source_records, filter_terms=filter_terms)
+    raw_generated_files = list(execution.generated_files) + list(execution.downloaded_files) + list(execution.extracted_files)
+    raw_generated_files.extend(_collect_record_files(source_records, "downloaded_files"))
+    raw_generated_files.extend(_collect_record_files(source_records, "extracted_files"))
+    raw_generated_files.extend(_collect_record_output_files(source_records))
     filter_enabled = bool(filter_terms)
     matched_root = _result_category_root(execution.output_dir, "filter")
-    nonfilter_root = _result_category_root(execution.output_dir, "nonfilter") if filter_enabled else None
+    nonfilter_root = None
+    if execution.diagnostics.get("record_policy_stopped") and not raw_records:
+        execution.diagnostics["filter_terms"] = filter_terms
+        execution.diagnostics["raw_record_count"] = len(source_records)
+        execution.diagnostics["deduped_record_count"] = 0
+        execution.diagnostics["matched_record_count"] = 0
+        execution.diagnostics["nonfilter_record_count"] = 0
+        execution.diagnostics["filter_output_skipped"] = "duplicate_stopped_without_new_records"
+        protected_roots = [matched_root, *([nonfilter_root] if nonfilter_root is not None else [])]
+        _delete_unclassified_output_files(
+            execution.output_dir,
+            protected_roots=protected_roots,
+            candidate_files=raw_generated_files,
+        )
+        _remove_nonfilter_output_dir(execution.output_dir)
+        _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
+        if not _skip_tran_parquet_export(config):
+            tran_stats = _export_filter_outputs_to_tran_parquet(matched_root)
+            execution.diagnostics["tran_output_dir"] = tran_stats["tran_output_dir"]
+            execution.diagnostics["tran_exported_file_count"] = tran_stats["exported_file_count"]
+            execution.diagnostics["tran_exported_files"] = tran_stats["exported_files"]
+        execution.records = []
+        execution.downloaded_files = []
+        execution.extracted_files = []
+        return
+    if duplicate_skipped:
+        execution.diagnostics["same_run_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + duplicate_skipped
+        )
+    matched_records, nonfilter_records = _split_records_by_filter_terms(raw_records, filter_terms)
 
     execution.diagnostics["filter_terms"] = filter_terms
-    execution.diagnostics["raw_record_count"] = len(raw_records)
+    execution.diagnostics["raw_record_count"] = len(source_records)
+    execution.diagnostics["deduped_record_count"] = len(raw_records)
     execution.diagnostics["matched_record_count"] = len(matched_records)
     execution.diagnostics["nonfilter_record_count"] = len(nonfilter_records)
     execution.diagnostics["filter_enabled"] = filter_enabled
     execution.diagnostics["filter_output_dir"] = str(matched_root)
-    if nonfilter_root is not None:
-        execution.diagnostics["nonfilter_output_dir"] = str(nonfilter_root)
+    if filter_enabled:
+        execution.diagnostics["nonfilter_output_suppressed"] = True
 
     execution.records = matched_records
     execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
@@ -1079,24 +1293,19 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
             execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
             execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
-            if nonfilter_root is not None and nonfilter_records:
-                _relocate_record_file_lists(nonfilter_records, execution.output_dir, nonfilter_root)
         elif matched_records:
             _relocate_record_file_lists(matched_records, execution.output_dir, matched_root)
             execution.downloaded_files = _collect_record_files(matched_records, "downloaded_files")
             execution.extracted_files = _collect_record_files(matched_records, "extracted_files")
 
-        if nonfilter_root is not None and nonfilter_records:
-            nonfilter_path = _save_workflow_record_snapshot(
-                nonfilter_root,
-                config,
-                nonfilter_records,
-                filter_terms=filter_terms,
-                file_name="workflow_records.json",
-            )
-            execution.diagnostics["nonfilter_records_file"] = str(nonfilter_path)
-
-    _cleanup_empty_dirs(execution.output_dir, protected_roots=[matched_root, *([nonfilter_root] if nonfilter_root is not None else [])])
+    protected_roots = [matched_root, *([nonfilter_root] if nonfilter_root is not None else [])]
+    _delete_unclassified_output_files(
+        execution.output_dir,
+        protected_roots=protected_roots,
+        candidate_files=raw_generated_files,
+    )
+    _remove_nonfilter_output_dir(execution.output_dir)
+    _cleanup_empty_dirs(execution.output_dir, protected_roots=protected_roots)
 
     matched_path = _save_workflow_record_snapshot(
         matched_root,
@@ -1107,8 +1316,185 @@ def _apply_workflow_result_filters(execution: WorkflowExecution, config: dict[st
     )
     execution.diagnostics["matched_records_file"] = str(matched_path)
     execution.diagnostics["manifest_file"] = str(matched_path)
+    latest_path = _save_latest_record_snapshot(
+        matched_root,
+        config,
+        matched_records=matched_records,
+        nonfilter_records=nonfilter_records,
+        filter_terms=filter_terms,
+    )
+    execution.diagnostics["latest_records_file"] = str(latest_path)
+    if not _skip_tran_parquet_export(config):
+        tran_stats = _export_filter_outputs_to_tran_parquet(matched_root)
+        execution.diagnostics["tran_output_dir"] = tran_stats["tran_output_dir"]
+        execution.diagnostics["tran_exported_file_count"] = tran_stats["exported_file_count"]
+        execution.diagnostics["tran_exported_files"] = tran_stats["exported_files"]
 
 
+# unclassified 출력 파일 목록을 삭제한다.
+def _delete_unclassified_output_files(output_dir: Path, protected_roots: list[Path], candidate_files: list[str]) -> None:
+    normalized_protected = [root.resolve() for root in protected_roots if root is not None]
+    if not output_dir.exists():
+        return
+    candidates: set[Path] = set()
+    for value in candidate_files:
+        path = Path(value)
+        if not path.is_absolute():
+            path = path if path.exists() else output_dir / path
+        candidates.add(path)
+        if path.parent.exists() and output_dir.resolve() in path.parent.resolve().parents:
+            candidates.update(candidate for candidate in path.parent.rglob("*") if candidate.is_file())
+    for path in candidates:
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if output_dir.resolve() not in resolved.parents:
+            continue
+        if any(resolved == root or root in resolved.parents for root in normalized_protected):
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+
+
+# nonfilter 출력 디렉터리를 제거한다.
+def _remove_nonfilter_output_dir(output_dir: Path) -> None:
+    nonfilter_root = output_dir / "nonfilter"
+    try:
+        if nonfilter_root.is_dir():
+            shutil.rmtree(nonfilter_root)
+    except FileNotFoundError:
+        return
+
+
+# skip tran parquet export 값을 계산해 반환한다.
+def _skip_tran_parquet_export(config: dict[str, Any]) -> bool:
+    parser_name = _config_parser_name(config)
+    return parser_name in {NAVER_NEWS_API_ATTR, DAUM_NEWS_API_ATTR, GOOGLE_NEWS_RSS_ATTR}
+
+
+# filter 아래 산출 파일을 tran parquet 파일로 변환한다.
+def _export_filter_outputs_to_tran_parquet(filter_root: Path) -> dict[str, Any]:
+    if not filter_root.exists():
+        return {"tran_output_dir": str(filter_root.parent / "tran"), "exported_file_count": 0, "exported_files": []}
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError("pyarrow is required to export filter outputs to parquet.") from exc
+
+    tran_root = filter_root.parent / "tran"
+    if tran_root.exists():
+        shutil.rmtree(tran_root)
+    tran_root.mkdir(parents=True, exist_ok=True)
+
+    export_jobs: list[dict[str, Any]] = []
+    for source_path in sorted(path for path in filter_root.rglob("*") if _should_export_filter_file(filter_root, path)):
+        relative_path = source_path.relative_to(filter_root)
+        tran_kind = _tran_kind_for_filter_file(relative_path)
+        collected_at = _collected_at_from_file(source_path)
+        target_path = _unique_flat_tran_path(tran_root, tran_kind, collected_at)
+        row = _filter_file_parquet_row(source_path, relative_path, tran_kind=tran_kind, collected_at=collected_at)
+        export_jobs.append(
+            {
+                "source_path": source_path,
+                "relative_path": relative_path,
+                "target_path": target_path,
+                "row": row,
+                "manifest_entry": {
+                    "source_relative_path": row["source_relative_path"],
+                    "source_file_name": row["source_file_name"],
+                    "tran_file_name": target_path.name,
+                    "tran_kind": tran_kind,
+                    "collected_at": row["collected_at"],
+                },
+            }
+        )
+
+    manifest_entries = [job["manifest_entry"] for job in export_jobs]
+    exported_files: list[str] = []
+    for job in export_jobs:
+        row = dict(job["row"])
+        if row["tran_kind"] == "metadata":
+            row["tran_manifest_json"] = json.dumps(manifest_entries, ensure_ascii=False, sort_keys=True)
+        table = pa.Table.from_pydict(
+            {
+                key: [value]
+                for key, value in row.items()
+            }
+        )
+        target_path = job["target_path"]
+        pq.write_table(table, target_path)
+        exported_files.append(str(target_path))
+
+    return {
+        "tran_output_dir": str(tran_root),
+        "exported_file_count": len(exported_files),
+        "exported_files": exported_files,
+    }
+
+
+# parquet 변환 대상 filter 파일 여부를 판정한다.
+def _should_export_filter_file(filter_root: Path, path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        relative_path = path.relative_to(filter_root)
+    except ValueError:
+        return False
+    relative_parts = [part.casefold() for part in relative_path.parts]
+    if relative_path.as_posix() == "latest.json":
+        return False
+    return not relative_parts or relative_parts[0] != "rollup"
+
+
+# filter 상대 경로에서 flat parquet kind를 계산한다.
+def _tran_kind_for_filter_file(relative_path: Path) -> str:
+    if relative_path.name == "workflow_records.json":
+        return "metadata"
+    parts = {part.casefold() for part in relative_path.parts}
+    if {"downloads", "download"} & parts:
+        return "download"
+    if {"texts", "text"} & parts:
+        return "text"
+    return "file"
+
+
+# 원본 파일 수정시각을 수집시각으로 변환한다.
+def _collected_at_from_file(source_path: Path) -> datetime:
+    stat = source_path.stat()
+    seconds, nanoseconds = divmod(stat.st_mtime_ns, 1_000_000_000)
+    return datetime.fromtimestamp(seconds, timezone.utc).replace(microsecond=nanoseconds // 1000).astimezone(KST)
+
+
+# tran 바로 아래에 생성할 parquet 경로를 고유하게 만든다.
+def _unique_flat_tran_path(tran_root: Path, tran_kind: str, collected_at: datetime) -> Path:
+    stamp = f"{collected_at:%Y%m%d_%H%M%S}{collected_at.microsecond:06d}"
+    base_name = f"{tran_kind}_{stamp}"
+    candidate = tran_root / f"{base_name}.parquet"
+    suffix = 1
+    while candidate.exists():
+        candidate = tran_root / f"{base_name}_{suffix:03d}.parquet"
+        suffix += 1
+    candidate.touch()
+    return candidate
+
+
+# 단일 filter 파일을 parquet row로 보존할 metadata와 bytes로 만든다.
+def _filter_file_parquet_row(source_path: Path, relative_path: Path, *, tran_kind: str, collected_at: datetime) -> dict[str, Any]:
+    content = source_path.read_bytes()
+    return {
+        "source_relative_path": str(relative_path).replace("\\", "/"),
+        "source_file_name": source_path.name,
+        "tran_kind": tran_kind,
+        "collected_at": collected_at.isoformat(),
+        "content_bytes": content,
+        "exported_at": datetime.now(KST).isoformat(),
+    }
+
+
+# filtered parser 출력 목록을 저장한다.
 def _save_filtered_parser_outputs(
     *,
     execution: WorkflowExecution,
@@ -1129,7 +1515,6 @@ def _save_filtered_parser_outputs(
         parser_runs[index] = run
 
     matched_by_term = _group_records_by_search_term(matched_records)
-    nonfilter_by_term = _group_records_by_search_term(nonfilter_records)
     matched_files: list[str] = []
     nonfilter_files: list[str] = []
     for search_term_index, run in parser_runs.items():
@@ -1147,62 +1532,34 @@ def _save_filtered_parser_outputs(
             items=matched_items,
             filter_terms=filter_terms,
         )
+        _assign_parser_record_output_files(matched_by_term.get(search_term_index, []), matched_path)
+        _rename_parser_record_output_files(matched_by_term.get(search_term_index, []), matched_path)
         matched_files.append(str(matched_path))
         run["output_file"] = str(matched_path)
-        if nonfilter_root is not None:
-            nonfilter_output_dir = _search_term_output_dir(
-                nonfilter_root,
-                search_term,
-                search_term_index,
-                len(parser_runs) or 1,
-            )
-            nonfilter_items = [dict(record.get("extracts") or {}) for record in nonfilter_by_term.get(search_term_index, [])]
-            if nonfilter_items:
-                nonfilter_path = _save_parser_items(
-                    parser_name=parser_name or GOOGLE_NEWS_RSS_ATTR,
-                    output_dir=nonfilter_output_dir,
-                    search_term=search_term,
-                    source_url=api_url,
-                    final_url=final_url,
-                    items=nonfilter_items,
-                    filter_terms=filter_terms,
-                )
-                nonfilter_files.append(str(nonfilter_path))
 
     execution.extracted_files = matched_files
     execution.diagnostics["matched_output_files"] = matched_files
     execution.diagnostics["nonfilter_output_files"] = nonfilter_files
-    if nonfilter_root is not None and nonfilter_records:
-        nonfilter_snapshot = _save_workflow_record_snapshot(
-            nonfilter_root,
-            config,
-            nonfilter_records,
-            filter_terms=filter_terms,
-            file_name="parser_records.json",
-        )
-        execution.diagnostics["nonfilter_records_file"] = str(nonfilter_snapshot)
 
 
+# 외부에서 parser item 목록을 가져온다.
 def _fetch_parser_items(
     parser_name: str,
     source_url: str,
     *,
     timeout: float,
-    parser_step: dict[str, Any] | None = None,
+    item_limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
+    if parser_name == DAUM_NEWS_API_ATTR:
+        return fetch_daum_news_api_items(source_url, timeout=timeout, item_limit=item_limit)
     if parser_name == GOOGLE_NEWS_RSS_ATTR:
         return fetch_google_news_rss_items(source_url, timeout=timeout)
     if parser_name == NAVER_NEWS_API_ATTR:
-        step = parser_step or {}
-        return fetch_naver_news_api_items(
-            source_url,
-            timeout=timeout,
-            page_limit=_positive_int(step.get("page_limit"), default=1),
-            item_limit=_positive_int_or_none(step.get("loop_limit")),
-        )
+        return fetch_naver_news_api_items(source_url, timeout=timeout, item_limit=item_limit)
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
 
 
+# parser item 목록을 저장한다.
 def _save_parser_items(
     *,
     parser_name: str,
@@ -1213,6 +1570,15 @@ def _save_parser_items(
     items: list[dict[str, Any]],
     filter_terms: list[str] | None = None,
 ) -> Path:
+    if parser_name == DAUM_NEWS_API_ATTR:
+        return save_daum_news_api_items(
+            output_dir,
+            search_term=search_term,
+            api_url=source_url,
+            final_url=final_url,
+            items=items,
+            filter_terms=filter_terms,
+        )
     if parser_name == GOOGLE_NEWS_RSS_ATTR:
         return save_google_news_rss_items(
             output_dir,
@@ -1234,6 +1600,87 @@ def _save_parser_items(
     raise RuntimeError(f"Unsupported parser attr: {parser_name}")
 
 
+# assign parser record 출력 파일 목록 값을 계산해 반환한다.
+def _assign_parser_record_output_files(records: list[dict[str, Any]], manifest_path: Path) -> None:
+    item_files = _parser_manifest_item_files(manifest_path)
+    for index, record in enumerate(records):
+        output_path = manifest_path
+        if index < len(item_files):
+            candidate = Path(item_files[index])
+            output_path = candidate if candidate.is_absolute() else manifest_path.parent / candidate
+        record["output_file"] = str(output_path)
+        for step in record.get("steps") or []:
+            if isinstance(step, dict):
+                step["output_file"] = str(output_path)
+
+
+# rename parser record 출력 파일 목록 값을 계산해 반환한다.
+def _rename_parser_record_output_files(records: list[dict[str, Any]], manifest_path: Path) -> None:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    item_files: list[str] = []
+    for record in records:
+        output_file = str(record.get("output_file") or "")
+        if not output_file:
+            continue
+        path = Path(output_file)
+        if not path.exists():
+            item_files.append(_relative_parser_item_file(manifest_path, path))
+            continue
+        record_key = safe_name(str(record.get("record_key") or path.stem))
+        target = _unique_path(path.with_name(f"{record_key}.json"))
+        if target != path:
+            try:
+                path.rename(target)
+            except OSError:
+                target = path
+        _write_parser_item_record_key(target, str(record.get("record_key") or ""))
+        record["output_file"] = str(target)
+        for step in record.get("steps") or []:
+            if isinstance(step, dict):
+                step["output_file"] = str(target)
+        item_files.append(_relative_parser_item_file(manifest_path, target))
+    if isinstance(payload, dict) and item_files:
+        payload["item_files"] = item_files
+        manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# relative parser item 파일 값을 계산해 반환한다.
+def _relative_parser_item_file(manifest_path: Path, item_path: Path) -> str:
+    try:
+        return item_path.relative_to(manifest_path.parent).as_posix()
+    except ValueError:
+        return str(item_path)
+
+
+# parser item record key를 파일에 기록한다.
+def _write_parser_item_record_key(path: Path, record_key: str) -> None:
+    if not record_key:
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if isinstance(payload, dict):
+        payload["record_key"] = record_key
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# parser manifest item 파일 목록 값을 계산해 반환한다.
+def _parser_manifest_item_files(manifest_path: Path) -> list[str]:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_files = payload.get("item_files") if isinstance(payload, dict) else None
+    if not isinstance(raw_files, list):
+        return []
+    return [str(value) for value in raw_files if str(value or "").strip()]
+
+
+# split records 필터 검색어 목록 값을 계산해 반환한다.
 def _split_records_by_filter_terms(
     records: list[dict[str, Any]],
     filter_terms: list[str],
@@ -1251,6 +1698,27 @@ def _split_records_by_filter_terms(
     return matched, nonfilter
 
 
+# dedupe execution records 값을 계산해 반환한다.
+def _dedupe_execution_records(records: list[dict[str, Any]], filter_terms: list[str] | None = None) -> tuple[list[dict[str, Any]], int]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    record_by_key: dict[str, dict[str, Any]] = {}
+    skipped = 0
+    for record in records:
+        keys = duplicate_keys_for_record(record)
+        duplicate_record = next((record_by_key[key] for key in keys if key in record_by_key), None)
+        if duplicate_record is not None:
+            _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms or [])
+            skipped += 1
+            continue
+        for key in keys:
+            seen.add(key)
+            record_by_key[key] = record
+        deduped.append(record)
+    return deduped, skipped
+
+
+# record matches 필터 검색어 목록 값을 계산해 반환한다.
 def _record_matches_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> bool:
     blob = _record_filter_blob(record)
     if not blob:
@@ -1258,9 +1726,10 @@ def _record_matches_filter_terms(record: dict[str, Any], filter_terms: list[str]
     return any(term.lower() in blob for term in filter_terms)
 
 
+# record 필터 blob 값을 계산해 반환한다.
 def _record_filter_blob(value: Any) -> str:
     parts: list[str] = []
-    ignored_keys = {
+    metadata_keys = {
         "search_term",
         "search_term_index",
         "search_term_count",
@@ -1273,16 +1742,57 @@ def _record_filter_blob(value: Any) -> str:
         "config_name",
         "output_dir",
         "parser_name",
+        "post_id",
+        "item_index",
+        "source",
+        "source_name",
+        "source_provider",
+        "source_api",
+        "api_metadata",
         "record_key",
         "output_file",
+        "downloaded_file",
         "downloaded_files",
+        "extracted_file",
         "extracted_files",
+        "url",
+        "link",
+        "detail_url",
+        "originallink",
+        "api_url",
+        "rss_url",
+        "xpath",
+        "resolved_xpath",
+        "attr",
+        "action",
+        "name",
+        "success",
+        "error",
+        "duration_seconds",
+        "matched_count",
+        "pubDate",
+        "pub_date",
+        "published_at",
+        "date",
+        "datetime",
+    }
+    direct_content_keys = {
+        "extract_title",
+        "title",
+        "description",
+        "body",
+        "content",
+        "text",
+        "summary",
+        "desc",
+        "value",
     }
 
-    def visit(item: Any, key: str | None = None) -> None:
+    # visit content 값을 계산해 반환한다.
+    def visit_content(item: Any, key: str | None = None) -> None:
         if item is None:
             return
-        if key in ignored_keys:
+        if key in metadata_keys:
             return
         if isinstance(item, str):
             cleaned = " ".join(item.split()).strip().lower()
@@ -1291,20 +1801,38 @@ def _record_filter_blob(value: Any) -> str:
             return
         if isinstance(item, dict):
             for sub_key, sub_value in item.items():
-                visit(sub_value, str(sub_key))
+                visit_content(sub_value, str(sub_key))
             return
         if isinstance(item, list):
             for sub_value in item:
-                visit(sub_value, key)
+                visit_content(sub_value, key)
             return
         cleaned = " ".join(str(item).split()).strip().lower()
         if cleaned:
             parts.append(cleaned)
 
-    visit(value)
+    if not isinstance(value, dict):
+        visit_content(value)
+        return " \n".join(parts)
+
+    for key in direct_content_keys:
+        if key in value:
+            visit_content(value.get(key), key)
+
+    extracts = value.get("extracts")
+    if isinstance(extracts, dict):
+        visit_content(extracts)
+
+    steps = value.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and "value" in step:
+                visit_content(step.get("value"), "value")
+
     return " \n".join(parts)
 
 
+# collect record 파일 목록 값을 계산해 반환한다.
 def _collect_record_files(records: list[dict[str, Any]], key: str) -> list[str]:
     collected: list[str] = []
     seen: set[str] = set()
@@ -1322,6 +1850,86 @@ def _collect_record_files(records: list[dict[str, Any]], key: str) -> list[str]:
     return collected
 
 
+# collect record 출력 파일 목록 값을 계산해 반환한다.
+def _collect_record_output_files(records: list[dict[str, Any]]) -> list[str]:
+    collected: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        value = str(record.get("output_file") or "")
+        if value and value not in seen:
+            seen.add(value)
+            collected.append(value)
+    return collected
+
+
+# apply stable record key 값을 계산해 반환한다.
+def _apply_stable_record_key(
+    record: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    rename_files: bool = False,
+) -> None:
+    old_key = str(record.get("record_key") or "")
+    new_key = _build_stable_record_key(config, record)
+    if not new_key or new_key == old_key:
+        return
+    record["record_key"] = new_key
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            step["record_key"] = new_key
+    if rename_files:
+        _rename_record_artifacts(record, old_key, new_key)
+
+
+# rename record artifacts 값을 계산해 반환한다.
+def _rename_record_artifacts(record: dict[str, Any], old_key: str, new_key: str) -> None:
+    if not old_key or not new_key or old_key == new_key:
+        return
+    for key in ("downloaded_files", "extracted_files"):
+        value = record.get(key)
+        if isinstance(value, list):
+            record[key] = [_rename_record_artifact_path(path, old_key, new_key) for path in value]
+        elif isinstance(value, str):
+            record[key] = _rename_record_artifact_path(value, old_key, new_key)
+    if record.get("output_file"):
+        record["output_file"] = _rename_record_artifact_path(str(record["output_file"]), old_key, new_key)
+    for step in record.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        for key in ("downloaded_files", "extracted_files"):
+            value = step.get(key)
+            if isinstance(value, list):
+                step[key] = [_rename_record_artifact_path(path, old_key, new_key) for path in value]
+            elif isinstance(value, str):
+                step[key] = _rename_record_artifact_path(value, old_key, new_key)
+        for key in ("downloaded_file", "extracted_file", "output_file"):
+            if step.get(key):
+                step[key] = _rename_record_artifact_path(str(step[key]), old_key, new_key)
+
+
+# rename record artifact 경로 값을 계산해 반환한다.
+def _rename_record_artifact_path(path_value: Any, old_key: str, new_key: str) -> str:
+    path_text = str(path_value or "")
+    if not path_text:
+        return ""
+    path = Path(path_text)
+    old_safe = safe_name(old_key)
+    new_safe = safe_name(new_key)
+    if old_safe not in path.name:
+        return path_text
+    target_name = path.name.replace(old_safe, new_safe, 1)
+    target = path.with_name(target_name)
+    try:
+        if path.exists():
+            target = _unique_path(target)
+            path.rename(target)
+            return str(target)
+    except OSError:
+        return path_text
+    return str(target)
+
+
+# records 검색 검색어를 표시 단위로 그룹화한다.
 def _group_records_by_search_term(records: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for record in records:
@@ -1335,6 +1943,7 @@ def _group_records_by_search_term(records: list[dict[str, Any]]) -> dict[int, li
     return grouped
 
 
+# workflow_records.json snapshot을 lock을 잡고 저장한다.
 def _save_workflow_record_snapshot(
     output_dir: Path,
     config: dict[str, Any],
@@ -1344,23 +1953,899 @@ def _save_workflow_record_snapshot(
     file_name: str,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / file_name
+    lock = (
+        FileLock(output_path, timeout_seconds=10.0, stale_seconds=300.0)
+        if file_name == "workflow_records.json"
+        else None
+    )
+    if lock is None:
+        return _write_workflow_record_snapshot_unlocked(output_path, config, records, filter_terms=filter_terms, file_name=file_name)
+    with lock:
+        return _write_workflow_record_snapshot_unlocked(output_path, config, records, filter_terms=filter_terms, file_name=file_name)
+
+
+# workflow record snapshot unlocked를 파일에 기록한다.
+def _write_workflow_record_snapshot_unlocked(
+    output_path: Path,
+    config: dict[str, Any],
+    records: list[dict[str, Any]],
+    *,
+    filter_terms: list[str],
+    file_name: str,
+) -> Path:
+    existing_payload = _read_existing_workflow_record_snapshot(output_path)
+    if existing_payload:
+        existing_records = existing_payload.get("records") if isinstance(existing_payload.get("records"), list) else []
+        records = _merge_workflow_record_snapshot_records(existing_records, records, filter_terms=filter_terms)
+    if file_name == "workflow_records.json":
+        snapshot_records: list[dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            snapshot_records.append(_workflow_record_snapshot_record(config, record, filter_terms=filter_terms))
+        records = _sort_workflow_snapshot_records_for_config(config, snapshot_records)
     payload = {
         "config_name": config.get("name"),
-        "search_terms": _config_search_terms(config),
-        "filter_terms": filter_terms,
+        "category": str(config.get("category") or ""),
+        "crawling_type": str(config.get("crawling_type") or ""),
         "item_count": len(records),
         "records": records,
     }
-    output_path = output_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
 
 
+# latest.json 중복 경계 snapshot을 저장한다.
+def _save_latest_record_snapshot(
+    output_dir: Path,
+    config: dict[str, Any],
+    *,
+    matched_records: list[dict[str, Any]],
+    nonfilter_records: list[dict[str, Any]],
+    filter_terms: list[str],
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "latest.json"
+    existing_payload = _read_existing_workflow_record_snapshot(output_path)
+    existing_records = []
+    if existing_payload:
+        raw_existing = existing_payload.get("records")
+        if isinstance(raw_existing, list):
+            existing_records = [record for record in raw_existing if isinstance(record, dict)]
+
+    current_entries: list[dict[str, str]] = []
+    for record in matched_records:
+        terms = _record_filter_terms(record, filter_terms) if filter_terms else [""]
+        for term in terms:
+            current_entries.extend(_latest_record_entries(config, record, filter_term=term))
+    for record in nonfilter_records:
+        current_entries.extend(_latest_record_entries(config, record, filter_term="nonfilter"))
+
+    records = _merge_latest_records(
+        existing_records,
+        current_entries,
+        keep_same_pub_date_per_group=_config_parser_name(config) in SUPPORTED_PARSER_ATTRS,
+    )
+    payload = {
+        "config_name": config.get("name"),
+        "item_count": len(records),
+        "records": records,
+    }
+    if _config_parser_name(config) in SUPPORTED_PARSER_ATTRS:
+        payload["api_recent_records"] = _merge_api_recent_records(
+            existing_payload.get("api_recent_records") if isinstance(existing_payload, dict) else [],
+            current_entries,
+        )
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return output_path
+
+
+# latest record entry 목록을 계산해 반환한다.
+def _latest_record_entries(config: dict[str, Any], record: dict[str, Any], *, filter_term: str) -> list[dict[str, str]]:
+    search_terms = _record_search_terms(record) or [""]
+    return [
+        {
+            "search_term": search_term,
+            "filter_term": str(filter_term or ""),
+            "final_url": _record_final_url(config, record),
+            "pub_date": _record_pub_date(record),
+        }
+        for search_term in search_terms
+    ]
+
+
+# 기존 값과 새 latest records를 병합한다.
+def _merge_latest_records(
+    existing_records: list[dict[str, Any]],
+    current_records: list[dict[str, str]],
+    *,
+    keep_same_pub_date_per_group: bool = False,
+) -> list[dict[str, str]]:
+    if keep_same_pub_date_per_group:
+        return _merge_latest_records_keep_same_newest_pub_date(existing_records, current_records)
+
+    merged: dict[tuple[str, str], dict[str, str]] = {}
+    order: list[tuple[str, str]] = []
+    for record in current_records:
+        key = _latest_record_group_key(record)
+        if key in merged:
+            continue
+        merged[key] = _normalize_latest_record(record)
+        order.append(key)
+    for record in existing_records:
+        key = _latest_record_group_key(record)
+        if key in merged:
+            continue
+        merged[key] = _normalize_latest_record(record)
+        order.append(key)
+    return [merged[key] for key in order]
+
+
+# 기존 값과 새 latest records keep same newest pub 날짜를 병합한다.
+def _merge_latest_records_keep_same_newest_pub_date(
+    existing_records: list[dict[str, Any]],
+    current_records: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    grouped_records: dict[tuple[str, str], list[dict[str, str]]] = {}
+    group_order: list[tuple[str, str]] = []
+    for raw_record in [*current_records, *existing_records]:
+        if not isinstance(raw_record, dict):
+            continue
+        record = _normalize_latest_record(raw_record)
+        key = _latest_record_group_key(record)
+        if key not in grouped_records:
+            grouped_records[key] = []
+            group_order.append(key)
+        grouped_records[key].append(record)
+
+    merged: list[dict[str, str]] = []
+    for key in group_order:
+        records = grouped_records[key]
+        dated_records = [
+            (record, _parse_record_datetime(record.get("pub_date")))
+            for record in records
+        ]
+        valid_datetimes = [parsed for _, parsed in dated_records if parsed is not None]
+        if valid_datetimes:
+            newest_datetime = max(valid_datetimes)
+            selected = [
+                record
+                for record, parsed in dated_records
+                if parsed == newest_datetime
+            ]
+        else:
+            selected = records[:1]
+        merged.extend(_dedupe_latest_records_by_url(selected))
+    return merged
+
+
+# dedupe latest records URL 값을 계산해 반환한다.
+def _dedupe_latest_records_by_url(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for record in records:
+        url_key = normalize_duplicate_url(record.get("final_url"))
+        if not url_key:
+            url_key = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        if url_key in seen:
+            continue
+        seen.add(url_key)
+        deduped.append(record)
+    return deduped
+
+
+# 기존 값과 새 API recent records를 병합한다.
+def _merge_api_recent_records(
+    existing_records: Any,
+    current_records: list[dict[str, str]],
+    *,
+    limit: int = API_RECENT_URL_INDEX_LIMIT,
+    now: datetime | None = None,
+) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    cutoff = (now.astimezone(KST) if now is not None else datetime.now(KST)) - API_RECENT_PUB_DATE_RETENTION
+    for raw_record in [*current_records, *(existing_records if isinstance(existing_records, list) else [])]:
+        if not isinstance(raw_record, dict):
+            continue
+        record = _normalize_latest_record(raw_record)
+        url_key = normalize_duplicate_url(record.get("final_url"))
+        if not url_key or url_key in seen:
+            continue
+        if not _api_recent_record_is_within_pub_date_window(record, cutoff):
+            continue
+        seen.add(url_key)
+        merged.append(record)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+# API recent record의 기사 발행 시각이 보존 시간 안에 있는지 판정한다.
+def _api_recent_record_is_within_pub_date_window(record: dict[str, str], cutoff: datetime) -> bool:
+    parsed = _parse_record_datetime(record.get("pub_date"))
+    if parsed is None:
+        return False
+    return parsed.astimezone(KST) >= cutoff
+
+
+# latest record group key 값을 계산해 반환한다.
+def _latest_record_group_key(record: dict[str, Any]) -> tuple[str, str]:
+    search_term = _first_record_text(record.get("search_term"))
+    search_key = "__numeric_page_param__" if NUMERIC_SEARCH_TERM_RE.fullmatch(search_term.strip()) else search_term
+    return search_key, _first_record_text(record.get("filter_term"))
+
+
+# latest record를 표준 형태로 정규화한다.
+def _normalize_latest_record(record: dict[str, Any]) -> dict[str, str]:
+    return {
+        "search_term": _first_record_text(record.get("search_term")),
+        "filter_term": _first_record_text(record.get("filter_term")),
+        "final_url": str(record.get("final_url") or ""),
+        "pub_date": str(record.get("pub_date") or ""),
+    }
+
+
+# latest.json 파일들에서 중복 stop/skip 경계 index를 만든다.
+def build_latest_duplicate_index(
+    snapshot_roots: list[str | Path] | tuple[str | Path, ...],
+    config: dict[str, Any] | None = None,
+) -> LatestDuplicateIndex:
+    index = LatestDuplicateIndex()
+    for record in iter_latest_records(snapshot_roots):
+        prepared = _record_for_duplicate_index(config, record)
+        keys = duplicate_keys_for_record(prepared)
+        boundary = LatestBoundary(
+            keys=set(keys),
+            pub_datetime=_parse_record_datetime(record.get("pub_date")),
+            pub_date=str(record.get("pub_date") or ""),
+        )
+        if not keys and boundary.pub_datetime is None:
+            continue
+        search_term = _first_record_text(record.get("search_term"))
+        filter_term = _first_record_text(record.get("filter_term"))
+        if _is_numeric_search_term(search_term):
+            target = index.numeric_by_filter.setdefault(filter_term, set())
+            index.numeric_boundaries_by_filter.setdefault(filter_term, []).append(boundary)
+        else:
+            target = index.normal_by_search.setdefault(search_term, set())
+            index.normal_boundaries_by_search.setdefault(search_term, []).append(boundary)
+        for key in keys:
+            target.add(key)
+            index.all_keys.add(key)
+    for record in iter_latest_api_recent_records(snapshot_roots):
+        prepared = _record_for_duplicate_index(config, record)
+        for key in duplicate_keys_for_record(prepared):
+            index.api_recent_keys.add(key)
+    return index
+
+
+# latest records를 순회한다.
+def iter_latest_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for payload in iter_latest_payloads(snapshot_roots):
+        raw_records = payload.get("records") if isinstance(payload, dict) else payload
+        if isinstance(raw_records, list):
+            records.extend(record for record in raw_records if isinstance(record, dict))
+    return records
+
+
+# latest API recent records를 순회한다.
+def iter_latest_api_recent_records(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for payload in iter_latest_payloads(snapshot_roots):
+        raw_records = payload.get("api_recent_records") if isinstance(payload, dict) else None
+        if isinstance(raw_records, list):
+            records.extend(record for record in raw_records if isinstance(record, dict))
+    return records
+
+
+# latest payloads를 순회한다.
+def iter_latest_payloads(snapshot_roots: list[str | Path] | tuple[str | Path, ...]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for root_value in snapshot_roots:
+        root = Path(root_value)
+        if root.is_file():
+            paths = [root] if root.name == "latest.json" else []
+        elif root.exists():
+            paths = list(root.rglob("latest.json"))
+        else:
+            paths = []
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+    return payloads
+
+
+# 새 record가 latest 경계와 충돌하는지 판단한다.
+def latest_duplicate_decision_for_record(
+    record: dict[str, Any],
+    latest_index: LatestDuplicateIndex,
+    *,
+    filter_terms: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    if not latest_index.has_records:
+        return None
+    keys = duplicate_keys_for_record(record)
+    record_datetime = _parser_record_datetime(record)
+    if not keys and record_datetime is None:
+        return None
+
+    search_term = _first_record_text(record.get("search_term"))
+    if _is_numeric_search_term(search_term):
+        candidate_filters = _latest_filter_candidates_for_record(record, list(filter_terms or []))
+        for filter_term in candidate_filters:
+            decision = _latest_boundary_decision(
+                record,
+                keys,
+                latest_index.numeric_boundaries_by_filter.get(filter_term, []),
+                record_datetime=record_datetime,
+                latest_scope="numeric_filter",
+            )
+            if decision is not None:
+                return decision
+    else:
+        decision = _latest_boundary_decision(
+            record,
+            keys,
+            latest_index.normal_boundaries_by_search.get(search_term, []),
+            record_datetime=record_datetime,
+            latest_scope="search_term",
+        )
+        if decision is not None:
+            return decision
+
+    api_recent_duplicate_key = next((key for key in keys if key in latest_index.api_recent_keys), "")
+    if api_recent_duplicate_key:
+        return _latest_duplicate_stop_decision(
+            api_recent_duplicate_key,
+            latest_scope="api_recent_url",
+        )
+
+    duplicate_key = next((key for key in keys if key in latest_index.all_keys), "")
+    if duplicate_key:
+        return {
+            "include": False,
+            "stop": False,
+            "reason": "latest_cross_group_duplicate_skipped",
+            "metadata": {
+                "duplicate_key": duplicate_key,
+                "latest": True,
+                "stop_scope": "none",
+            },
+        }
+    return None
+
+
+# latest boundary decision 값을 계산해 반환한다.
+def _latest_boundary_decision(
+    record: dict[str, Any],
+    keys: list[str],
+    boundaries: list[LatestBoundary],
+    *,
+    record_datetime: datetime | None,
+    latest_scope: str,
+) -> dict[str, Any] | None:
+    for boundary in boundaries:
+        duplicate_key = next((key for key in keys if key in boundary.keys), "")
+        if duplicate_key:
+            return _latest_duplicate_stop_decision(duplicate_key, latest_scope=latest_scope)
+
+    boundary_datetimes = [boundary.pub_datetime for boundary in boundaries if boundary.pub_datetime is not None]
+    if record_datetime is None or not boundary_datetimes:
+        return None
+    newest_boundary = max(boundary_datetimes)
+    if record_datetime < newest_boundary:
+        return _latest_duplicate_stop_decision(
+            "",
+            latest_scope=latest_scope,
+            boundary_pub_date=newest_boundary,
+            record_pub_date=record_datetime,
+        )
+    return None
+
+
+# latest 필터 candidates record 값을 계산해 반환한다.
+def _latest_filter_candidates_for_record(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    if not filter_terms:
+        return [""]
+    matched = _matched_filter_terms(record, filter_terms)
+    if matched:
+        return matched
+    return ["nonfilter", ""]
+
+
+# latest duplicate stop decision 값을 계산해 반환한다.
+def _latest_duplicate_stop_decision(
+    duplicate_key: str,
+    *,
+    latest_scope: str,
+    boundary_pub_date: datetime | None = None,
+    record_pub_date: datetime | None = None,
+) -> dict[str, Any]:
+    stop_scope = "numeric_page_sequence" if latest_scope == "numeric_filter" else "search_term"
+    metadata = {
+        "duplicate_key": duplicate_key,
+        "stop_scope": stop_scope,
+        "boundary": True,
+        "latest": True,
+        "latest_scope": latest_scope,
+    }
+    if boundary_pub_date is not None and record_pub_date is not None:
+        metadata["boundary_pub_date"] = boundary_pub_date.isoformat()
+        metadata["record_pub_date"] = record_pub_date.isoformat()
+        metadata["boundary_reason"] = "older_than_latest_pub_date"
+    return {
+        "include": False,
+        "stop": True,
+        "reason": "duplicate_boundary_stopped",
+        "metadata": metadata,
+    }
+
+
+# numeric 검색 검색어 여부를 판정한다.
+def _is_numeric_search_term(value: Any) -> bool:
+    return bool(NUMERIC_SEARCH_TERM_RE.fullmatch(str(value or "").strip()))
+
+
+# duplicate stop scope record 값을 계산해 반환한다.
+def _duplicate_stop_scope_for_record(record: dict[str, Any]) -> str:
+    return "numeric_page_sequence" if _is_numeric_search_term(record.get("search_term")) else "search_term"
+
+
+# remaining 검색 검색어 목록을 중지한다.
+def _stop_remaining_search_terms(exc: WorkflowRecordPolicyStop) -> bool:
+    return str(exc.metadata.get("stop_scope") or "") in {"numeric_page_sequence", "workflow", "config"}
+
+
+# workflow record snapshot record 값을 계산해 반환한다.
+def _workflow_record_snapshot_record(
+    config: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    filter_terms: list[str],
+) -> dict[str, Any]:
+    if not str(record.get("record_key") or "").strip():
+        record = dict(record)
+        record["record_key"] = _build_stable_record_key(config, record)
+    return {
+        "record_key": str(record.get("record_key") or ""),
+        "search_term": _record_search_terms(record),
+        "filter_term": _record_filter_terms(record, filter_terms),
+        "extract_title": _record_title(record),
+        "description": _record_description(record),
+        "pub_date": _record_pub_date(record),
+        "final_url": _record_final_url(config, record),
+    }
+
+
+# record search_term 값을 항상 배열로 반환한다.
+def _record_search_terms(record: dict[str, Any]) -> list[str]:
+    return _term_list(record.get("search_term"))
+
+
+# record filter_term 값을 항상 배열로 반환한다.
+def _record_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    explicit = _term_list(record.get("filter_term"))
+    matched = _matched_filter_terms(record, filter_terms)
+    return _merge_term_lists(explicit, matched)
+
+
+# record term 필드를 병합한다.
+def _merge_record_term_arrays(target: dict[str, Any], source: dict[str, Any], *, filter_terms: list[str] | None = None) -> None:
+    merged_search_terms = _merge_term_lists(_term_list(target.get("search_term")), _term_list(source.get("search_term")))
+    if merged_search_terms:
+        target["search_term"] = merged_search_terms
+
+    if filter_terms is not None:
+        target_filter_terms = _record_filter_terms(target, filter_terms)
+        source_filter_terms = _record_filter_terms(source, filter_terms)
+        merged_filter_terms = _merge_term_lists(target_filter_terms, source_filter_terms)
+        if merged_filter_terms:
+            target["filter_term"] = merged_filter_terms
+
+
+# term 목록을 중복 없이 병합한다.
+def _merge_term_lists(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for term in group:
+            normalized = str(term or "").strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+# scalar/list term 값을 배열로 정규화한다.
+def _term_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return _merge_term_lists([str(item).strip() for item in value if str(item or "").strip()])
+    text = str(value).strip()
+    return [text] if text else []
+
+
+# matched 필터 검색어 목록 값을 계산해 반환한다.
+def _matched_filter_terms(record: dict[str, Any], filter_terms: list[str]) -> list[str]:
+    blob = _record_filter_blob(record)
+    if not blob:
+        return []
+    return [term for term in filter_terms if str(term or "").strip().lower() in blob]
+
+
+# record extracts 값을 계산해 반환한다.
+def _record_extracts(record: dict[str, Any]) -> dict[str, Any]:
+    extracts = record.get("extracts")
+    return extracts if isinstance(extracts, dict) else {}
+
+
+# record 제목 값을 계산해 반환한다.
+def _record_title(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(
+        record.get("extract_title"),
+        record.get("title"),
+        extracts.get("extract_title"),
+        extracts.get("title"),
+    )
+
+
+# record description 값을 계산해 반환한다.
+def _record_description(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(
+        record.get("description"),
+        record.get("desc"),
+        record.get("summary"),
+        extracts.get("description"),
+        extracts.get("desc"),
+        extracts.get("summary"),
+    )
+
+
+# record pub 날짜 값을 계산해 반환한다.
+def _record_pub_date(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    value = _first_record_text(
+        record.get("pub_date"),
+        record.get("pubDate"),
+        record.get("published_at"),
+        record.get("date"),
+        record.get("datetime"),
+        extracts.get("pub_date"),
+        extracts.get("pubDate"),
+        extracts.get("published_at"),
+        extracts.get("date"),
+        extracts.get("datetime"),
+    )
+    return value or format_datetime(datetime.now(KST))
+
+
+# record final URL 값을 계산해 반환한다.
+def _record_final_url(config: dict[str, Any], record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    if _config_parser_name(config) is not None:
+        return canonicalize_article_url(
+            _first_record_text(
+                record.get("detail_url"),
+                extracts.get("detail_url"),
+                record.get("originallink"),
+                extracts.get("originallink"),
+                record.get("link"),
+                extracts.get("link"),
+                record.get("url"),
+                extracts.get("url"),
+                record.get("final_url"),
+                extracts.get("final_url"),
+            )
+        )
+    return canonicalize_article_url(
+        _first_record_text(
+            record.get("final_url"),
+            extracts.get("final_url"),
+        )
+    )
+
+
+# first record 텍스트 값을 계산해 반환한다.
+def _first_record_text(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, list):
+            text = _first_record_text(*value)
+        else:
+            text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+# existing workflow record snapshot를 읽어 반환한다.
+def _read_existing_workflow_record_snapshot(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+# 기존 값과 새 workflow record snapshot records를 병합한다.
+def _merge_workflow_record_snapshot_records(
+    existing_records: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+    *,
+    filter_terms: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    existing = [record for record in existing_records if isinstance(record, dict)]
+    record_by_key: dict[str, dict[str, Any]] = {}
+    for record in existing:
+        for key in duplicate_keys_for_record(record):
+            record_by_key.setdefault(key, record)
+    seen = set(record_by_key)
+    append_records: list[dict[str, Any]] = []
+    for record in new_records:
+        if not isinstance(record, dict):
+            continue
+        keys = duplicate_keys_for_record(record)
+        duplicate_record = next((record_by_key[key] for key in keys if key in record_by_key), None)
+        if duplicate_record is not None:
+            _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms or [])
+            continue
+        for key in keys:
+            seen.add(key)
+            record_by_key[key] = record
+        append_records.append(record)
+    return existing + _sort_parser_api_records_latest_first(append_records)
+
+
+# 기존 workflow_records.json에 있는 중복 record의 term 배열을 갱신한다.
+def _merge_terms_into_existing_workflow_records(
+    output_dir: Path,
+    config: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    filter_terms: list[str] | None = None,
+) -> bool:
+    keys = set(duplicate_keys_for_record(record))
+    if not keys or not output_dir.exists():
+        return False
+    for path in output_dir.rglob("workflow_records.json"):
+        payload = _read_existing_workflow_record_snapshot(path)
+        records = payload.get("records") if isinstance(payload.get("records"), list) else []
+        changed = False
+        for existing_record in records:
+            if not isinstance(existing_record, dict):
+                continue
+            existing_keys = set(duplicate_keys_for_record(_record_for_duplicate_index(config, existing_record)))
+            if keys.isdisjoint(existing_keys):
+                continue
+            before = json.dumps(existing_record, ensure_ascii=False, sort_keys=True)
+            _merge_record_term_arrays(existing_record, record, filter_terms=filter_terms or [])
+            after = json.dumps(existing_record, ensure_ascii=False, sort_keys=True)
+            changed = changed or before != after
+        if changed:
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+    return False
+
+
+# parser API records latest first를 정렬한다.
+def _sort_parser_api_records_latest_first(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not records or not all(_is_parser_api_record(record) for record in records):
+        return records
+    return _sort_records_by_parser_datetime_latest_first(records)
+
+
+# workflow snapshot records 설정을 정렬한다.
+def _sort_workflow_snapshot_records_for_config(config: dict[str, Any], records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if _config_parser_name(config) not in SUPPORTED_PARSER_ATTRS:
+        return records
+    return _sort_records_by_parser_datetime_latest_first(records)
+
+
+# records parser 일시 latest first를 정렬한다.
+def _sort_records_by_parser_datetime_latest_first(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    indexed_records = [(index, record, _parser_record_datetime(record)) for index, record in enumerate(records)]
+    indexed_records.sort(
+        key=lambda item: (
+            0 if item[2] is not None else 1,
+            -(item[2].timestamp() if item[2] is not None else 0),
+            item[0],
+        )
+    )
+    return [record for _, record, _ in indexed_records]
+
+
+# parser API record 여부를 판정한다.
+def _is_parser_api_record(record: dict[str, Any]) -> bool:
+    parser_candidates = [
+        record.get("parser_name"),
+        record.get("extracts", {}).get("parser_name") if isinstance(record.get("extracts"), dict) else "",
+        record.get("extracts", {}).get("source_provider") if isinstance(record.get("extracts"), dict) else "",
+        record.get("extracts", {}).get("source_api") if isinstance(record.get("extracts"), dict) else "",
+    ]
+    for step in record.get("steps") or []:
+        if isinstance(step, dict):
+            parser_candidates.append(step.get("attr"))
+    return any(str(candidate or "").casefold() in SUPPORTED_PARSER_ATTRS for candidate in parser_candidates)
+
+
+# parser record 일시 값을 계산해 반환한다.
+def _parser_record_datetime(record: dict[str, Any]) -> datetime | None:
+    for field_path in PARSER_RECORD_DATE_FIELDS:
+        value: Any = record
+        for key in field_path:
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(key)
+        parsed = _parse_record_datetime(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+# record 일시를 파싱한다.
+def _parse_record_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+# existing workflow duplicate index 목록을 생성해 반환한다.
+def _build_existing_workflow_duplicate_indexes(
+    output_dir: Path,
+    config: dict[str, Any] | None = None,
+) -> tuple[set[str], set[str]]:
+    all_keys: set[str] = set()
+    boundary_keys: set[str] = set()
+    if not output_dir.exists():
+        return all_keys, boundary_keys
+    for path in output_dir.rglob("workflow_records.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        records = payload.get("records") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            continue
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            keys = duplicate_keys_for_record(_record_for_duplicate_index(config, record))
+            for key in keys:
+                all_keys.add(key)
+            if index == 0:
+                for key in keys:
+                    boundary_keys.add(key)
+    return all_keys, boundary_keys
+
+
+# existing workflow duplicate index를 생성해 반환한다.
+def _build_existing_workflow_duplicate_index(output_dir: Path) -> set[str]:
+    all_keys, _ = _build_existing_workflow_duplicate_indexes(output_dir)
+    return all_keys
+
+
+# record duplicate index 값을 계산해 반환한다.
+def _record_for_duplicate_index(config: dict[str, Any] | None, record: dict[str, Any]) -> dict[str, Any]:
+    if config is None:
+        return record
+    prepared = dict(record)
+    prepared["final_url"] = _record_final_url(config, prepared)
+    return prepared
+
+
+# direct workflow record policy를 생성해 반환한다.
+def _build_direct_workflow_record_policy(output_dir: Path, config: dict[str, Any], state: dict[str, Any]) -> RecordPolicy:
+    previous_duplicate_index, boundary_duplicate_index = _build_existing_workflow_duplicate_indexes(output_dir, config)
+    latest_duplicate_index = build_latest_duplicate_index([output_dir], config)
+    filter_terms = _config_filter_terms(config)
+    same_run_seen: set[str] = set()
+    same_run_record_by_key: dict[str, dict[str, Any]] = {}
+    state["previous_duplicate_index_count"] = len(previous_duplicate_index)
+    state["previous_boundary_duplicate_index_count"] = len(boundary_duplicate_index)
+    state["latest_duplicate_index_count"] = len(latest_duplicate_index.all_keys)
+    state["same_run_duplicate_skipped_count"] = 0
+    state["latest_cross_group_duplicate_skipped_count"] = 0
+
+    # record policy 값을 계산해 반환한다.
+    def record_policy(record: dict[str, Any]) -> dict[str, Any]:
+        keys = duplicate_keys_for_record(record)
+        if latest_duplicate_index.has_records:
+            latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
+            if latest_decision is not None:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
+                if not latest_decision.get("stop"):
+                    state["latest_cross_group_duplicate_skipped_count"] = (
+                        int(state.get("latest_cross_group_duplicate_skipped_count") or 0) + 1
+                    )
+                return latest_decision
+        else:
+            boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
+            if boundary_duplicate_key:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_boundary_stopped",
+                    "metadata": {
+                        "duplicate_key": boundary_duplicate_key,
+                        "stop_scope": _duplicate_stop_scope_for_record(record),
+                        "boundary": True,
+                    },
+                }
+
+            duplicate_key = next((key for key in keys if key in previous_duplicate_index), "")
+            if duplicate_key:
+                _merge_terms_into_existing_workflow_records(output_dir, config, record, filter_terms=filter_terms)
+                return {
+                    "include": False,
+                    "stop": True,
+                    "reason": "duplicate_stopped",
+                    "metadata": {"duplicate_key": duplicate_key, "stop_scope": _duplicate_stop_scope_for_record(record)},
+                }
+
+        same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
+        if same_run_duplicate_key:
+            duplicate_record = same_run_record_by_key.get(same_run_duplicate_key)
+            if duplicate_record is not None:
+                _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms)
+            state["same_run_duplicate_skipped_count"] = int(state.get("same_run_duplicate_skipped_count") or 0) + 1
+            return {
+                "include": False,
+                "stop": False,
+                "reason": "same_run_duplicate_skipped",
+                "metadata": {"duplicate_key": same_run_duplicate_key},
+            }
+
+        for key in keys:
+            same_run_seen.add(key)
+            same_run_record_by_key[key] = record
+        return {"include": True, "stop": False}
+
+    return record_policy
+
+
+# parser workflow를 실행한다.
 def _run_parser_workflow(
     execution: WorkflowExecution,
     config: dict[str, Any],
     parser_name: str,
     timeout_ms: int,
+    record_policy: RecordPolicy | None = None,
 ) -> None:
     if parser_name not in SUPPORTED_PARSER_ATTRS:
         raise RuntimeError(f"Unsupported parser attr: {parser_name}")
@@ -1374,6 +2859,17 @@ def _run_parser_workflow(
     effective_terms = search_terms or [None]
     total_items = 0
     item_limit = _step_loop_limit(parser_step)
+    existing_duplicate_index: set[str] = set()
+    boundary_duplicate_index: set[str] = set()
+    latest_duplicate_index = LatestDuplicateIndex()
+    filter_terms = _config_filter_terms(config)
+    if record_policy is None:
+        existing_duplicate_index, boundary_duplicate_index = _build_existing_workflow_duplicate_indexes(execution.output_dir, config)
+        latest_duplicate_index = build_latest_duplicate_index([execution.output_dir], config)
+    same_run_seen: set[str] = set()
+    same_run_record_by_key: dict[str, dict[str, Any]] = {}
+    same_run_duplicate_skipped_count = 0
+    latest_cross_group_duplicate_skipped_count = 0
     for search_term_index, search_term in enumerate(effective_terms):
         term_output_dir = _search_term_output_dir(
             execution.output_dir,
@@ -1382,36 +2878,43 @@ def _run_parser_workflow(
             len(effective_terms),
         )
         source_url = _render_template_value(str(config["start_url"]), search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(
-            parser_name,
-            source_url,
-            timeout=timeout_ms / 1000,
-            parser_step=parser_step,
-        )
+        try:
+            items, final_url = _fetch_parser_items(
+                parser_name,
+                source_url,
+                timeout=timeout_ms / 1000,
+                item_limit=item_limit,
+            )
+        except Exception as exc:  # noqa: BLE001 - parser 검색어 1개 실패가 전체 job을 중단하지 않게 기록한다.
+            execution.diagnostics.setdefault("parser_failed_terms", []).append(
+                {
+                    "search_term_index": search_term_index,
+                    "search_term": search_term,
+                    "url": source_url,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            execution.diagnostics.setdefault("search_term_runs", []).append(
+                {
+                    "search_term_index": search_term_index,
+                    "search_term": search_term,
+                    "item_count": 0,
+                    "empty": True,
+                    "rss_url": source_url,
+                    "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
+                    "final_url": source_url,
+                    "output_file": "",
+                    "fetched_item_count": 0,
+                    "error": str(exc),
+                }
+            )
+            continue
         if item_limit is not None:
             items = items[:item_limit]
-        total_items += len(items)
-        output_path = _save_parser_items(
-            parser_name=parser_name,
-            output_dir=term_output_dir,
-            search_term=search_term,
-            source_url=source_url,
-            final_url=final_url,
-            items=items,
-        )
-        execution.extracted_files.append(str(output_path))
-        execution.diagnostics.setdefault("search_term_runs", []).append(
-            {
-                "search_term_index": search_term_index,
-                "search_term": search_term,
-                "item_count": len(items),
-                "empty": len(items) == 0,
-                "rss_url": source_url,
-                "api_url": source_url if parser_name == NAVER_NEWS_API_ATTR else "",
-                "final_url": final_url,
-                "output_file": str(output_path),
-            }
-        )
+        accepted_items: list[dict[str, Any]] = []
+        accepted_records: list[dict[str, Any]] = []
+        stop_exc: WorkflowRecordPolicyStop | None = None
         for item_index, item in enumerate(items):
             record_key = _build_record_key(search_term_index, item_index)
             record = _build_parser_record(
@@ -1425,13 +2928,114 @@ def _run_parser_workflow(
                 search_term_count=len(effective_terms),
                 rss_url=source_url,
                 final_url=final_url,
-                output_file=str(output_path),
+                output_file="",
             )
-            execution.records.append(record)
+            _apply_stable_record_key(record, config)
+            if record_policy is None:
+                keys = duplicate_keys_for_record(record)
+                if latest_duplicate_index.has_records:
+                    latest_decision = latest_duplicate_decision_for_record(record, latest_duplicate_index, filter_terms=filter_terms)
+                    if latest_decision is not None:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
+                        if latest_decision.get("stop"):
+                            stop_exc = WorkflowRecordPolicyStop(
+                                reason=str(latest_decision.get("reason") or "duplicate_boundary_stopped"),
+                                metadata=dict(latest_decision.get("metadata") or {}),
+                                records=accepted_records,
+                            )
+                            break
+                        latest_cross_group_duplicate_skipped_count += 1
+                        continue
+                else:
+                    boundary_duplicate_key = next((key for key in keys if key in boundary_duplicate_index), "")
+                    if boundary_duplicate_key:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
+                        stop_exc = WorkflowRecordPolicyStop(
+                            reason="duplicate_boundary_stopped",
+                            metadata={
+                                "duplicate_key": boundary_duplicate_key,
+                                "stop_scope": _duplicate_stop_scope_for_record(record),
+                                "boundary": True,
+                            },
+                            records=accepted_records,
+                        )
+                        break
+                    duplicate_key = next((key for key in keys if key in existing_duplicate_index), "")
+                    if duplicate_key:
+                        _merge_terms_into_existing_workflow_records(execution.output_dir, config, record, filter_terms=filter_terms)
+                        stop_exc = WorkflowRecordPolicyStop(
+                            reason="duplicate_stopped",
+                            metadata={"duplicate_key": duplicate_key, "stop_scope": _duplicate_stop_scope_for_record(record)},
+                            records=accepted_records,
+                        )
+                        break
+                same_run_duplicate_key = next((key for key in keys if key in same_run_seen), "")
+                if same_run_duplicate_key:
+                    duplicate_record = same_run_record_by_key.get(same_run_duplicate_key)
+                    if duplicate_record is not None:
+                        _merge_record_term_arrays(duplicate_record, record, filter_terms=filter_terms)
+                    same_run_duplicate_skipped_count += 1
+                    continue
+                for key in keys:
+                    same_run_seen.add(key)
+                    same_run_record_by_key[key] = record
+                include, stop, reason, metadata = True, False, "record_policy_stopped", {}
+            else:
+                include, stop, reason, metadata = _record_policy_decision(record_policy, record)
+            if include:
+                accepted_items.append(item)
+                accepted_records.append(record)
+            if stop:
+                stop_exc = WorkflowRecordPolicyStop(reason=reason, metadata=metadata, records=accepted_records)
+                break
+
+        total_items += len(accepted_items)
+        output_path: Path | None = None
+        if accepted_items:
+            output_path = _save_parser_items(
+                parser_name=parser_name,
+                output_dir=term_output_dir,
+                search_term=search_term,
+                source_url=source_url,
+                final_url=final_url,
+                items=accepted_items,
+            )
+            _assign_parser_record_output_files(accepted_records, output_path)
+            _rename_parser_record_output_files(accepted_records, output_path)
+            execution.extracted_files.append(str(output_path))
+        execution.diagnostics.setdefault("search_term_runs", []).append(
+            {
+                "search_term_index": search_term_index,
+                "search_term": search_term,
+                "item_count": len(accepted_items),
+                "empty": len(accepted_items) == 0,
+                "rss_url": source_url,
+                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
+                "final_url": final_url,
+                "output_file": str(output_path) if output_path is not None else "",
+                "fetched_item_count": len(items),
+            }
+        )
+        execution.records.extend(accepted_records)
+        if stop_exc is not None:
+            _mark_record_policy_stop(execution, stop_exc)
+            if _stop_remaining_search_terms(stop_exc):
+                break
+            continue
 
     execution.diagnostics["parser_item_count"] = total_items
+    if same_run_duplicate_skipped_count:
+        execution.diagnostics["same_run_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("same_run_duplicate_skipped_count") or 0) + same_run_duplicate_skipped_count
+        )
+    if latest_cross_group_duplicate_skipped_count:
+        execution.diagnostics["latest_cross_group_duplicate_skipped_count"] = (
+            int(execution.diagnostics.get("latest_cross_group_duplicate_skipped_count") or 0)
+            + latest_cross_group_duplicate_skipped_count
+        )
 
 
+# parser record를 생성해 반환한다.
 def _build_parser_record(
     *,
     parser_name: str,
@@ -1447,6 +3051,7 @@ def _build_parser_record(
     output_file: str,
 ) -> dict[str, Any]:
     title = str(item.get("title") or item.get("detail_url") or item.get("link") or "")
+    article_final_url = _parser_item_final_url(item, fallback=final_url)
     step_log: dict[str, Any] = {
         "index": 1,
         "name": parser_step.get("name") or f"{parser_name}_parser",
@@ -1475,7 +3080,7 @@ def _build_parser_record(
         "error": None,
         "downloaded_files": [],
     }
-    return {
+    record = {
         "record_key": record_key,
         "item_index": item_index,
         "search_term": search_term,
@@ -1489,11 +3094,24 @@ def _build_parser_record(
         "output_file": output_file,
         "error": None,
         "start_url": rss_url,
-        "final_url": final_url,
+        "final_url": article_final_url,
         "parser_name": parser_name,
     }
+    return record
 
 
+# parser item final URL 값을 계산해 반환한다.
+def _parser_item_final_url(item: dict[str, Any], *, fallback: str) -> str:
+    return _first_record_text(
+        item.get("final_url"),
+        item.get("detail_url"),
+        item.get("originallink"),
+        item.get("link"),
+        fallback,
+    )
+
+
+# 미리보기 parser workflow 값을 계산해 반환한다.
 def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: int) -> dict[str, Any]:
     search_terms = _config_search_terms(config)
     effective_terms = search_terms or [None]
@@ -1506,12 +3124,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
 
     for search_term_index, search_term in enumerate(effective_terms):
         source_url = _render_template_value(start_url, search_term, url_encode=True)
-        items, final_url = _fetch_parser_items(
-            parser_name,
-            source_url,
-            timeout=timeout,
-            parser_step=parser_step,
-        )
+        items, final_url = _fetch_parser_items(parser_name, source_url, timeout=timeout, item_limit=item_limit)
         if item_limit is not None:
             items = items[:item_limit]
         total_count += len(items)
@@ -1522,7 +3135,7 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
                 "item_count": len(items),
                 "empty": len(items) == 0,
                 "rss_url": source_url,
-                "api_url": source_url if parser_name == NAVER_NEWS_API_ATTR else "",
+                "api_url": source_url if parser_name in {DAUM_NEWS_API_ATTR, NAVER_NEWS_API_ATTR} else "",
                 "final_url": final_url,
             }
         )
@@ -1550,6 +3163,80 @@ def _preview_parser_workflow(config: dict[str, Any], parser_name: str, timeout: 
     }
 
 
+# record policy decision 값을 계산해 반환한다.
+def _record_policy_decision(record_policy: RecordPolicy | None, record: dict[str, Any]) -> tuple[bool, bool, str, dict[str, Any]]:
+    if record_policy is None:
+        return True, False, "", {}
+
+    decision = record_policy(record)
+    if decision is None:
+        return True, False, "", {}
+    if isinstance(decision, bool):
+        return decision, not decision, "record_policy_stopped", {}
+    if isinstance(decision, dict):
+        include = bool(decision.get("include", True))
+        stop = bool(decision.get("stop", False))
+        reason = str(decision.get("reason") or "record_policy_stopped")
+        metadata = decision.get("metadata")
+        return include, stop, reason, metadata if isinstance(metadata, dict) else {}
+
+    return bool(decision), False, "", {}
+
+
+# append record 값을 계산해 반환한다.
+def _append_record(records: list[dict[str, Any]], record: dict[str, Any], record_policy: RecordPolicy | None) -> bool:
+    include, stop, reason, metadata = _record_policy_decision(record_policy, record)
+    if include:
+        records.append(record)
+    if stop:
+        raise WorkflowRecordPolicyStop(
+            reason=reason,
+            metadata=metadata,
+            records=list(records),
+            generated_files=_record_generated_files(record),
+        )
+    return include
+
+
+# append execution record 값을 계산해 반환한다.
+def _append_execution_record(
+    execution: WorkflowExecution,
+    record: dict[str, Any],
+    record_policy: RecordPolicy | None,
+) -> bool:
+    execution.generated_files.extend(record.get("downloaded_files", []))
+    execution.generated_files.extend(record.get("extracted_files", []))
+    return _append_record(execution.records, record, record_policy)
+
+
+# mark record policy stop 값을 계산해 반환한다.
+def _mark_record_policy_stop(execution: WorkflowExecution, exc: WorkflowRecordPolicyStop) -> None:
+    execution.generated_files.extend(exc.generated_files)
+    for record in exc.records:
+        if record not in execution.records:
+            execution.records.append(record)
+            execution.downloaded_files.extend(record.get("downloaded_files", []))
+            execution.extracted_files.extend(record.get("extracted_files", []))
+            execution.generated_files.extend(_record_generated_files(record))
+    execution.diagnostics["record_policy_stopped"] = True
+    execution.diagnostics["record_policy_stop_reason"] = exc.reason
+    execution.diagnostics["record_policy_stop_metadata"] = exc.metadata
+
+
+# record generated 파일 목록 값을 계산해 반환한다.
+def _record_generated_files(record: dict[str, Any]) -> list[str]:
+    files: list[str] = []
+    for key in ("downloaded_files", "extracted_files"):
+        raw = record.get(key)
+        if isinstance(raw, list):
+            files.extend(str(value) for value in raw if value)
+    output_file = record.get("output_file")
+    if output_file:
+        files.append(str(output_file))
+    return files
+
+
+# nested click loops를 실행한다.
 def _run_nested_click_loops(
     browser: Any,
     config: dict[str, Any],
@@ -1562,6 +3249,7 @@ def _run_nested_click_loops(
     parse_pause_seconds: int,
     page_loop_step_index: int,
     item_loop_step_index: int,
+    record_policy: RecordPolicy | None = None,
 ) -> list[dict[str, Any]]:
     steps = config.get("steps") or []
     page_loop_step = steps[page_loop_step_index - 1]
@@ -1678,11 +3366,12 @@ def _run_nested_click_loops(
                 board_item_number=item_number,
             )
             record["steps"].insert(0, dict(page_loop_step_log))
-            records.append(record)
+            _append_record(records, record, record_policy)
 
     return records
 
 
+# nested pagination click loops를 실행한다.
 def _run_nested_pagination_click_loops(
     browser: Any,
     config: dict[str, Any],
@@ -1695,6 +3384,7 @@ def _run_nested_pagination_click_loops(
     parse_pause_seconds: int,
     page_loop_step_index: int,
     item_loop_step_index: int,
+    record_policy: RecordPolicy | None = None,
 ) -> list[dict[str, Any]]:
     steps = config.get("steps") or []
     page_loop_step = steps[page_loop_step_index - 1]
@@ -1814,11 +3504,12 @@ def _run_nested_pagination_click_loops(
                 board_item_number=item_number,
             )
             record["steps"].insert(0, dict(page_loop_step_log))
-            records.append(record)
+            _append_record(records, record, record_policy)
 
     return records
 
 
+# 페이지 loop count를 실제 실행 값으로 해석한다.
 def _resolve_page_loop_count(
     browser: Any,
     config: dict[str, Any],
@@ -1868,6 +3559,7 @@ def _resolve_page_loop_count(
         page.close()
 
 
+# one item을 실행한다.
 def _run_one_item(
     browser: Any,
     config: dict[str, Any],
@@ -1973,12 +3665,14 @@ def _run_one_item(
         record["success"] = False
         record["error"] = str(exc)
     finally:
-        record["final_url"] = page.url
+        record["final_url"] = canonicalize_article_url(page.url)
+        _apply_stable_record_key(record, config, rename_files=True)
         page.close()
 
     return record
 
 
+# 실행 단계를 실행한다.
 def _run_step(
     page: Any,
     scope: Any,
@@ -2207,7 +3901,7 @@ def _run_step(
             page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
             step_log["value"] = target_url
         elif action == "download":
-            downloaded_path = _download_step(
+            download_result = _download_step(
                 page,
                 locator,
                 step,
@@ -2216,7 +3910,10 @@ def _run_step(
                 record_key=step_log["record_key"],
                 step_index=step_index,
             )
-            step_log["downloaded_file"] = str(downloaded_path)
+            step_log["downloaded_files"] = [str(path) for path in download_result.paths]
+            step_log["downloaded_file"] = step_log["downloaded_files"][0] if step_log["downloaded_files"] else None
+            if download_result.zip_extract_error:
+                step_log["zip_extract_error"] = download_result.zip_extract_error
         elif action == "extract":
             if parse_pause_seconds > 0:
                 time.sleep(parse_pause_seconds)
@@ -2246,6 +3943,7 @@ def _run_step(
     return step_log, active_page
 
 
+# 실행 단계 오류를 표시용 문자열로 변환한다.
 def _format_step_error(step_log: dict[str, Any], exc: Exception) -> str:
     return (
         f"Step failed | item={step_log.get('item_index')} | "
@@ -2258,6 +3956,7 @@ def _format_step_error(step_log: dict[str, Any], exc: Exception) -> str:
     )
 
 
+# 실행 단계 wait 상태 값을 계산해 반환한다.
 def _step_wait_state(step: dict[str, Any]) -> str:
     if step.get("wait_state"):
         return str(step["wait_state"])
@@ -2270,6 +3969,7 @@ def _step_wait_state(step: dict[str, Any]) -> str:
     return "attached"
 
 
+# 설정 parse pause seconds 값을 계산해 반환한다.
 def _config_parse_pause_seconds(config: dict[str, Any]) -> int:
     raw_value = config.get("parse_pause_seconds")
     if raw_value in (None, ""):
@@ -2283,6 +3983,7 @@ def _config_parse_pause_seconds(config: dict[str, Any]) -> int:
     return parsed_value
 
 
+# 실행 단계 open mode 값을 계산해 반환한다.
 def _step_open_mode(step: dict[str, Any]) -> str:
     raw_mode = str(step.get("open_mode") or "auto").strip().lower()
     if raw_mode not in SUPPORTED_OPEN_MODES:
@@ -2290,6 +3991,7 @@ def _step_open_mode(step: dict[str, Any]) -> str:
     return raw_mode
 
 
+# locator targets new tab 값을 계산해 반환한다.
 def _locator_targets_new_tab(locator: Any) -> bool:
     try:
         target = str(locator.get_attribute("target") or "").strip().lower()
@@ -2298,6 +4000,7 @@ def _locator_targets_new_tab(locator: Any) -> bool:
     return target == "_blank"
 
 
+# 실행 단계 loop limit 값을 계산해 반환한다.
 def _step_loop_limit(step: dict[str, Any]) -> int | None:
     raw_limit = step.get("loop_limit")
     if raw_limit in (None, ""):
@@ -2313,6 +4016,7 @@ def _step_loop_limit(step: dict[str, Any]) -> int | None:
     return limit or None
 
 
+# 설정 primary loop 실행 단계 index 값을 계산해 반환한다.
 def _config_primary_loop_step_index(config: dict[str, Any]) -> int | None:
     steps = config.get("steps") or []
     for index, step in enumerate(steps, start=1):
@@ -2321,6 +4025,7 @@ def _config_primary_loop_step_index(config: dict[str, Any]) -> int | None:
     return None
 
 
+# 실행 단계 loop mode 값을 계산해 반환한다.
 def _step_loop_mode(step: dict[str, Any]) -> str:
     raw_mode = str(step.get("loop_mode") or "").strip().lower()
     if raw_mode in SUPPORTED_LOOP_MODES:
@@ -2332,6 +4037,7 @@ def _step_loop_mode(step: dict[str, Any]) -> str:
     return "items"
 
 
+# 설정 click loop 실행 단계 index 목록 값을 계산해 반환한다.
 def _config_click_loop_step_indexes(config: dict[str, Any]) -> tuple[int, ...]:
     steps = config.get("steps") or []
     indexes: list[int] = []
@@ -2345,6 +4051,7 @@ def _config_click_loop_step_indexes(config: dict[str, Any]) -> tuple[int, ...]:
     return tuple(indexes)
 
 
+# 설정 검색 검색어 목록 값을 계산해 반환한다.
 def _config_search_terms(config: dict[str, Any]) -> list[str]:
     raw_terms = config.get("search_terms")
     if not raw_terms:
@@ -2359,6 +4066,7 @@ def _config_search_terms(config: dict[str, Any]) -> list[str]:
     return terms
 
 
+# 설정 필터 검색어 목록 값을 계산해 반환한다.
 def _config_filter_terms(config: dict[str, Any]) -> list[str]:
     raw_terms = config.get("filter_terms")
     if not raw_terms:
@@ -2373,6 +4081,7 @@ def _config_filter_terms(config: dict[str, Any]) -> list[str]:
     return terms
 
 
+# 설정 parser 이름 값을 계산해 반환한다.
 def _config_parser_name(config: dict[str, Any]) -> str | None:
     steps = config.get("steps") or []
     parser_names = []
@@ -2397,8 +4106,11 @@ def _config_parser_name(config: dict[str, Any]) -> str | None:
     return parser_name
 
 
+# 입력값에서 parser attr start URL를 추론한다.
 def _infer_parser_attr_from_start_url(start_url: str) -> str | None:
     lowered = start_url.strip().lower()
+    if "dapi.kakao.com/v2/search/web" in lowered:
+        return DAUM_NEWS_API_ATTR
     if "openapi.naver.com/v1/search/news" in lowered:
         return NAVER_NEWS_API_ATTR
     if "news.google.com/rss/search" in lowered:
@@ -2406,70 +4118,7 @@ def _infer_parser_attr_from_start_url(start_url: str) -> str | None:
     return None
 
 
-def _set_query_param(url: str, key: str, value: str) -> str:
-    if not url:
-        return url
-    base_and_query, separator, fragment = url.partition("#")
-    base, query_separator, query = base_and_query.partition("?")
-    if not query_separator:
-        return f"{base}?{key}={value}{separator}{fragment}"
-
-    updated_parts: list[str] = []
-    replaced = False
-    for part in query.split("&"):
-        if not part:
-            continue
-        part_key, part_separator, _part_value = part.partition("=")
-        if part_key == key:
-            updated_parts.append(f"{key}={value}")
-            replaced = True
-        else:
-            updated_parts.append(part if part_separator else part_key)
-    if not replaced:
-        updated_parts.append(f"{key}={value}")
-    return f"{base}?{'&'.join(updated_parts)}{separator}{fragment}"
-
-
-def _validate_naver_parser_step(step: dict[str, Any], index: int) -> None:
-    page_limit = _validate_optional_positive_int(step, index, "page_limit") or 1
-    if page_limit > NAVER_NEWS_API_MAX_PAGE_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].page_limit must be <= {NAVER_NEWS_API_MAX_PAGE_LIMIT} for Naver News API."
-        )
-
-    loop_limit = _validate_required_positive_int(step, index, "loop_limit")
-    if loop_limit > NAVER_NEWS_API_MAX_LOOP_LIMIT:
-        raise WorkflowConfigError(
-            f"steps[{index}].loop_limit must be between 1 and {NAVER_NEWS_API_MAX_LOOP_LIMIT} for Naver News API."
-        )
-
-
-def _validate_optional_positive_int(step: dict[str, Any], index: int, field: str) -> int | None:
-    value = step.get(field)
-    if value in (None, ""):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.") from exc
-    if parsed <= 0:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.")
-    return parsed
-
-
-def _validate_required_positive_int(step: dict[str, Any], index: int, field: str) -> int:
-    value = step.get(field)
-    if value in (None, ""):
-        raise WorkflowConfigError(f"steps[{index}].{field} is required for Naver News API.")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.") from exc
-    if parsed <= 0:
-        raise WorkflowConfigError(f"steps[{index}].{field} must be a positive integer.")
-    return parsed
-
-
+# 설정 primary loop spec 값을 계산해 반환한다.
 def _config_primary_loop_spec(config: dict[str, Any]) -> BoardLoopSpec | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -2490,6 +4139,7 @@ def _config_primary_loop_spec(config: dict[str, Any]) -> BoardLoopSpec | None:
     return None
 
 
+# 설정 primary pagination spec 값을 계산해 반환한다.
 def _config_primary_pagination_spec(config: dict[str, Any]) -> PaginationLoopSpec | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -2517,6 +4167,7 @@ def _config_primary_pagination_spec(config: dict[str, Any]) -> PaginationLoopSpe
     return None
 
 
+# 설정 primary loop mode 값을 계산해 반환한다.
 def _config_primary_loop_mode(config: dict[str, Any]) -> str | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -2525,6 +4176,7 @@ def _config_primary_loop_mode(config: dict[str, Any]) -> str | None:
     return None
 
 
+# 설정 primary loop limit 값을 계산해 반환한다.
 def _config_primary_loop_limit(config: dict[str, Any]) -> int | None:
     steps = config.get("steps") or []
     for step in steps:
@@ -2546,6 +4198,7 @@ def _config_primary_loop_limit(config: dict[str, Any]) -> int | None:
     return None
 
 
+# 검색 검색어 출력 디렉터리 값을 계산해 반환한다.
 def _search_term_output_dir(
     base_output_dir: Path,
     search_term: str | None,
@@ -2556,6 +4209,7 @@ def _search_term_output_dir(
     return base_output_dir / f"{search_term_index + 1:03d}_{label}"
 
 
+# 설정 board repeat spec 값을 계산해 반환한다.
 def _config_board_repeat_spec(config: dict[str, Any]) -> BoardRepeatSpec | None:
     board = config.get("board") or {}
     list_xpath = str(board.get("list_xpath") or "")
@@ -2568,12 +4222,14 @@ def _config_board_repeat_spec(config: dict[str, Any]) -> BoardRepeatSpec | None:
     return _build_board_repeat_spec(list_xpath, item_tag, item_xpath, first_step_xpath)
 
 
+# locator 값을 계산해 반환한다.
 def _locator(page: Any, scope: Any, xpath: str) -> Any:
     if scope is not None and xpath.startswith("."):
         return scope.locator(f"xpath={xpath}")
     return page.locator(f"xpath={xpath}")
 
 
+# locator matches exclude 값을 계산해 반환한다.
 def _locator_matches_exclude(locator: Any, exclude_xpath: str) -> bool:
     if not exclude_xpath:
         return False
@@ -2610,6 +4266,7 @@ def _locator_matches_exclude(locator: Any, exclude_xpath: str) -> bool:
         return False
 
 
+# locator is disabled 값을 계산해 반환한다.
 def _locator_is_disabled(locator: Any) -> bool:
     try:
         return bool(
@@ -2628,6 +4285,7 @@ def _locator_is_disabled(locator: Any) -> bool:
         return False
 
 
+# filtered locator 목록 값을 계산해 반환한다.
 def _filtered_locators(locator_group: Any, exclude_xpath: str) -> list[Any]:
     total = int(locator_group.count())
     locators: list[Any] = []
@@ -2639,6 +4297,7 @@ def _filtered_locators(locator_group: Any, exclude_xpath: str) -> list[Any]:
     return locators
 
 
+# 미리보기 node matches exclude 값을 계산해 반환한다.
 def _preview_node_matches_exclude(node: Any, exclude_xpath: str) -> bool:
     if not exclude_xpath:
         return False
@@ -2648,6 +4307,7 @@ def _preview_node_matches_exclude(node: Any, exclude_xpath: str) -> bool:
         return False
 
 
+# 실행 단계 XPath를 실제 실행 값으로 해석한다.
 def _resolve_step_xpath(
     xpath: str,
     item_index: int | None,
@@ -2675,6 +4335,7 @@ def _resolve_step_xpath(
     return _replace_matching_indexed_segment(xpath, item_index + start_index, board_item_tag, board_list_xpath)
 
 
+# board repeat 실행 단계 index 값을 계산해 반환한다.
 def _board_repeat_step_index(
     step_index: int,
     item_index: int | None,
@@ -2687,6 +4348,7 @@ def _board_repeat_step_index(
     return item_index
 
 
+# board item 목록을 실제 실행 값으로 해석한다.
 def _resolve_board_items(
     page: Any,
     list_xpath: str,
@@ -2727,6 +4389,7 @@ def _resolve_board_items(
     return 1, BoardRepeatSpec(item_xpath=None, item_tag=item_tag)
 
 
+# 조건에 맞는 board item scope를 선택한다.
 def _select_board_item_scope(
     page: Any,
     list_xpath: str,
@@ -2763,6 +4426,7 @@ def _select_board_item_scope(
     return root, BoardRepeatSpec(item_xpath=None, item_tag=item_tag)
 
 
+# 자식 board locator 목록 값을 계산해 반환한다.
 def _child_board_locators(container: Any, container_tag: str | None) -> Any:
     selectors = BOARD_CONTAINER_CHILD_XPATHS.get((container_tag or "").lower())
     if not selectors:
@@ -2775,6 +4439,7 @@ def _child_board_locators(container: Any, container_tag: str | None) -> Any:
     return container.locator(f"xpath={selectors[0]}")
 
 
+# locator tag 이름 값을 계산해 반환한다.
 def _locator_tag_name(locator: Any) -> str | None:
     try:
         tag_name = locator.evaluate("(el) => el.tagName.toLowerCase()")
@@ -2783,10 +4448,12 @@ def _locator_tag_name(locator: Any) -> str | None:
     return str(tag_name).lower() if tag_name else None
 
 
+# 미리보기 node tag 값을 계산해 반환한다.
 def _preview_node_tag(node: Any) -> str | None:
     return getattr(node, "tag", None).lower() if getattr(node, "tag", None) else None
 
 
+# 미리보기 board item 목록 값을 계산해 반환한다.
 def _preview_board_items(
     root: Any,
     list_matches: list[Any],
@@ -2821,6 +4488,7 @@ def _preview_board_items(
     return [root_node], BoardRepeatSpec(item_xpath=None, item_tag=root_tag)
 
 
+# board loop item 번호 목록을 실제 실행 값으로 해석한다.
 def _resolve_board_loop_item_numbers(
     page: Any,
     loop_spec: BoardLoopSpec,
@@ -2839,10 +4507,12 @@ def _resolve_board_loop_item_numbers(
     return item_numbers
 
 
+# board loop item 목록을 실제 실행 값으로 해석한다.
 def _resolve_board_loop_items(page: Any, loop_spec: BoardLoopSpec, exclude_xpath: str = "") -> int:
     return len(_resolve_board_loop_item_numbers(page, loop_spec, exclude_xpath=exclude_xpath))
 
 
+# pagination 페이지 번호 목록을 실제 실행 값으로 해석한다.
 def _resolve_pagination_page_numbers(page: Any, pagination_spec: PaginationLoopSpec, loop_limit: int | None = None) -> list[int]:
     page_numbers: list[int] = []
     max_pages = loop_limit if loop_limit is not None else BOARD_LOOP_MAX_ITEMS
@@ -2877,6 +4547,7 @@ def _resolve_pagination_page_numbers(page: Any, pagination_spec: PaginationLoopS
     return page_numbers
 
 
+# 미리보기 board loop item 번호 목록 값을 계산해 반환한다.
 def _preview_board_loop_item_numbers(root: Any, loop_spec: BoardLoopSpec, exclude_xpath: str = "") -> list[int]:
     item_numbers: list[int] = []
     for item_number in range(loop_spec.start_index, loop_spec.start_index + BOARD_LOOP_MAX_ITEMS):
@@ -2891,6 +4562,7 @@ def _preview_board_loop_item_numbers(root: Any, loop_spec: BoardLoopSpec, exclud
     return item_numbers
 
 
+# 미리보기 board loop item 목록 값을 계산해 반환한다.
 def _preview_board_loop_items(root: Any, loop_spec: BoardLoopSpec, exclude_xpath: str = "") -> list[Any]:
     items: list[Any] = []
     for item_number in _preview_board_loop_item_numbers(root, loop_spec, exclude_xpath=exclude_xpath):
@@ -2900,12 +4572,14 @@ def _preview_board_loop_items(root: Any, loop_spec: BoardLoopSpec, exclude_xpath
     return items
 
 
+# board loop spec를 생성해 반환한다.
 def _build_board_loop_spec(anchor_xpath_1: str, anchor_xpath_2: str) -> BoardLoopSpec | None:
     if not anchor_xpath_1 or not anchor_xpath_2:
         return None
     return _infer_board_loop_spec(anchor_xpath_1, anchor_xpath_2)
 
 
+# 입력값에서 board loop spec를 추론한다.
 def _infer_board_loop_spec(anchor_xpath_1: str, anchor_xpath_2: str) -> BoardLoopSpec | None:
     prefix_1, segments_1 = _split_xpath_segments(anchor_xpath_1)
     prefix_2, segments_2 = _split_xpath_segments(anchor_xpath_2)
@@ -2975,6 +4649,7 @@ def _infer_board_loop_spec(anchor_xpath_1: str, anchor_xpath_2: str) -> BoardLoo
     )
 
 
+# split XPath segment 목록 값을 계산해 반환한다.
 def _split_xpath_segments(xpath: str) -> tuple[str, list[str]]:
     for prefix in (".//", "//", "./", "/"):
         if xpath.startswith(prefix):
@@ -2983,6 +4658,7 @@ def _split_xpath_segments(xpath: str) -> tuple[str, list[str]]:
     return "", [segment for segment in xpath.split("/") if segment]
 
 
+# join XPath segment 목록 값을 계산해 반환한다.
 def _join_xpath_segments(prefix: str, segments: list[str]) -> str:
     if not segments:
         return prefix
@@ -2990,6 +4666,7 @@ def _join_xpath_segments(prefix: str, segments: list[str]) -> str:
     return f"{prefix}{body}" if prefix else body
 
 
+# 미리보기 자식 node 목록 값을 계산해 반환한다.
 def _preview_child_nodes(node: Any, node_tag: str | None) -> list[Any]:
     selectors = BOARD_CONTAINER_CHILD_XPATHS.get((node_tag or "").lower())
     if not selectors:
@@ -3002,6 +4679,7 @@ def _preview_child_nodes(node: Any, node_tag: str | None) -> list[Any]:
     return []
 
 
+# 입력값에서 board repeat spec를 추론한다.
 def _infer_board_repeat_spec(list_xpath: str, step_xpath: str) -> BoardRepeatSpec | None:
     base = list_xpath.rstrip("/")
     if not base or not step_xpath.startswith(base):
@@ -3025,6 +4703,7 @@ def _infer_board_repeat_spec(list_xpath: str, step_xpath: str) -> BoardRepeatSpe
     return None
 
 
+# board repeat spec를 생성해 반환한다.
 def _build_board_repeat_spec(
     list_xpath: str,
     item_tag: str,
@@ -3044,6 +4723,7 @@ def _build_board_repeat_spec(
     return None
 
 
+# replace matching indexed segment 값을 계산해 반환한다.
 def _replace_matching_indexed_segment(xpath: str, item_number: int, item_tag: str, list_xpath: str) -> str:
     if item_number <= 0:
         return xpath
@@ -3073,6 +4753,7 @@ def _replace_matching_indexed_segment(xpath: str, item_number: int, item_tag: st
     return f"{prefix}/{'/'.join(segments)}"
 
 
+# replace first indexed segment 값을 계산해 반환한다.
 def _replace_first_indexed_segment(xpath: str, item_number: int) -> str:
     if item_number <= 0:
         return xpath
@@ -3094,6 +4775,7 @@ def _replace_first_indexed_segment(xpath: str, item_number: int) -> str:
     return xpath
 
 
+# segment tag 값을 계산해 반환한다.
 def _segment_tag(segment: str) -> str | None:
     match = BOARD_PATH_SEGMENT_RE.match(segment)
     if not match:
@@ -3101,11 +4783,13 @@ def _segment_tag(segment: str) -> str | None:
     return match.group("tag").lower()
 
 
+# segment has index 값을 계산해 반환한다.
 def _segment_has_index(segment: str) -> bool:
     match = BOARD_PATH_SEGMENT_RE.match(segment)
     return bool(match and match.group("index"))
 
 
+# XPath last segment tag 값을 계산해 반환한다.
 def _xpath_last_segment_tag(xpath: str) -> str | None:
     segments = [segment for segment in xpath.rstrip("/").split("/") if segment]
     if not segments:
@@ -3113,6 +4797,7 @@ def _xpath_last_segment_tag(xpath: str) -> str | None:
     return _segment_tag(segments[-1])
 
 
+# join XPath 값을 계산해 반환한다.
 def _join_xpath(base: str, segments: list[str]) -> str:
     if not segments:
         return base
@@ -3124,6 +4809,7 @@ def _join_xpath(base: str, segments: list[str]) -> str:
     return f"{base}/{body}"
 
 
+# split trailing numeric suffix 값을 계산해 반환한다.
 def _split_trailing_numeric_suffix(segment: str) -> tuple[str, int, str] | None:
     match = BOARD_TRAILING_NUMBER_SEGMENT_RE.match(segment)
     if not match:
@@ -3138,6 +4824,7 @@ def _split_trailing_numeric_suffix(segment: str) -> tuple[str, int, str] | None:
     return prefix, index, suffix
 
 
+# replace loop item segment 값을 계산해 반환한다.
 def _replace_loop_item_segment(xpath: str, item_number: int, loop_spec: BoardLoopSpec) -> str:
     if item_number <= 0:
         return xpath
@@ -3155,6 +4842,7 @@ def _replace_loop_item_segment(xpath: str, item_number: int, loop_spec: BoardLoo
     return _join_xpath_segments(xpath_prefix, xpath_segments)
 
 
+# 자식 board XPath 값을 계산해 반환한다.
 def _child_board_xpath(list_xpath: str, container_tag: str | None, child_tag: str | None) -> str:
     tags = [tag for tag in (container_tag, child_tag) if tag]
     if not tags:
@@ -3162,6 +4850,7 @@ def _child_board_xpath(list_xpath: str, container_tag: str | None, child_tag: st
     return _join_xpath(list_xpath, tags)
 
 
+# 실행 단계 value 값을 계산해 반환한다.
 def _step_value(locator: Any, step: dict[str, Any]) -> str:
     attr = str(step.get("attr") or "href")
     if attr == "text":
@@ -3171,6 +4860,7 @@ def _step_value(locator: Any, step: dict[str, Any]) -> str:
     return (locator.get_attribute(attr) or "").strip()
 
 
+# template value를 템플릿/화면 표시용 값으로 렌더링한다.
 def _render_template_value(template: str, search_term: str | None, *, url_encode: bool = False) -> str:
     rendered = str(template)
     if "{search_term}" in rendered:
@@ -3179,6 +4869,7 @@ def _render_template_value(template: str, search_term: str | None, *, url_encode
     return rendered
 
 
+# 실행 단계 URL 값을 계산해 반환한다.
 def _step_url(page: Any, locator: Any, step: dict[str, Any]) -> str:
     value = _step_value(locator, step)
     if not value:
@@ -3186,6 +4877,7 @@ def _step_url(page: Any, locator: Any, step: dict[str, Any]) -> str:
     return urljoin(page.url, value)
 
 
+# 페이지 제목 값을 계산해 반환한다.
 def _page_title(page: Any) -> str:
     try:
         value = page.title()
@@ -3194,6 +4886,7 @@ def _page_title(page: Any) -> str:
     return str(value or "").strip()
 
 
+# extract 출력 목록을 저장한다.
 def _save_extract_outputs(
     output_dir: Path,
     item_index: int | None,
@@ -3230,6 +4923,7 @@ def _save_extract_outputs(
     return saved_paths
 
 
+# HTML 텍스트 값을 계산해 반환한다.
 def _html_to_text(value: str) -> str:
     try:
         node = lxml_html.fromstring(value)
@@ -3238,6 +4932,7 @@ def _html_to_text(value: str) -> str:
         return value.strip()
 
 
+# 실행 단계를 다운로드한다.
 def _download_step(
     page: Any,
     locator: Any,
@@ -3247,7 +4942,7 @@ def _download_step(
     *,
     record_key: str | None = None,
     step_index: int | None = None,
-) -> Path:
+) -> DownloadedFileResult:
     attr = step.get("attr")
     if attr:
         target_url = _step_url(page, locator, step)
@@ -3284,6 +4979,7 @@ def _download_step(
     )
 
 
+# multiple 실행 단계를 다운로드한다.
 def _download_multiple_step(
     page: Any,
     locator_group: Any,
@@ -3305,21 +5001,21 @@ def _download_multiple_step(
             continue
         if target:
             seen_targets.add(target)
-        downloaded_paths.append(
-            _download_step(
-                page,
-                locator,
-                step,
-                output_dir,
-                timeout_ms,
-                record_key=record_key,
-                step_index=step_index,
-            )
+        result = _download_step(
+            page,
+            locator,
+            step,
+            output_dir,
+            timeout_ms,
+            record_key=record_key,
+            step_index=step_index,
         )
+        downloaded_paths.extend(result.paths)
 
     return downloaded_paths
 
 
+# loop 실행 단계를 다운로드한다.
 def _download_loop_step(
     page: Any,
     step: dict[str, Any],
@@ -3345,21 +5041,21 @@ def _download_loop_step(
             continue
         if target:
             seen_targets.add(target)
-        downloaded_paths.append(
-            _download_step(
-                page,
-                locator,
-                step,
-                output_dir,
-                timeout_ms,
-                record_key=record_key,
-                step_index=step_index,
-            )
+        result = _download_step(
+            page,
+            locator,
+            step,
+            output_dir,
+            timeout_ms,
+            record_key=record_key,
+            step_index=step_index,
         )
+        downloaded_paths.extend(result.paths)
 
     return downloaded_paths
 
 
+# loop 실행 단계를 추출한다.
 def _extract_loop_step(
     page: Any,
     step: dict[str, Any],
@@ -3398,6 +5094,7 @@ def _extract_loop_step(
     return values, saved_paths
 
 
+# via click를 다운로드한다.
 def _download_via_click(
     page: Any,
     locator: Any,
@@ -3407,7 +5104,7 @@ def _download_via_click(
     record_key: str | None = None,
     step_index: int | None = None,
     step_name: str = "download",
-) -> Path:
+) -> DownloadedFileResult:
     href = str(locator.get_attribute("href") or "").strip()
     try:
         with page.expect_download(timeout=timeout_ms) as download_info:
@@ -3423,7 +5120,7 @@ def _download_via_click(
             )
         )
         download.save_as(str(target_path))
-        return target_path
+        return _finalize_downloaded_file(target_path, record_key=record_key)
     except Exception as exc:
         if href.lower().startswith("javascript:"):
             raise RuntimeError(
@@ -3445,6 +5142,7 @@ def _download_via_click(
         )
 
 
+# target key를 다운로드한다.
 def _download_target_key(page: Any, locator: Any, step: dict[str, Any]) -> str:
     attr = str(step.get("attr") or "").strip()
     if attr:
@@ -3461,6 +5159,7 @@ def _download_target_key(page: Any, locator: Any, step: dict[str, Any]) -> str:
     return urljoin(page.url, href) if href else ""
 
 
+# windows subprocess policy가 준비된 상태인지 보장한다.
 def _ensure_windows_subprocess_policy() -> None:
     if sys.platform != "win32":
         return
@@ -3469,6 +5168,7 @@ def _ensure_windows_subprocess_policy() -> None:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
+# 설정 bool 값을 계산해 반환한다.
 def _config_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -3483,29 +5183,16 @@ def _config_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _positive_int(value: Any, *, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _positive_int_or_none(value: Any) -> int | None:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
-
-
+# new workflow 페이지 값을 계산해 반환한다.
 def _new_workflow_page(browser: Any) -> Any:
     page = browser.new_page()
     _attach_dialog_handler(page)
     return page
 
 
+# dialog handler 핸들러를 연결한다.
 def _attach_dialog_handler(page: Any) -> None:
+    # handle dialog 값을 계산해 반환한다.
     def _handle_dialog(dialog: Any) -> None:
         try:
             dialog.accept()
@@ -3521,6 +5208,7 @@ def _attach_dialog_handler(page: Any) -> None:
         pass
 
 
+# wait after action 값을 계산해 반환한다.
 def _wait_after_action(page: Any, timeout_ms: int) -> None:
     try:
         page.wait_for_load_state("domcontentloaded", timeout=min(timeout_ms, 10000))
@@ -3528,12 +5216,14 @@ def _wait_after_action(page: Any, timeout_ms: int) -> None:
         pass
 
 
+# 디렉터리를 다운로드한다.
 def _download_dir(output_dir: Path) -> Path:
     target = output_dir / "downloads" / date.today().strftime("%Y%m%d")
     target.mkdir(parents=True, exist_ok=True)
     return target
 
 
+# unique 경로 값을 계산해 반환한다.
 def _unique_path(path: Path) -> Path:
     if not path.exists():
         return path
@@ -3547,11 +5237,71 @@ def _unique_path(path: Path) -> Path:
     raise RuntimeError(f"Could not build unique path for {path}")
 
 
+# 다운로드 파일이 ZIP이면 내부 파일만 최종 수집 대상으로 남긴다.
+def _finalize_downloaded_file(path: Path, *, record_key: str | None = None) -> DownloadedFileResult:
+    if path.suffix.lower() != ".zip":
+        return DownloadedFileResult(paths=[path], source_path=path)
+
+    extract_prefix = safe_name(str(record_key or "").strip()) or _download_zip_extract_prefix(path)
+    extracted_paths: list[Path] = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                file_name = _safe_zip_member_file_name(member.filename)
+                if not file_name:
+                    continue
+                target_path = _unique_path(path.parent / f"{extract_prefix}_{file_name}")
+                with archive.open(member) as source, target_path.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+                extracted_paths.append(target_path)
+    except zipfile.BadZipFile as exc:
+        return DownloadedFileResult(paths=[path], source_path=path, zip_extract_error=f"Invalid ZIP archive: {exc}")
+    except OSError as exc:
+        return DownloadedFileResult(paths=[path], source_path=path, zip_extract_error=f"Failed to extract ZIP archive: {exc}")
+
+    if not extracted_paths:
+        return DownloadedFileResult(paths=[path], source_path=path, zip_extract_error="ZIP archive did not contain extractable files.")
+
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return DownloadedFileResult(paths=extracted_paths, source_path=path)
+
+
+# ZIP 내부 파일에 붙일 record key 기반 접두어를 계산한다.
+def _download_zip_extract_prefix(path: Path) -> str:
+    stem = path.stem
+    if "_step" in stem:
+        stem = stem.split("_step", 1)[0]
+    return safe_name(stem or "download")
+
+
+# ZIP 내부 파일명을 평탄화 저장에 안전한 파일명으로 변환한다.
+def _safe_zip_member_file_name(member_name: str) -> str | None:
+    normalized = str(member_name or "").replace("\\", "/").strip()
+    if not normalized:
+        return None
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        return None
+    if path.parts and (":" in path.parts[0]):
+        return None
+    file_name = safe_name(path.name)
+    if not file_name or file_name in {".", ".."}:
+        return None
+    return file_name
+
+
+# 파일 이름 URL 값을 계산해 반환한다.
 def _file_name_from_url(url: str) -> str:
     name = unquote(Path(urlparse(url).path).name)
     return safe_name(name or "download.bin")
 
 
+# 응답 본문를 저장한다.
 def _save_response_body(
     response: Any,
     url: str,
@@ -3560,13 +5310,14 @@ def _save_response_body(
     record_key: str | None = None,
     step_index: int | None = None,
     step_name: str = "download",
-) -> Path:
+) -> DownloadedFileResult:
     file_name = _file_name_from_headers(response.headers) or _file_name_from_url(url)
     target_path = _unique_path(_record_output_path(_download_dir(output_dir), record_key or "record", step_index or 1, step_name, file_name))
     target_path.write_bytes(response.body())
-    return target_path
+    return _finalize_downloaded_file(target_path, record_key=record_key)
 
 
+# 파일 이름 외부 요청에 사용할 HTTP 헤더를 만든다.
 def _file_name_from_headers(headers: dict[str, str]) -> str | None:
     disposition = headers.get("content-disposition") or headers.get("Content-Disposition")
     if not disposition:
@@ -3593,6 +5344,7 @@ def _file_name_from_headers(headers: dict[str, str]) -> str | None:
         return safe_name(unquote(decoded))
 
 
+# 외부 요청에 사용할 HTTP 헤더를 만든다.
 def _headers() -> dict[str, str]:
     return {
         "User-Agent": (
@@ -3602,6 +5354,7 @@ def _headers() -> dict[str, str]:
     }
 
 
+# 안전한 이름 값을 계산해 반환한다.
 def safe_name(value: str) -> str:
     cleaned = re.sub(r'[<>:"/\\|?*]+', "_", str(value)).strip().rstrip(".")
     if len(cleaned) > 160:

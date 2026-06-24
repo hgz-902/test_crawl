@@ -1,22 +1,28 @@
 {
-  "name": "네이버뉴스",
-  "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
-  "output_dir": "outputs/naver_news",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
-  "headless": false,
+  "category": "",
+  "crawling_type": "",
+  "created_at": "2026-05-08T00:00:00+09:00",
+  "filter_terms": [
+    "최태원",
+    "SK",
+    "SK이노베이션"
+  ],
+  "headless": true,
   "ignore_https_errors": false,
-  "notes": "Naver News Search API를 사용. 환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET가 필요하다. Action=parser, attr=naver로 실행한다.",
+  "name": "네이버뉴스",
+  "notes": "Naver News Search API를 사용. 환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET가 필요하다. Action=parser, attr=naver로 실행한다. 검색어 목록의 각 검색어를 Naver API query={search_term}에 넣어 최신순으로 수집한다.",
+  "output_dir": "outputs/naver_news",
+  "renderer": "playwright",
   "search_terms": [
     "최태원",
     "SK",
     "SK이노베이션",
-    "SKE&S",
+    "SK E&S",
     "SK에너지",
     "SK지오센트릭",
     "SK어스온",
     "SK엔무브",
-    "SK아이테크놀로지",
+    "SK아이이테크놀로지",
     "SK인천석유화학",
     "SK온",
     "석유",
@@ -26,7 +32,7 @@
     "주유소",
     "나프타",
     "윤활유",
-    "역침냉각",
+    "액침냉각",
     "항공유",
     "SAF",
     "LNG",
@@ -62,7 +68,7 @@
     "나래에너지",
     "파주에너지",
     "여주에너지",
-    "여주발전소",
+    "여주 발전소",
     "부산가스",
     "파킹클라우드",
     "PassKey",
@@ -77,14 +83,15 @@
     "한국전력",
     "가스공사"
   ],
-  "filter_terms": [],
+  "start_url": "https://openapi.naver.com/v1/search/news.json?query={search_term}&display=100&start=1&sort=date",
   "steps": [
     {
-      "name": "naver_news_api",
+      "name": "Naver_api",
+      "loop_limit": 30,
       "action": "parser",
       "attr": "naver"
     }
   ],
-  "created_at": "2026-05-08T00:00:00+09:00",
-  "updated_at": "2026-05-11T18:05:54+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-06-23T17:21:46+09:00"
 }

@@ -11,12 +11,23 @@
       <a class="brand" href="/">Crawler Manager</a>
       <nav>
         <a href="/">설정 목록</a>
+        <a href="/orchestration">오케스트레이션</a>
         <a href="/configs/new">새 설정</a>
+        <a href="/parquet-converter">parquet 전환</a>
       </nav>
     </header>
     <main class="shell">
       {% block content %}{% endblock %}
     </main>
-    <script src="{{ url_for('static', path='app.js') }}"></script>
+    <div id="global-progress-overlay" class="global-progress-overlay" role="alert" aria-live="assertive" aria-busy="true" hidden>
+      <div class="global-progress-panel">
+        <div class="global-progress-title" data-progress-title>작업을 처리하는 중입니다</div>
+        <div class="global-progress-message" data-progress-message>요청이 완료될 때까지 잠시 기다려 주세요.</div>
+        <div class="global-progress-track" role="progressbar" aria-label="작업 진행 중">
+          <div class="global-progress-bar"></div>
+        </div>
+      </div>
+    </div>
+    <script src="{{ url_for('static', path='app.js') }}?v=20260519-tabs"></script>
   </body>
 </html>

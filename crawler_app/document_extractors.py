@@ -12,6 +12,7 @@ import zipfile
 SupportedFileType = Literal["pdf", "hwpx"]
 
 
+# document extract 결과 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class DocumentExtractResult:
     source_path: str | None
@@ -25,6 +26,7 @@ class DocumentExtractResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
+    # 객체 상태를 JSON 직렬화 가능한 dict로 변환한다.
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_path": self.source_path,
@@ -40,6 +42,7 @@ class DocumentExtractResult:
         }
 
 
+# 텍스트 파일을 추출한다.
 def extract_text_from_file(path: str | Path) -> DocumentExtractResult:
     file_path = Path(path)
     file_type = _detect_file_type(file_path.suffix, file_path.name)
@@ -70,6 +73,7 @@ def extract_text_from_file(path: str | Path) -> DocumentExtractResult:
     )
 
 
+# 텍스트 bytes를 추출한다.
 def extract_text_from_bytes(
     file_bytes: bytes,
     file_type: str,
@@ -103,6 +107,7 @@ def extract_text_from_bytes(
     )
 
 
+# pdf 텍스트를 추출한다.
 def _extract_pdf_text(
     file_bytes: bytes,
     file_name: str | None,
@@ -160,6 +165,7 @@ def _extract_pdf_text(
         )
 
 
+# hwpx 텍스트를 추출한다.
 def _extract_hwpx_text(
     file_bytes: bytes,
     file_name: str | None,
@@ -240,6 +246,7 @@ def _extract_hwpx_text(
         )
 
 
+# hwpx paragraphs를 추출한다.
 def _extract_hwpx_paragraphs(xml_bytes: bytes) -> list[str]:
     root = ET.fromstring(xml_bytes)
     paragraphs: list[str] = []
@@ -262,12 +269,14 @@ def _extract_hwpx_paragraphs(xml_bytes: bytes) -> list[str]:
     return paragraphs
 
 
+# XML/HTML tag의 local name을 반환한다.
 def _local_name(tag: str) -> str:
     if "}" in tag:
         return tag.rsplit("}", 1)[1]
     return tag
 
 
+# detect 파일 type 값을 계산해 반환한다.
 def _detect_file_type(suffix: str, file_name: str | None) -> SupportedFileType | None:
     normalized = suffix.lower().lstrip(".")
     if normalized in {"pdf", "hwpx"}:
@@ -283,6 +292,7 @@ def _detect_file_type(suffix: str, file_name: str | None) -> SupportedFileType |
     return None
 
 
+# failure 결과 값을 계산해 반환한다.
 def _failure_result(
     file_type: str,
     error: str,

@@ -1,0 +1,466 @@
+{% extends "layout.html" %}
+{% block title %}크롤링 오케스트레이션{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>크롤링 오케스트레이션</h1>
+    <p>기존 JSON 설정 기반 크롤러를 선택하고, cron 주기, 중복 중단, 키워드 메일 알림을 운영합니다.</p>
+  </div>
+  <a class="button" href="/">설정 목록</a>
+</section>
+
+{% if message %}
+<div class="notice success">{{ message }}</div>
+{% endif %}
+{% if error %}
+<div class="notice error">{{ error }}</div>
+{% endif %}
+
+<form id="orchestration-form" method="post" action="/orchestration" class="orchestration-form">
+  <section class="panel operation-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>운영 설정</h2>
+        <p>설정 저장은 JSON만 갱신합니다. 모니터링 시작을 눌러야 Windows Scheduler가 재생성됩니다.</p>
+      </div>
+      <div class="smtp-state {{ 'ready' if smtp_ready else 'dry' }}">
+        {{ "SMTP 준비됨" if smtp_ready else "SMTP dry-run" }}
+      </div>
+    </div>
+
+    <div class="operation-summary">
+      <div>
+        <strong>{{ jobs | length }}</strong>
+        <span>전체 설정</span>
+      </div>
+      <div>
+        <strong>{{ jobs | selectattr("settings.enabled") | list | length }}</strong>
+        <span>선택 작업</span>
+      </div>
+      <div>
+        <strong>{{ scheduler_rows | length }}</strong>
+        <span>스케줄 기록</span>
+      </div>
+      <div>
+        <strong>{{ "real-send" if settings.allow_email_send else "dry-run" }}</strong>
+        <span>메일 모드</span>
+      </div>
+    </div>
+
+    <div class="operator-flow" aria-label="오케스트레이션 권장 순서">
+      <div class="operator-flow-step">
+        <span class="flow-index">1</span>
+        <div>
+          <strong>선택 작업 확인</strong>
+          <p>아래 목록에서 실행/모니터링 대상과 실행 주기를 먼저 확인합니다.</p>
+        </div>
+      </div>
+      <div class="operator-flow-step">
+        <span class="flow-index">2</span>
+        <div>
+          <strong>원하는 설정 저장</strong>
+          <p>저장은 JSON 설정만 갱신하며 크롤러 실행이나 스케줄 동기화를 하지 않습니다.</p>
+        </div>
+      </div>
+      <div class="operator-flow-step">
+        <span class="flow-index">3</span>
+        <div>
+          <strong>검증 실행 또는 모니터링</strong>
+          <p>수동 실행은 1회 검증, 모니터링 시작/종료는 Windows Scheduler 변경입니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="selected-target-card">
+      <div>
+        <h2>현재 선택 대상</h2>
+        <p>버튼은 아래 선택된 작업과 저장된 실행 주기에 적용됩니다.</p>
+      </div>
+      <div class="selected-job-list">
+        {% set enabled_jobs = jobs | selectattr("settings.enabled") | list %}
+        {% if enabled_jobs %}
+          {% for job in enabled_jobs[:6] %}
+          <span class="job-chip">{{ job.config_name }}</span>
+          {% endfor %}
+          {% if enabled_jobs | length > 6 %}
+          {% set hidden_jobs = enabled_jobs[6:] | map(attribute="config_name") | join(", ") %}
+          <span class="job-chip muted-chip hidden-job-summary" title="{{ hidden_jobs }}" aria-label="추가 선택 작업: {{ hidden_jobs }}" tabindex="0">+{{ enabled_jobs | length - 6 }}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted-text">선택된 작업이 없습니다. 아래 목록에서 작업을 선택한 뒤 저장하세요.</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="orchestration-settings">
+      <div>
+        <h2>키워드</h2>
+        <textarea name="keywords" rows="5">{{ settings.keywords | join('\n') }}</textarea>
+      </div>
+      <div>
+        <h2>메일 수신자</h2>
+        <textarea name="recipients" rows="5">{{ settings.recipients | join('\n') }}</textarea>
+      </div>
+      <div>
+        <h2>발신자</h2>
+        <input type="email" name="sender" value="{{ settings.sender }}">
+        <p>SMTP 비밀번호는 `.env` 또는 환경변수에서만 읽습니다.</p>
+      </div>
+    </div>
+
+    <div class="orchestration-run-options">
+      <label class="check-row">
+        <input type="checkbox" name="allow_email_send" value="1" {% if settings.allow_email_send %}checked{% endif %}>
+        <span>키워드가 발견되면 실제 메일 발송 허용</span>
+      </label>
+      <p>체크하지 않으면 SMTP 정보가 있어도 dry-run으로만 기록됩니다.</p>
+    </div>
+
+    <div class="operation-actions-grid">
+      <div class="action-lane">
+        <div>
+          <strong>설정만 저장</strong>
+          <p>크롤러 실행과 스케줄러 동기화 없이 원하는 설정만 저장합니다.</p>
+        </div>
+        <button type="submit" name="action" value="save">설정 저장</button>
+      </div>
+      <div class="action-lane">
+        <div>
+          <strong>선택 작업 1회 실행</strong>
+          <p>선택된 작업을 즉시 실행합니다. 스케줄러 등록은 바꾸지 않습니다.</p>
+        </div>
+        <button class="primary" type="submit" name="action" value="run" data-confirm="선택한 크롤러를 지금 한 번 실행할까요? 스케줄러는 변경하지 않습니다.">수동 실행</button>
+      </div>
+      <div class="action-lane scheduler-lane">
+        <div>
+          <strong>모니터링 관리</strong>
+          <p>Windows Scheduler를 생성/정리합니다. outputs와 history는 보존합니다.</p>
+        </div>
+        <div class="lane-buttons">
+          <button type="submit" name="action" value="sync" data-confirm="현재 설정으로 이 프로젝트의 Windows 스케줄러를 재생성할까요?">모니터링 시작</button>
+          <button class="danger" type="submit" name="action" value="stop_monitoring" data-confirm="이 프로젝트가 관리하는 모니터링 작업을 종료하고 스케줄러를 삭제할까요? outputs와 workflow_records.json은 삭제하지 않습니다.">모니터링 종료</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="tab-nav" role="tablist" aria-label="오케스트레이션 화면 구분" data-tabs>
+    <button type="button" role="tab" id="tab-config-list" aria-controls="config-list" aria-selected="true" class="tab-button is-active" data-tab-target="config-list">설정 LIST / 배치 config</button>
+    <button type="button" role="tab" id="tab-schedule-results" aria-controls="schedule-results" aria-selected="false" class="tab-button" data-tab-target="schedule-results">등록된 스케줄 / 스케줄 결과 보기</button>
+  </div>
+
+  <section id="config-list" class="panel tab-panel is-active" role="tabpanel" aria-labelledby="tab-config-list" data-tab-panel>
+    <div class="panel-heading">
+      <div>
+        <h2>설정 LIST / 배치 config</h2>
+        <p>실행 주기는 5개 필드 cron 형식입니다. 예: `0 3 * * *` 매일 03시, `*/5 * * * *` 5분마다 실행.</p>
+      </div>
+    </div>
+    {% if jobs %}
+    <div class="table-wrap flush">
+      <table class="orchestration-table">
+        <thead>
+          <tr>
+            <th class="select-col">선택</th>
+            <th>작업</th>
+            <th>출력 경로</th>
+            <th>검색어</th>
+            <th>필터</th>
+            <th class="cron-col">실행 주기</th>
+            <th>저장 상태</th>
+            <th>최근 실행</th>
+            <th>다음 실행</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in jobs %}
+          {% set job_settings = job.settings %}
+          <tr>
+            <td class="select-col">
+              <input type="checkbox" name="enabled_jobs" value="{{ job.job_id }}" {% if job_settings.get("enabled") %}checked{% endif %}>
+            </td>
+            <td>
+              <strong>{{ job.config_name }}</strong>
+              <div class="muted-text">{{ job.job_id }}</div>
+            </td>
+            <td class="url">{{ job.output_dir }}</td>
+            <td>{{ job.search_terms | length }}</td>
+            <td>{{ job.filter_terms | length }}</td>
+            <td class="cron-control">
+              <input type="text" name="cron__{{ job.job_id }}" value="{{ job_settings.get('cron', '0 * * * *') }}" placeholder="*/5 * * * *">
+            </td>
+            <td><span class="status-pill">{{ job.schedule_status }}</span></td>
+            <td class="url">{{ job.last_run_at_display or "-" }}</td>
+            <td class="url">{{ job.next_run_at_display or "스케줄러 기준" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">등록된 crawler config가 없습니다.</div>
+    {% endif %}
+  </section>
+</form>
+
+<section id="schedule-results" class="panel tab-panel" role="tabpanel" aria-labelledby="tab-schedule-results" data-tab-panel data-scheduler-status-url="/orchestration/schedulers/status" hidden>
+  <div class="panel-heading">
+    <div>
+      <h2>등록된 스케줄 / 스케줄 결과 보기</h2>
+      <p>현재 Windows Task Scheduler에 등록된 managed task와 최근 앱 실행 결과를 함께 표시합니다.</p>
+    </div>
+    <div class="scheduler-refresh-state is-loading" data-scheduler-refresh-state>
+      Windows Scheduler 상태 확인 중
+    </div>
+  </div>
+  {% if scheduler_error %}
+  <div class="notice error">스케줄러 조회 실패: {{ scheduler_error }}</div>
+  {% endif %}
+
+  <div class="subsection-block">
+  <h2>등록된 스케줄 영역 - 실제 Windows 상태 확인</h2>
+  <p class="muted-text">앱에 저장된 등록 기록과 실제 Windows 상태를 구분해서 보여줍니다. 실제 Windows 상태는 이 영역에서 비차단으로 갱신됩니다.</p>
+  {% if scheduler_rows %}
+  <div class="table-wrap flush">
+    <table class="scheduler-table">
+      <thead>
+        <tr>
+          <th>작업 묶음</th>
+          <th>작업 ID</th>
+          <th>크롤러</th>
+          <th>실행 주기</th>
+          <th>Windows 상태</th>
+          <th>최근 실행</th>
+          <th>다음 실행</th>
+          <th>결과 코드</th>
+          <th>실행 경로</th>
+          <th>등록</th>
+          <th>관리</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in scheduler_rows %}
+        <tr data-scheduler-task="{{ row.task_name }}">
+          <td class="url">
+            {{ row.task_label or row.task_name }}
+            {% if row.task_count and row.task_count > 1 %}
+            <div class="muted-text">{{ row.task_count }}개 Windows 작업 묶음</div>
+            {% endif %}
+          </td>
+          <td class="url">{{ row.job_id or "-" }}</td>
+          <td>
+            <strong>{{ row.config_name }}</strong>
+            {% if row.app_last_status %}
+            <div class="muted-text">
+              앱 최근 상태: {{ row.app_last_status_display.label }}
+              {% if row.app_last_status_display.note %}
+              <br>({{ row.app_last_status_display.note }})
+              {% endif %}
+            </div>
+            {% endif %}
+            <div class="muted-text">검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</div>
+          </td>
+          <td class="url">{{ row.cron or "-" }}</td>
+          <td><span class="status-pill" data-scheduler-field="scheduler_status">{{ row.scheduler_status or ("활성" if row.enabled else "설정 비활성") }}</span></td>
+          <td class="url" data-scheduler-field="scheduler_last_run_at_display">{{ row.scheduler_last_run_at_display or "-" }}</td>
+          <td class="url" data-scheduler-field="scheduler_next_run_at_display">{{ row.scheduler_next_run_at_display or "-" }}</td>
+          <td class="url" data-scheduler-field="scheduler_last_result_display" title="{{ row.scheduler_last_result or '' }}">{{ row.scheduler_last_result_display or "-" }}</td>
+          <td class="url" data-scheduler-field="task_action_path">{{ row.task_action_path or "-" }}</td>
+          <td class="url">{{ row.registered_at_display or "-" }}</td>
+          <td>
+            {% if row.task_name %}
+            <form method="post" action="/orchestration" data-confirm="선택한 Windows 스케줄러를 삭제할까요? 이 항목은 오케스트레이션 설정에서도 비활성화됩니다.">
+              <input type="hidden" name="action" value="delete_scheduler">
+              <input type="hidden" name="task_name" value="{{ row.task_name }}">
+              <input type="hidden" name="job_id" value="{{ row.job_id }}">
+              <button class="danger" type="submit">삭제</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">현재 등록된 오케스트레이션 스케줄러가 없습니다.</div>
+  {% endif %}
+  </div>
+
+  <div class="subsection-block">
+  <h2>저장된 모니터링 설정</h2>
+  <p class="muted-text">설정 저장 또는 모니터링 종료 후에도 남아 있는 원하는 상태입니다. 실제 Windows 등록 여부는 위 등록된 스케줄 영역에서 별도로 확인합니다.</p>
+  {% if saved_schedule_rows %}
+  <div class="table-wrap flush">
+    <table class="scheduler-table">
+      <thead>
+        <tr>
+          <th>크롤러</th>
+          <th>작업 ID</th>
+          <th>실행 주기</th>
+          <th>저장 상태</th>
+          <th>최근 실행</th>
+          <th>다음 실행</th>
+          <th>검색/필터</th>
+          <th>출력 경로</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in saved_schedule_rows %}
+        <tr>
+          <td>
+            <strong>{{ row.config_name }}</strong>
+            {% if row.last_status %}
+            <div class="muted-text">
+              앱 최근 상태: {{ row.last_status_display.label }}
+              {% if row.last_status_display.note %}
+              <br>({{ row.last_status_display.note }})
+              {% endif %}
+            </div>
+            {% endif %}
+          </td>
+          <td class="url">{{ row.job_id }}</td>
+          <td class="url">{{ row.cron or "-" }}</td>
+          <td><span class="status-pill">{{ row.saved_status }}</span></td>
+          <td class="url">{{ row.last_run_at_display or "-" }}</td>
+          <td class="url">{{ row.next_run_at_display or "스케줄러 기준" }}</td>
+          <td>검색 {{ row.search_terms_count }} / 필터 {{ row.filter_terms_count }}</td>
+          <td class="url">{{ row.output_dir }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">저장된 enabled 모니터링 설정이 없습니다.</div>
+  {% endif %}
+  </div>
+
+  {% if last_batch %}
+  <div class="subsection-block">
+  <h2>방금 실행한 결과</h2>
+  <dl class="summary">
+    <dt>Batch ID</dt><dd>{{ last_batch.batch_id }}</dd>
+    <dt>상태</dt><dd>
+      {{ last_batch.status_display.label }}
+      {% if last_batch.status_display.note %}
+      <br>({{ last_batch.status_display.note }})
+      {% endif %}
+    </dd>
+    <dt>전체</dt><dd>{{ last_batch.total }}</dd>
+    <dt>성공</dt><dd>{{ last_batch.succeeded }}</dd>
+    <dt>중복 중단</dt><dd>{{ last_batch.duplicate_stopped }}</dd>
+    <dt>주기 미도래</dt><dd>{{ last_batch.skipped_not_due }}</dd>
+    <dt>실패</dt><dd>{{ last_batch.failed }}</dd>
+  </dl>
+  <div class="table-wrap flush">
+    <table>
+      <thead>
+        <tr>
+          <th>크롤러</th>
+          <th>상태</th>
+          <th>수집</th>
+          <th>중복 키</th>
+          <th>키워드</th>
+          <th>메일</th>
+          <th>오류/사유</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for result in last_batch.results %}
+        <tr>
+          <td>{{ result.config_name }}</td>
+          <td>
+            {{ result.status_display.label }}
+            {% if result.status_display.note %}
+            <br>({{ result.status_display.note }})
+            {% endif %}
+          </td>
+          <td>{{ result.items_count }}</td>
+          <td class="url">{{ result.duplicate_key or "" }}</td>
+          <td>{{ result.keyword_matches | length }}</td>
+          <td>{{ result.notification.status if result.notification else "" }}</td>
+          <td class="url long-error">{{ result.error or result.metadata.get("error") or result.metadata.get("due_reason", "") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+  {% endif %}
+
+  <div class="subsection-block">
+  <h2>실행 이력</h2>
+  {% if history %}
+  <div class="table-wrap flush">
+    <table>
+      <thead>
+        <tr>
+          <th>Batch ID</th>
+          <th>상태</th>
+          <th>전체</th>
+          <th>성공</th>
+          <th>중복 중단</th>
+          <th>주기 미도래</th>
+          <th>실패</th>
+          <th>시작 시각</th>
+          <th>종료 시각</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in history|reverse %}
+        <tr>
+          <td class="url">{{ entry.batch_id }}</td>
+          <td>
+            {{ entry.status_display.label }}
+            {% if entry.status_display.note %}
+            <br>({{ entry.status_display.note }})
+            {% endif %}
+          </td>
+          <td>{{ entry.total }}</td>
+          <td>{{ entry.succeeded }}</td>
+          <td>{{ entry.duplicate_stopped }}</td>
+          <td>{{ entry.skipped_not_due or 0 }}</td>
+          <td>{{ entry.failed }}</td>
+          <td>{{ entry.started_at_display or entry.started_at }}</td>
+          <td>{{ entry.finished_at_display or entry.finished_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">아직 배치 실행 이력이 없습니다.</div>
+  {% endif %}
+  </div>
+</section>
+<script>
+(() => {
+  const tabs = Array.from(document.querySelectorAll("[data-tab-target]"));
+  const panels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+  if (!tabs.length || !panels.length) return;
+
+  function activate(targetId) {
+    const targetPanel = document.getElementById(targetId);
+    if (!targetPanel) return;
+    tabs.forEach((tab) => {
+      const active = tab.dataset.tabTarget === targetId;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+      tab.tabIndex = active ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const active = panel.id === targetId;
+      panel.hidden = !active;
+      panel.classList.toggle("is-active", active);
+    });
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tabTarget || ""));
+  });
+  const initial = window.location.hash.replace("#", "");
+  activate(panels.some((panel) => panel.id === initial) ? initial : tabs[0].dataset.tabTarget || "");
+})();
+</script>
+{% endblock %}

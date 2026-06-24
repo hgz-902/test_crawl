@@ -1,13 +1,16 @@
 {
   "name": "산업부_입법예고",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCLa1cb24c71",
-  "output_dir": "outputs/motir_law",
+  "start_url": "https://www.motir.go.kr/kor/article/ATCLa1cb24c71?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
+  "output_dir": "outputs/motir_lowmaking",
   "timeout_ms": 30000,
   "renderer": "playwright",
-  "headless": false,
+  "headless": true,
   "ignore_https_errors": false,
   "notes": "",
-  "search_terms": [],
+  "search_terms": [
+    "1",
+    "2"
+  ],
   "filter_terms": [],
   "steps": [
     {
@@ -16,9 +19,18 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[2]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
+      "loop_limit": 1,
       "action": "click",
-      "wait_state": "visible"
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"cont-body\"]/div[1]/div[1]/span",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
     },
     {
       "name": "download_text",
@@ -39,6 +51,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-04-28T18:22:43+09:00",
-  "updated_at": "2026-04-30T14:38:00+09:00"
+  "created_at": "2026-05-26T09:43:45+09:00",
+  "updated_at": "2026-05-30T10:08:46+09:00"
 }

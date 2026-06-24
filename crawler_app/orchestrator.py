@@ -9,6 +9,7 @@ from crawler_app.discovery import discover_crawlers
 from crawler_app.logging_utils import configure_logger, log_result
 
 
+# run summary 정보를 담는 데이터 객체다.
 @dataclass(slots=True)
 class RunSummary:
     run_id: str
@@ -18,12 +19,15 @@ class RunSummary:
     results: list[CrawlResult]
 
 
+# 크롤러 orchestrator의 상태와 실행 동작을 관리한다.
 class CrawlerOrchestrator:
+    # 객체 생성 시 필요한 초기 상태를 설정한다.
     def __init__(self, log_dir: str | Path = "logs", config_path: str | Path | None = None) -> None:
         self.log_dir = Path(log_dir)
         self.config_path = Path(config_path) if config_path else None
         self.logger = configure_logger(self.log_dir)
 
+    # 크롤러 목록을 로드한다.
     def load_crawlers(self) -> list[BaseCrawler]:
         crawlers = discover_crawlers()
         if self.config_path is not None:
@@ -33,6 +37,7 @@ class CrawlerOrchestrator:
                     set_config_path(self.config_path)
         return crawlers
 
+    # 값를 실행한다.
     def run(self, crawler_names: list[str] | None = None) -> RunSummary:
         run_started_at = utc_now()
         run_id = run_started_at.strftime("%Y%m%dT%H%M%SZ")
@@ -68,6 +73,7 @@ class CrawlerOrchestrator:
             results=results,
         )
 
+    # single를 실행한다.
     def _run_single(self, crawler: BaseCrawler) -> CrawlResult:
         started_at = utc_now()
         self.logger.info("Crawler started | name=%s", crawler.name)

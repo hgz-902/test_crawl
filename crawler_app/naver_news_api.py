@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
@@ -23,39 +23,47 @@ USER_AGENT = (
 )
 DEFAULT_PAGE_LIMIT = 1
 NAVER_API_HOST = "openapi.naver.com"
+NAVER_DISPLAY_MAX = 100
+KST = timezone(timedelta(hours=9))
 
 
-def build_naver_news_search_page_urls(api_url: str, *, page_limit: int = DEFAULT_PAGE_LIMIT) -> list[str]:
-    if page_limit <= 1:
-        return [api_url]
-
+# Naver news 검색 페이지 URL 목록을 생성해 반환한다.
+def build_naver_news_search_page_urls(
+    api_url: str,
+    *,
+    page_limit: int = DEFAULT_PAGE_LIMIT,
+    display: int | None = None,
+) -> list[str]:
     parsed = urlparse(api_url)
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
 
     query_map = dict(pairs)
+    display_override = display
+    display = _resolve_display_count(query_map.get("display"), override=display_override)
+    if page_limit <= 1:
+        if display_override is not None and str(query_map.get("display")) != str(display):
+            return [urlunparse(parsed._replace(query=urlencode(_replace_or_append_query_pairs(pairs, {"display": str(display)}), doseq=True)))]
+        return [api_url]
+
     start_raw = query_map.get("start", "1")
-    display_raw = query_map.get("display", "10")
     try:
         start = int(start_raw)
     except ValueError:
         start = 1
-    try:
-        display = int(display_raw)
-    except ValueError:
-        display = 10
 
     start = max(1, start)
-    display = max(1, display)
     urls: list[str] = []
     for index in range(page_limit):
         page_start = start + (index * display)
-        updated_pairs = [(key, str(page_start) if key == "start" else value) for key, value in pairs]
-        if "start" not in query_map:
-            updated_pairs.append(("start", str(page_start)))
+        updates = {"start": str(page_start)}
+        if display_override is not None:
+            updates["display"] = str(display)
+        updated_pairs = _replace_or_append_query_pairs(pairs, updates)
         urls.append(urlunparse(parsed._replace(query=urlencode(updated_pairs, doseq=True))))
     return urls
 
 
+# Naver News API에서 검색 결과 item 목록을 가져온다.
 def fetch_naver_news_api_items(
     api_url: str,
     timeout: float = 30.0,
@@ -69,8 +77,9 @@ def fetch_naver_news_api_items(
     api_session.headers.update(_headers())
     discovered: list[dict[str, Any]] = []
     final_url = api_url
+    display = item_limit if item_limit is not None else None
 
-    for page_url in build_naver_news_search_page_urls(api_url, page_limit=max(1, page_limit)):
+    for page_url in build_naver_news_search_page_urls(api_url, page_limit=max(1, page_limit), display=display):
         _validate_naver_api_url(page_url)
         response = api_session.get(page_url, timeout=timeout)
         response.raise_for_status()
@@ -98,6 +107,7 @@ def fetch_naver_news_api_items(
     return deduped, final_url
 
 
+# Naver news API item 목록을 파싱한다.
 def parse_naver_news_api_items(xml_or_json_bytes: bytes, *, base_url: str = "", content_type: str = "") -> list[dict[str, Any]]:
     payload = xml_or_json_bytes.strip()
     if not payload:
@@ -108,6 +118,7 @@ def parse_naver_news_api_items(xml_or_json_bytes: bytes, *, base_url: str = "", 
     return _parse_xml_items(payload, base_url=base_url)
 
 
+# Naver API item 목록을 item별 JSON 파일로 저장한다.
 def save_naver_news_api_items(
     output_dir: Path,
     *,
@@ -119,15 +130,22 @@ def save_naver_news_api_items(
     filter_terms: list[str] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    items_dir = output_dir / "items"
+    date_label, time_label = _korean_timestamp_labels()
+    items_dir = output_dir / "items" / date_label
     items_dir.mkdir(parents=True, exist_ok=True)
 
     item_files: list[str] = []
     for index, item in enumerate(items, start=1):
-        item_name = f"item_{index:04d}.json"
+        item_name = _batch_item_file_name("NAVER", date_label, time_label, index)
         item_path = items_dir / item_name
-        item_path.write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
-        item_files.append(str(item_path))
+        item_payload = dict(item)
+        item_payload.setdefault("search_term", search_term)
+        item_payload.setdefault("item_index", index)
+        item_payload.setdefault("source_provider", "naver_news_api")
+        item_payload.setdefault("api_url", api_url)
+        item_payload.setdefault("final_url", final_url)
+        item_path.write_text(json.dumps(item_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        item_files.append(f"items/{date_label}/{item_name}")
 
     payload = {
         "search_term": search_term,
@@ -136,14 +154,37 @@ def save_naver_news_api_items(
         "item_count": len(items),
         "filter_terms": filter_terms or [],
         "item_files": item_files,
+        "source_provider": "naver_news_api",
+        "items": items,
     }
     output_path = output_dir / file_name
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
 
 
+# batch item 파일 이름 값을 계산해 반환한다.
+def _batch_item_file_name(prefix: str, date_label: str, time_label: str, item_index: int) -> str:
+    return f"{prefix}_{date_label}_{time_label}_{item_index}.json"
 
 
+# korean timestamp 라벨 값을 계산해 반환한다.
+def _korean_timestamp_labels() -> tuple[str, str]:
+    now = datetime.now(KST)
+    return now.strftime("%Y%m%d"), now.strftime("%H%M%S")
+
+
+# item 식별자 값을 계산해 반환한다.
+def _item_identity(item: dict[str, Any]) -> str:
+    for key in ("post_id", "detail_url", "originallink", "link", "guid", "title"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return json.dumps(item, ensure_ascii=False, sort_keys=True)
+
+
+
+
+# 외부 요청에 사용할 HTTP 헤더를 만든다.
 def _headers() -> dict[str, str]:
     client_id = os.environ.get(NAVER_CLIENT_ID_ENV, "").strip()
     client_secret = os.environ.get(NAVER_CLIENT_SECRET_ENV, "").strip()
@@ -161,12 +202,43 @@ def _headers() -> dict[str, str]:
     }
 
 
+# Naver API URL의 유효성을 검증한다.
 def _validate_naver_api_url(api_url: str) -> None:
     parsed = urlparse(api_url)
     if parsed.scheme != "https" or parsed.netloc.lower() != NAVER_API_HOST:
         raise ValueError("Naver News API URL must use https://openapi.naver.com.")
 
 
+# display count를 실제 실행 값으로 해석한다.
+def _resolve_display_count(raw_display: str | None, *, override: int | None = None) -> int:
+    raw_value = override if override is not None else raw_display
+    try:
+        value = int(raw_value) if raw_value is not None else 10
+    except (TypeError, ValueError):
+        value = 10
+    return max(1, min(NAVER_DISPLAY_MAX, value))
+
+
+# 쿼리 파라미터 목록에서 지정 값을 교체하거나 추가한다.
+def _replace_or_append_query_pairs(
+    pairs: list[tuple[str, str]],
+    updates: dict[str, str],
+) -> list[tuple[str, str]]:
+    replaced: set[str] = set()
+    updated_pairs: list[tuple[str, str]] = []
+    for key, value in pairs:
+        if key in updates:
+            updated_pairs.append((key, updates[key]))
+            replaced.add(key)
+        else:
+            updated_pairs.append((key, value))
+    for key, value in updates.items():
+        if key not in replaced:
+            updated_pairs.append((key, value))
+    return updated_pairs
+
+
+# 응답 payload가 JSON 형식인지 판정한다.
 def _looks_like_json(content_type: str, payload: bytes) -> bool:
     lowered = content_type.lower()
     if "json" in lowered:
@@ -174,6 +246,7 @@ def _looks_like_json(content_type: str, payload: bytes) -> bool:
     return payload[:1] in {b"{", b"["}
 
 
+# json item 목록을 파싱한다.
 def _parse_json_items(payload: bytes) -> list[dict[str, Any]]:
     try:
         data = json.loads(payload.decode("utf-8"))
@@ -194,6 +267,7 @@ def _parse_json_items(payload: bytes) -> list[dict[str, Any]]:
     return items
 
 
+# xml item 목록을 파싱한다.
 def _parse_xml_items(payload: bytes, *, base_url: str = "") -> list[dict[str, Any]]:
     try:
         root = ET.fromstring(payload)
@@ -216,6 +290,7 @@ def _parse_xml_items(payload: bytes, *, base_url: str = "") -> list[dict[str, An
     return items
 
 
+# item을 표준 형태로 정규화한다.
 def _normalize_item(item: dict[str, Any], *, base_url: str = "") -> dict[str, Any]:
     title = _clean_text(str(item.get("title") or ""))
     originallink = _clean_text(str(item.get("originallink") or ""))
@@ -236,6 +311,7 @@ def _normalize_item(item: dict[str, Any], *, base_url: str = "") -> dict[str, An
     }
 
 
+# XML에서 지정 local name의 element를 순회한다.
 def _iter_elements_by_local_name(root: ET.Element, local_name: str) -> list[ET.Element]:
     matches: list[ET.Element] = []
     for element in root.iter():
@@ -244,6 +320,7 @@ def _iter_elements_by_local_name(root: ET.Element, local_name: str) -> list[ET.E
     return matches
 
 
+# 자식 텍스트 값을 계산해 반환한다.
 def _child_text(element: ET.Element, local_name: str) -> str:
     child = _find_child(element, local_name)
     if child is None:
@@ -251,6 +328,7 @@ def _child_text(element: ET.Element, local_name: str) -> str:
     return _clean_text("".join(child.itertext()))
 
 
+# 지정 local name을 가진 자식 element를 찾는다.
 def _find_child(element: ET.Element, local_name: str) -> ET.Element | None:
     for child in list(element):
         if _local_name(child.tag) == local_name:
@@ -258,6 +336,7 @@ def _find_child(element: ET.Element, local_name: str) -> ET.Element | None:
     return None
 
 
+# XML/HTML tag의 local name을 반환한다.
 def _local_name(tag: Any) -> str:
     if not isinstance(tag, str):
         return ""
@@ -266,10 +345,12 @@ def _local_name(tag: Any) -> str:
     return tag
 
 
+# 텍스트를 정리한다.
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", value))).strip()
 
 
+# Naver news item sort key 값을 계산해 반환한다.
 def _naver_news_item_sort_key(item: dict[str, Any]) -> float:
     pub_date = str(item.get("pubDate") or "").strip()
     if not pub_date:

@@ -7,6 +7,7 @@ import pkgutil
 from crawler_app.base import BaseCrawler
 
 
+# discover 크롤러 목록 값을 계산해 반환한다.
 def discover_crawlers(package_name: str = "crawlers") -> list[BaseCrawler]:
     package = importlib.import_module(package_name)
     crawlers: list[BaseCrawler] = []

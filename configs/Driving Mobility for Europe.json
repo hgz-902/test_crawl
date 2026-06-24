@@ -1,0 +1,56 @@
+{
+  "name": "Driving Mobility for Europe",
+  "start_url": "https://www.acea.auto/nav/?content=news&pageNumber={search_term}",
+  "output_dir": "outputs/acea_auto",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport",
+    "Battery",
+    "EV",
+    "ESS"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"acea-results\"]/div[1]/div/div[2]/h2/a",
+      "xpath_2": "//*[@id=\"acea-results\"]/div[2]/div/div[2]/h2/a",
+      "loop": true,
+      "loop_mode": "items",
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"main\"]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:28:00+09:00",
+  "updated_at": "2026-05-30T10:15:32+09:00"
+}

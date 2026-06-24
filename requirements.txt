@@ -9,3 +9,6 @@ python-multipart>=0.0.9,<1
 playwright>=1.50.0,<2
 python-dotenv>=1.0.0,<2
 httpx>=0.28.0,<1
+pyarrow>=16.0.0,<17
+openai>=1.90.0,<3
+sentence-transformers>=3.0.0,<4

@@ -6,6 +6,7 @@ import json
 from crawler_app.orchestrator import CrawlerOrchestrator
 
 
+# 명령행 실행에 사용할 argparse 파서를 구성한다.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run registered crawlers and log their results.",
@@ -29,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# 명령행 인자를 해석하고 크롤러 실행 결과를 출력한다.
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -38,6 +40,7 @@ def main() -> None:
     print(json.dumps(_summary_for_cli(summary), ensure_ascii=False, indent=2, default=str))
 
 
+# 실행 summary를 CLI 출력용 dict로 줄여 만든다.
 def _summary_for_cli(summary) -> dict:
     return {
         "run_id": summary.run_id,

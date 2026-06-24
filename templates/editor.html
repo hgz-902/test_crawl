@@ -56,6 +56,8 @@
     <h2>기본정보</h2>
     <div class="grid">
       <label>이름<input data-path="name" value="{{ config.name }}"></label>
+      <label>카테고리<input data-path="category" value="{{ config.category or '' }}"></label>
+      <label>크롤링 타입<input data-path="crawling_type" value="{{ config.crawling_type or '' }}"></label>
       <label>시작 URL<input data-path="start_url" value="{{ config.start_url }}"></label>
       <label>출력 경로<input data-path="output_dir" value="{{ config.output_dir }}"></label>
       <label>페이지 타임아웃(ms)<input type="number" min="1" data-path="timeout_ms" value="{{ config.timeout_ms or 30000 }}"></label>
@@ -90,39 +92,6 @@
     </details>
   </section>
 
-  {% if show_naver_api_panel %}
-  <section class="panel">
-    <details class="collapsible-panel" open>
-      <summary>
-        <h2>Naver News API</h2>
-        <span class="collapsible-toggle" aria-hidden="true">
-          <span class="collapsible-hint">접기/펼치기</span>
-          <span class="collapsible-icon">▾</span>
-        </span>
-      </summary>
-      <div class="collapsible-body">
-        <label class="check">
-          <input type="checkbox" data-naver-enabled>
-          Naver API 패널 사용
-        </label>
-        <div class="grid naver-grid">
-          <label>정렬
-            <select data-naver-sort>
-              <option value="date">date (최신순)</option>
-              <option value="sim">sim (정확도순)</option>
-            </select>
-          </label>
-          <label>검색어당 가져올 뉴스 개수
-            <input type="number" min="1" max="100" data-naver-count value="20">
-          </label>
-          <input type="hidden" data-naver-page-limit value="1">
-        </div>
-      </div>
-    </details>
-  </section>
-  {% endif %}
-
-  {% if not show_naver_api_panel %}
   <section class="panel">
     <div class="section-row">
       <h2>실행 단계</h2>
@@ -163,7 +132,7 @@
         <button
           type="button"
           class="help-tip"
-          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver.&#10;click: 사용하지 않습니다."
+          title="Action이 요소에서 어떤 값을 가져올지 정하는 속성명입니다.&#10;goto/download: href 또는 src.&#10;extract: href, src, text, html.&#10;parser: google, naver, daum.&#10;click: 사용하지 않습니다."
           aria-label="Attr 설명"
         >?</button>
       </span>
@@ -267,7 +236,8 @@
           <option value="html" {% if step.attr == "html" %}selected{% endif %}>html</option>
           <option value="google" {% if step.attr == "google" %}selected{% endif %}>google</option>
           <option value="naver" {% if step.attr == "naver" %}selected{% endif %}>naver</option>
-          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver"] %}
+          <option value="daum" {% if step.attr == "daum" %}selected{% endif %}>daum</option>
+          {% if step.attr and step.attr not in ["href", "src", "text", "html", "google", "naver", "daum"] %}
           <option value="{{ step.attr }}" selected>{{ step.attr }}</option>
           {% endif %}
         </select>
@@ -287,7 +257,6 @@
       {% endfor %}
     </div>
   </section>
-  {% endif %}
 
   <section class="panel">
     <details class="collapsible-panel">

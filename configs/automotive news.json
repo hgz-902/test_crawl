@@ -1,0 +1,43 @@
+{
+  "name": "automotive news",
+  "start_url": "https://www.autonews.com/news",
+  "output_dir": "outputs/autonews",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "유료 구독 필요.",
+  "search_terms": [],
+  "filter_terms": [
+    "EU",
+    "EU Union",
+    "EU delegation",
+    "Energy",
+    "Delegation",
+    "Lithum ion Battery",
+    "EV",
+    "Electric vehicle",
+    "ESS",
+    "IAA"
+  ],
+  "steps": [
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//body",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:35:00+09:00",
+  "updated_at": "2026-05-27T11:21:45+09:00"
+}

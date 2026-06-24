@@ -1,0 +1,56 @@
+{
+  "name": "EFRAG",
+  "start_url": "https://www.efrag.org/en/news-and-calendar/news?page={search_term}",
+  "output_dir": "outputs/efrag_en",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": true,
+  "notes": "쿠키 동의 레이어가 click 액션을 막고 있어 소스코드 수정 필요.",
+  "search_terms": [
+    "0",
+    "1"
+  ],
+  "filter_terms": [
+    "ESRS",
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "Battery Passport",
+    "Battery",
+    "EV"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//div[contains(@class,\"views-row\")][1]/article/main/h3/a",
+      "xpath_2": "//div[contains(@class,\"views-row\")][2]/article/main/h3/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//article//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//article//div[contains(@class,\"field--name-body\")]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:49:00+09:00",
+  "updated_at": "2026-05-27T17:46:18+09:00"
+}

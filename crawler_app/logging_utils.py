@@ -5,8 +5,10 @@ import logging
 from pathlib import Path
 
 from crawler_app.base import CrawlResult
+from crawler_app.runtime_maintenance import cleanup_runtime_files
 
 
+# 파일/콘솔 출력용 logger를 구성한다.
 def configure_logger(log_dir: Path) -> logging.Logger:
     log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("crawler_orchestrator")
@@ -31,12 +33,14 @@ def configure_logger(log_dir: Path) -> logging.Logger:
     return logger
 
 
+# dict payload를 JSONL 로그 파일 끝에 추가한다.
 def append_jsonl(log_dir: Path, filename: str, payload: dict) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / filename).open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+# 크롤 결과를 로그 파일에 기록한다.
 def log_result(log_dir: Path, result: CrawlResult) -> None:
     payload = result.to_dict()
     payload["data"] = [
@@ -53,3 +57,7 @@ def log_result(log_dir: Path, result: CrawlResult) -> None:
         if isinstance(record, dict)
     ]
     append_jsonl(log_dir, "crawl_results.jsonl", payload)
+    try:
+        cleanup_runtime_files(app_root=log_dir.parent)
+    except Exception:
+        return

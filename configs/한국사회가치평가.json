@@ -1,0 +1,46 @@
+{
+  "name": "한국사회가치평가",
+  "start_url": "https://www.ksva.co.kr/KSVAnews/?q=YToxOntzOjEyOiJrZXl3b3JkX3R5cGUiO3M6MzoiYWxsIjt9&page={search_term}",
+  "output_dir": "outputs/ksva",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "카드형 기사 구조에 loop 하나만으로 수집할 수 없어, AI의 도움을 받아 XPath 설정. (소스코드는 수정하지 않았음)",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"post_card_b2024081469202c4d3200c\"]/descendant::a[contains(@href,\"bmode=view\")][1]",
+      "xpath_2": "//*[@id=\"post_card_b2024081469202c4d3200c\"]/descendant::a[contains(@href,\"bmode=view\")][2]",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 4,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//*[@id=\"s20240814c851aa3c7afb8\"]/main/div/div/div[2]/div/div/div/div[1]/div[1]/h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"s20240814c851aa3c7afb8\"]/main/div/div/div[2]/div/div/div/div[3]/div[1]/div[1]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T15:27:57+09:00",
+  "updated_at": "2026-05-30T10:11:03+09:00"
+}

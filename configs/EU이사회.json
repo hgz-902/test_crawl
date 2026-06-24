@@ -1,0 +1,57 @@
+{
+  "name": "EU이사회",
+  "start_url": "https://www.consilium.europa.eu/en/press/press-releases/?page={search_term}",
+  "output_dir": "outputs/consilium_eu",
+  "timeout_ms": 45000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "목록 페이지 진입 시, playwright로 접근하는 것을 차단하고 있음.\n차단을 뚫어내더라도 open_detail에 2중 loop가 필요한 구조라, 현재 소스코드로는 맨 위 기사와 같은 날짜의 기사들만 같은 페이지에서 크롤링 가능",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [
+    "IAA",
+    "Industrial Acceleration Act",
+    "Battery booster strategy",
+    "Battery regulation",
+    "CSRD",
+    "ESRS",
+    "Battery Passport",
+    "Battery",
+    "EV",
+    "ESS"
+  ],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "//*[@id=\"gsc-main-content\"]/section/section/ul/li[1]/ul/li[1]/a",
+      "xpath_2": "//*[@id=\"gsc-main-content\"]/section/section/ul/li[1]/ul/li[2]/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 2,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "//h1",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "//*[@id=\"gsc-main-content\"]/section[2]/div/div[1]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-27T11:29:00+09:00",
+  "updated_at": "2026-05-27T10:33:39+09:00"
+}

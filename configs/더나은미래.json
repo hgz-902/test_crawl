@@ -1,0 +1,46 @@
+{
+  "name": "더나은미래",
+  "start_url": "https://futurechosun.com/archives/category/news/page/{search_term}",
+  "output_dir": "outputs/futurechosun",
+  "timeout_ms": 30000,
+  "renderer": "playwright",
+  "headless": true,
+  "ignore_https_errors": false,
+  "notes": "",
+  "search_terms": [
+    "1",
+    "2"
+  ],
+  "filter_terms": [],
+  "steps": [
+    {
+      "name": "open_detail",
+      "xpath": "/html/body/div[1]/div/div/div[1]/div[3]/div[1]/article[1]/div/span/a",
+      "xpath_2": "/html/body/div[1]/div/div/div[1]/div[3]/div[1]/article[2]/div/span/a",
+      "loop": true,
+      "loop_mode": "items",
+      "loop_limit": 3,
+      "action": "click",
+      "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_title",
+      "xpath": "/html/body/article/div[1]/div/div/div[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_body",
+      "xpath": "/html/body/article/div[2]/div/div[1]/div[4]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    }
+  ],
+  "created_at": "2026-05-26T17:26:17+09:00",
+  "updated_at": "2026-05-30T10:11:15+09:00"
+}

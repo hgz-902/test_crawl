@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,8 @@ from crawler_app.naver_news_api import (
     fetch_naver_news_api_items,
     save_naver_news_api_items,
 )
+
+KST = timezone(timedelta(hours=9))
 
 
 class _FakeResponse:
@@ -60,6 +63,12 @@ class NaverNewsApiTests(unittest.TestCase):
         self.assertEqual(urls[0], "https://openapi.naver.com/v1/search/news.json?query=x&display=10&sort=date&start=1")
         self.assertEqual(urls[1], "https://openapi.naver.com/v1/search/news.json?query=x&display=10&sort=date&start=11")
 
+    def test_build_naver_news_search_page_urls_can_override_display(self) -> None:
+        base = "https://openapi.naver.com/v1/search/news.json?query=x&display=100&start=1&sort=date"
+        urls = build_naver_news_search_page_urls(base, page_limit=2, display=20)
+        self.assertEqual(urls[0], "https://openapi.naver.com/v1/search/news.json?query=x&display=20&start=1&sort=date")
+        self.assertEqual(urls[1], "https://openapi.naver.com/v1/search/news.json?query=x&display=20&start=21&sort=date")
+
     def test_fetch_naver_news_api_items_collects_pages_without_detail_fetch(self) -> None:
         api_1 = "https://openapi.naver.com/v1/search/news.json?query=%EC%B5%9C%ED%83%9C%EC%9B%90&display=10&start=1&sort=date"
         api_2 = "https://openapi.naver.com/v1/search/news.json?query=%EC%B5%9C%ED%83%9C%EC%9B%90&display=10&start=11&sort=date"
@@ -91,9 +100,10 @@ class NaverNewsApiTests(unittest.TestCase):
 
     def test_fetch_naver_news_api_items_applies_item_limit(self) -> None:
         api_1 = "https://openapi.naver.com/v1/search/news.json?query=x&display=10&start=1"
+        limited_api_1 = "https://openapi.naver.com/v1/search/news.json?query=x&display=1&start=1"
         responses = {
-            api_1: _FakeResponse(
-                url=api_1,
+            limited_api_1: _FakeResponse(
+                url=limited_api_1,
                 body=json.dumps(
                     {
                         "items": [
@@ -111,6 +121,7 @@ class NaverNewsApiTests(unittest.TestCase):
                 items, _ = fetch_naver_news_api_items(api_1, timeout=2.0, item_limit=1)
 
         self.assertEqual(len(items), 1)
+        self.assertEqual(fake_session.calls, [limited_api_1])
         self.assertEqual(items[0]["title"], "기사1")
 
     def test_fetch_naver_news_api_items_rejects_non_naver_api_url(self) -> None:
@@ -160,10 +171,40 @@ class NaverNewsApiTests(unittest.TestCase):
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(payload["item_count"], 2)
             self.assertEqual(len(payload["item_files"]), 2)
-            for file_path in payload["item_files"]:
-                loaded = json.loads(Path(file_path).read_text(encoding="utf-8"))
+            self.assertEqual(manifest, output_dir / "naver_news_api.json")
+            self.assertEqual(payload["source_provider"], "naver_news_api")
+            date_label = datetime.now(KST).strftime("%Y%m%d")
+            for index, file_path in enumerate(payload["item_files"], start=1):
+                self.assertRegex(
+                    str(file_path),
+                    rf"^items/{date_label}/NAVER_{date_label}_\d{{6}}_{index}\.json$",
+                )
+                loaded = json.loads((manifest.parent / file_path).read_text(encoding="utf-8"))
                 self.assertIn("post_id", loaded)
+                self.assertIn("item_index", loaded)
                 self.assertNotIn("detail_body", loaded)
+
+    def test_save_naver_news_api_items_uses_batch_timestamp_paths_without_daily_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "naver" / "002_SK"
+            items = [{"post_id": "1", "title": "A"}, {"post_id": "2", "title": "B"}]
+
+            manifest = save_naver_news_api_items(
+                output_dir,
+                search_term="SK",
+                api_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                final_url="https://openapi.naver.com/v1/search/news.json?query=SK",
+                items=items,
+            )
+
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["item_files"]), 2)
+            date_label = datetime.now(KST).strftime("%Y%m%d")
+            for index, file_path in enumerate(payload["item_files"], start=1):
+                self.assertRegex(str(file_path), rf"^items/{date_label}/NAVER_{date_label}_\d{{6}}_{index}\.json$")
+                self.assertTrue((output_dir / file_path).exists())
+            date_dirs = [path for path in (output_dir / "items").iterdir() if path.is_dir()]
+            self.assertEqual([path.name for path in date_dirs], [date_label])
 
 
 if __name__ == "__main__":
