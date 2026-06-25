@@ -1,17 +1,19 @@
 {
-  "name": "기후에너지부_행정예고",
-  "start_url": "https://mcee.go.kr/home/web/board/list.do?maxPageItems=10&maxIndexPages=10&searchKey=&searchValue=&boardMasterId=827&menuId=10557&boardCategoryId=&condition.hideCate=&condition.createDeptCode=&condition.createDeptName=&condition.fromDate=&condition.toDate=&order=&condition.createId=&decorator=&condition.proxyParam1=&condition.proxyParam2=&condition.proxyParam3=&proxyListPath=&proxyReadPath=&initialLoad=&pagerOffset={search_term}",
-  "output_dir": "outputs/mcee_administration",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T11:00:15+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
-  "notes": "",
+  "name": "기후에너지부_행정예고",
+  "notes": "search_term이 0 10 20 처럼 10씩 증가해야 함.",
+  "output_dir": "outputs/mcee_administration",
+  "renderer": "playwright",
   "search_terms": [
     "0",
-    "10"
+    "10",
+    "20",
+    "30"
   ],
-  "filter_terms": [],
+  "start_url": "https://mcee.go.kr/home/web/board/list.do?maxPageItems=10&maxIndexPages=10&searchKey=&searchValue=&boardMasterId=827&menuId=10557&boardCategoryId=&condition.hideCate=&condition.createDeptCode=&condition.createDeptName=&condition.fromDate=&condition.toDate=&order=&condition.createId=&decorator=&condition.proxyParam1=&condition.proxyParam2=&condition.proxyParam3=&proxyListPath=&proxyReadPath=&initialLoad=&pagerOffset={search_term}",
   "steps": [
     {
       "name": "open_detail",
@@ -50,6 +52,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T11:00:15+09:00",
-  "updated_at": "2026-05-30T10:09:15+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-06-25T09:07:06+09:00",
+  "category": "",
+  "crawling_type": ""
 }
