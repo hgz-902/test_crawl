@@ -28,9 +28,7 @@
   "renderer": "playwright",
   "search_terms": [
     "0",
-    "10",
-    "20",
-    "30"
+    "10"
   ],
   "start_url": "https://mcee.go.kr/home/web/board/list.do?maxPageItems=10&maxIndexPages=10&searchKey=&searchValue=&boardMasterId=939&menuId=10598&boardCategoryId=&condition.hideCate=&condition.createDeptCode=&condition.createDeptName=&condition.fromDate=&condition.toDate=&order=&condition.createId=&decorator=&condition.proxyParam1=&condition.proxyParam2=&condition.proxyParam3=&proxyListPath=&proxyReadPath=&initialLoad=&pagerOffset={search_term}",
   "steps": [
@@ -45,6 +43,14 @@
       "wait_state": "attached"
     },
     {
+      "name": "extract_date",
+      "xpath": "//*[@id=\"boardViewListForRead_0\"]/ul/li[2]/dl/dd",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
+      "wait_state": "attached"
+    },
+    {
       "name": "extract_title",
       "xpath": "//*[@id=\"boardTableWrapper\"]/header",
       "loop": false,
@@ -53,7 +59,7 @@
       "wait_state": "attached"
     },
     {
-      "name": "download_text",
+      "name": "extract_text",
       "xpath": "//*[@id=\"boardTableWrapper\"]/div[3]",
       "loop": false,
       "action": "extract",
@@ -66,11 +72,10 @@
       "xpath_2": "//*[@id=\"boardTableWrapper\"]/div[4]/ul/li[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 4,
       "action": "download",
       "wait_state": "attached"
     }
   ],
   "timeout_ms": 30000,
-  "updated_at": "2026-06-25T09:06:33+09:00"
+  "updated_at": "2026-06-25T11:32:28+09:00"
 }

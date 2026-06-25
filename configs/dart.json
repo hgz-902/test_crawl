@@ -1,19 +1,19 @@
 {
-  "name": "DART",
   "category": "PR",
   "crawling_type": "국가부처",
-  "start_url": "https://dart.fss.or.kr/dsab007/detailSearch.ax?currentPage=1&maxResults=15&maxLinks=10&option=corp&textCrpNm={search_term}",
-  "output_dir": "outputs/dart",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-15T00:00:00+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "DART",
   "notes": "DART는 AJAX 검색 결과 endpoint를 직접 start_url로 사용한다. 회사명 검색 기준이며, 보고서 링크는 직접 AJAX 결과 페이지에서 같은 탭으로 열리므로 click + same_tab으로 상세 페이지를 연다.",
+  "output_dir": "outputs/dart",
+  "renderer": "playwright",
   "search_terms": [
     "SK",
     "SK이노베이션"
   ],
-  "filter_terms": [],
+  "start_url": "https://dart.fss.or.kr/dsab007/detailSearch.ax?currentPage=1&maxResults=15&maxLinks=10&option=corp&textCrpNm={search_term}",
   "steps": [
     {
       "name": "open_detail",
@@ -21,7 +21,7 @@
       "xpath_2": "//table/tbody/tr[2]/td[3]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 5,
+      "loop_limit": 10,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
@@ -50,6 +50,6 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-15T00:00:00+09:00",
-  "updated_at": "2026-06-04T14:42:46+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-06-25T11:32:49+09:00"
 }
