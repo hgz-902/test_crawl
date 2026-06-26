@@ -8,13 +8,19 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from crawler_app.news_sqlite_store import (
+    add_category_keywords,
     article_analysis,
     connect,
     default_db_path,
+    delete_category_keyword,
+    delete_category_keywords,
     filter_options,
+    get_category_keywords,
     init_db,
+    list_category_keywords,
     list_news,
     list_news_grouped,
+    replace_category_keywords,
     save_article_analysis,
     stats,
     update_user_state,
@@ -43,6 +49,10 @@ class SaveAnalysisRequest(BaseModel):
     sentiment_source: str = "llm"
 
 
+class CategoryKeywordsRequest(BaseModel):
+    keywords: list[str]
+
+
 # 뉴스 UI API용 SQLite DB 경로를 반환한다.
 def news_ui_db_path(project_root: str | Path = PROJECT_ROOT) -> Path:
     return Path(os.getenv("NEWS_UI_DB_PATH") or default_db_path(project_root))
@@ -64,6 +74,94 @@ def get_filter_options() -> dict[str, list[str]]:
         raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
 
 
+# 모니터링 카테고리별 키워드 설정 전체를 조회한다.
+@router.get("/api/category-keywords")
+def get_category_keyword_list(keyword_group: str = Query("PR")) -> list[dict[str, Any]]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return list_category_keywords(conn, keyword_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
+# 단일 카테고리의 키워드 목록을 조회한다.
+@router.get("/api/category-keywords/{category_code}")
+def get_category_keyword_detail(category_code: str, keyword_group: str = Query("PR")) -> dict[str, Any]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return get_category_keywords(conn, category_code, keyword_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
+# 단일 카테고리의 키워드 목록을 전체 교체 저장한다.
+@router.put("/api/category-keywords/{category_code}")
+def put_category_keywords(
+    category_code: str,
+    body: CategoryKeywordsRequest,
+    keyword_group: str = Query("PR"),
+) -> dict[str, Any]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return replace_category_keywords(conn, category_code, body.keywords, keyword_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
+# 단일 카테고리에 키워드를 추가한다.
+@router.post("/api/category-keywords/{category_code}/keywords")
+def post_category_keywords(
+    category_code: str,
+    body: CategoryKeywordsRequest,
+    keyword_group: str = Query("PR"),
+) -> dict[str, Any]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return add_category_keywords(conn, category_code, body.keywords, keyword_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
+# 키워드 1건을 삭제한다.
+@router.delete("/api/category-keywords/keywords/{keyword_id}")
+def delete_category_keyword_item(keyword_id: str) -> dict[str, Any]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return delete_category_keyword(conn, keyword_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
+# 단일 카테고리의 키워드 목록 전체를 삭제한다.
+@router.delete("/api/category-keywords/{category_code}")
+def delete_category_keyword_group(category_code: str, keyword_group: str = Query("PR")) -> dict[str, Any]:
+    try:
+        init_news_ui_database()
+        with connect(news_ui_db_path()) as conn:
+            return delete_category_keywords(conn, category_code, keyword_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
+
+
 # 그룹 없는 뉴스 목록을 반환한다.
 @router.get("/api/news")
 def get_news(
@@ -72,7 +170,9 @@ def get_news(
     to_date: str | None = Query(None),
     title: str | None = Query(None),
     source: str | None = Query(None),
-    search_term: str | None = Query(None),
+    filter_term: str | None = Query(None),
+    category_code: str | None = Query(None),
+    keyword_group: str = Query("PR"),
     read_status: str = Query("all"),
     favorite_status: str = Query("all"),
     major_only: bool = Query(False),
@@ -97,7 +197,9 @@ def get_news_grouped(
     to_date: str | None = Query(None),
     title: str | None = Query(None),
     source: str | None = Query(None),
-    search_term: str | None = Query(None),
+    filter_term: str | None = Query(None),
+    category_code: str | None = Query(None),
+    keyword_group: str = Query("PR"),
     read_status: str = Query("all"),
     favorite_status: str = Query("all"),
     major_only: bool = Query(False),
@@ -122,7 +224,9 @@ def get_stats(
     to_date: str | None = Query(None),
     title: str | None = Query(None),
     source: str | None = Query(None),
-    search_term: str | None = Query(None),
+    filter_term: str | None = Query(None),
+    category_code: str | None = Query(None),
+    keyword_group: str = Query("PR"),
 ) -> dict[str, int]:
     try:
         init_news_ui_database()

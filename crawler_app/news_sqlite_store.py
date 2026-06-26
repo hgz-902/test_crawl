@@ -16,7 +16,7 @@ ALLOWED_SORTS = {
     "published_at": "published_at",
     "title": "title",
     "source_name": "source_site",
-    "search_term": "search_term",
+    "filter_term": "filter_term",
     "is_read": "is_read",
     "is_favorite": "is_favorite",
     "is_major": "is_active",
@@ -68,7 +68,7 @@ def init_db(db_path: str | Path) -> None:
                 is_active INTEGER DEFAULT 1,
                 crawl_date TEXT,
                 group_date TEXT,
-                search_term TEXT,
+                filter_term TEXT,
                 UNIQUE(source_site, canonical_url)
             );
 
@@ -133,13 +133,26 @@ def init_db(db_path: str | Path) -> None:
                 PRIMARY KEY(article_id, title_hash, model_name)
             );
 
+            CREATE TABLE IF NOT EXISTS monitoring_category_keywords (
+                keyword_id TEXT PRIMARY KEY,
+                keyword_group TEXT NOT NULL DEFAULT 'PR',
+                category_code TEXT NOT NULL,
+                keyword TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(keyword_group, category_code, keyword)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_crawl_articles_group_date ON crawl_articles(group_date);
             CREATE INDEX IF NOT EXISTS idx_crawl_articles_source ON crawl_articles(source_site);
-            CREATE INDEX IF NOT EXISTS idx_crawl_articles_search_term ON crawl_articles(search_term);
             CREATE INDEX IF NOT EXISTS idx_article_clusters_cluster ON article_clusters(cluster_id);
             CREATE INDEX IF NOT EXISTS idx_article_title_embeddings_model ON article_title_embeddings(model_name);
+            CREATE INDEX IF NOT EXISTS idx_monitoring_category_keywords_group_category
+                ON monitoring_category_keywords(keyword_group, category_code, sort_order);
             """
         )
+        _migrate_crawl_articles_filter_term(conn)
         _migrate_article_sentiment(conn)
 
 
@@ -165,12 +178,12 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
         INSERT INTO crawl_articles (
             article_id, record_key, source_site, source_config_name, canonical_url, title,
             published_at, first_seen_at, last_seen_at, created_at, updated_at,
-            is_active, crawl_date, group_date, search_term
+            is_active, crawl_date, group_date, filter_term
         )
         VALUES (
             :article_id, :record_key, :source_site, :source_config_name, :canonical_url, :title,
             :published_at, :first_seen_at, :last_seen_at, :created_at, :updated_at,
-            :is_active, :crawl_date, :group_date, :search_term
+            :is_active, :crawl_date, :group_date, :filter_term
         )
         ON CONFLICT(article_id) DO UPDATE SET
             record_key = excluded.record_key,
@@ -185,7 +198,7 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             is_active = excluded.is_active,
             crawl_date = excluded.crawl_date,
             group_date = excluded.group_date,
-            search_term = excluded.search_term
+            filter_term = excluded.filter_term
         """,
         {
             "article_id": article["article_id"],
@@ -202,12 +215,12 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             "is_active": 1 if article.get("is_active", True) else 0,
             "crawl_date": article.get("crawl_date"),
             "group_date": article.get("group_date"),
-            "search_term": article.get("search_term"),
+            "filter_term": article.get("filter_term"),
         },
     )
 
 
-# source/search_term 필터 옵션 테이블을 현재 기사 기준으로 재생성한다.
+# source/filter_term 필터 옵션 테이블을 현재 기사 기준으로 재생성한다.
 def rebuild_filter_options(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM crawl_filter_options")
     conn.execute(
@@ -220,22 +233,22 @@ def rebuild_filter_options(conn: sqlite3.Connection) -> None:
     )
     for row in conn.execute(
         """
-        SELECT search_term
+        SELECT filter_term
         FROM crawl_articles
-        WHERE search_term IS NOT NULL AND search_term != ''
+        WHERE filter_term IS NOT NULL AND filter_term != ''
         """
     ):
-        for term in _split_option_terms(row["search_term"]):
+        for term in _split_option_terms(row["filter_term"]):
             conn.execute(
                 """
                 INSERT OR IGNORE INTO crawl_filter_options(option_group, option_name)
-                VALUES ('search_term', ?)
+                VALUES ('filter_term', ?)
                 """,
                 (term,),
             )
 
 
-# joined search_term 값을 UI 옵션용 개별 term으로 분리한다.
+# joined filter_term 값을 UI 옵션용 개별 term으로 분리한다.
 def _split_option_terms(value: str | None) -> list[str]:
     terms: list[str] = []
     for term in str(value or "").split(","):
@@ -243,6 +256,29 @@ def _split_option_terms(value: str | None) -> list[str]:
         if stripped and stripped not in terms:
             terms.append(stripped)
     return terms
+
+
+# 기존 SQLite DB의 search_term 컬럼을 filter_term으로 마이그레이션한다.
+def _migrate_crawl_articles_filter_term(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(crawl_articles)").fetchall()}
+    if "filter_term" not in columns and "search_term" in columns:
+        conn.execute("ALTER TABLE crawl_articles RENAME COLUMN search_term TO filter_term")
+        columns.remove("search_term")
+        columns.add("filter_term")
+    elif "filter_term" in columns and "search_term" in columns:
+        conn.execute(
+            """
+            UPDATE crawl_articles
+            SET filter_term = search_term
+            WHERE (filter_term IS NULL OR filter_term = '')
+                AND search_term IS NOT NULL
+                AND search_term != ''
+            """
+        )
+    conn.execute("DROP INDEX IF EXISTS idx_crawl_articles_search_term")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_articles_filter_term ON crawl_articles(filter_term)")
+    conn.execute("UPDATE OR IGNORE crawl_filter_options SET option_group = 'filter_term' WHERE option_group = 'search_term'")
+    conn.execute("DELETE FROM crawl_filter_options WHERE option_group = 'search_term'")
 
 
 # 개발팀이 공유한 article_sentiment 확장 컬럼을 기존 SQLite DB에도 안전하게 추가한다.
@@ -267,6 +303,206 @@ def _migrate_article_sentiment(conn: sqlite3.Connection) -> None:
     for column, definition in expected.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE article_sentiment ADD COLUMN {column} {definition}")
+
+
+# 모니터링 카테고리 키워드 설정 목록을 조회한다.
+def list_category_keywords(conn: sqlite3.Connection, keyword_group: str = "PR") -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT keyword_id, keyword_group, category_code, keyword, sort_order, created_at, updated_at
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ?
+        ORDER BY category_code ASC, sort_order ASC, keyword ASC
+        """,
+        (_keyword_group(keyword_group),),
+    ).fetchall()
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        category = row["category_code"]
+        bucket = grouped.setdefault(
+            category,
+            {"keyword_group": row["keyword_group"], "category_code": category, "keywords": []},
+        )
+        bucket["keywords"].append(_category_keyword_item(row))
+    return list(grouped.values())
+
+
+# 단일 카테고리의 키워드 설정을 조회한다.
+def get_category_keywords(conn: sqlite3.Connection, category_code: str, keyword_group: str = "PR") -> dict[str, Any]:
+    group = _keyword_group(keyword_group)
+    category = _category_code(category_code)
+    rows = conn.execute(
+        """
+        SELECT keyword_id, keyword_group, category_code, keyword, sort_order, created_at, updated_at
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ? AND category_code = ?
+        ORDER BY sort_order ASC, keyword ASC
+        """,
+        (group, category),
+    ).fetchall()
+    return {"keyword_group": group, "category_code": category, "keywords": [_category_keyword_item(row) for row in rows]}
+
+
+# 단일 카테고리의 키워드를 리스트 전체 교체 방식으로 저장한다.
+def replace_category_keywords(
+    conn: sqlite3.Connection,
+    category_code: str,
+    keywords: list[str],
+    keyword_group: str = "PR",
+) -> dict[str, Any]:
+    group = _keyword_group(keyword_group)
+    category = _category_code(category_code)
+    normalized_keywords = _normalize_keywords(keywords)
+    now = now_kst()
+    conn.execute(
+        "DELETE FROM monitoring_category_keywords WHERE keyword_group = ? AND category_code = ?",
+        (group, category),
+    )
+    for index, keyword in enumerate(normalized_keywords, start=1):
+        conn.execute(
+            """
+            INSERT INTO monitoring_category_keywords(
+                keyword_id, keyword_group, category_code, keyword, sort_order, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (uuid.uuid4().hex, group, category, keyword, index, now, now),
+        )
+    return get_category_keywords(conn, category, group)
+
+
+# 단일 카테고리에 키워드를 추가한다. 기존 키워드는 중복 추가하지 않는다.
+def add_category_keywords(
+    conn: sqlite3.Connection,
+    category_code: str,
+    keywords: list[str],
+    keyword_group: str = "PR",
+) -> dict[str, Any]:
+    group = _keyword_group(keyword_group)
+    category = _category_code(category_code)
+    normalized_keywords = _normalize_keywords(keywords)
+    now = now_kst()
+    next_order = _next_keyword_sort_order(conn, group, category)
+    for offset, keyword in enumerate(normalized_keywords):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO monitoring_category_keywords(
+                keyword_id, keyword_group, category_code, keyword, sort_order, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (uuid.uuid4().hex, group, category, keyword, next_order + offset, now, now),
+        )
+    return get_category_keywords(conn, category, group)
+
+
+# 키워드 1건을 삭제한다.
+def delete_category_keyword(conn: sqlite3.Connection, keyword_id: str) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT keyword_group, category_code
+        FROM monitoring_category_keywords
+        WHERE keyword_id = ?
+        """,
+        (keyword_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError("keyword not found")
+    conn.execute("DELETE FROM monitoring_category_keywords WHERE keyword_id = ?", (keyword_id,))
+    _renumber_category_keywords(conn, row["keyword_group"], row["category_code"])
+    return get_category_keywords(conn, row["category_code"], row["keyword_group"])
+
+
+# 카테고리의 키워드 전체를 삭제한다.
+def delete_category_keywords(conn: sqlite3.Connection, category_code: str, keyword_group: str = "PR") -> dict[str, Any]:
+    group = _keyword_group(keyword_group)
+    category = _category_code(category_code)
+    conn.execute(
+        "DELETE FROM monitoring_category_keywords WHERE keyword_group = ? AND category_code = ?",
+        (group, category),
+    )
+    return {"keyword_group": group, "category_code": category, "keywords": []}
+
+
+def _category_keyword_item(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "keyword_id": row["keyword_id"],
+        "keyword": row["keyword"],
+        "sort_order": row["sort_order"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _normalize_keywords(keywords: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in keywords:
+        keyword = _keyword(raw)
+        folded = keyword.casefold()
+        if all(existing.casefold() != folded for existing in normalized):
+            normalized.append(keyword)
+    return normalized
+
+
+def _keyword(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("keyword must not be blank")
+    if len(text) > 200:
+        raise ValueError("keyword must be 200 characters or shorter")
+    return text
+
+
+def _keyword_group(value: str) -> str:
+    text = str(value or "PR").strip().upper()
+    if not text:
+        return "PR"
+    if len(text) > 40:
+        raise ValueError("keyword_group must be 40 characters or shorter")
+    return text
+
+
+def _category_code(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if not text:
+        raise ValueError("category_code must not be blank")
+    if len(text) > 40:
+        raise ValueError("category_code must be 40 characters or shorter")
+    return text
+
+
+def _next_keyword_sort_order(conn: sqlite3.Connection, keyword_group: str, category_code: str) -> int:
+    row = conn.execute(
+        """
+        SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_order
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ? AND category_code = ?
+        """,
+        (keyword_group, category_code),
+    ).fetchone()
+    return int(row["next_order"] or 1)
+
+
+def _renumber_category_keywords(conn: sqlite3.Connection, keyword_group: str, category_code: str) -> None:
+    rows = conn.execute(
+        """
+        SELECT keyword_id
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ? AND category_code = ?
+        ORDER BY sort_order ASC, keyword ASC
+        """,
+        (keyword_group, category_code),
+    ).fetchall()
+    now = now_kst()
+    for index, row in enumerate(rows, start=1):
+        conn.execute(
+            """
+            UPDATE monitoring_category_keywords
+            SET sort_order = ?, updated_at = ?
+            WHERE keyword_id = ?
+            """,
+            (index, now, row["keyword_id"]),
+        )
 
 
 # 감성분석이 아직 없는 기사 제목들을 조회한다.
@@ -383,14 +619,15 @@ def filter_options(conn: sqlite3.Connection) -> dict[str, list[str]]:
     terms = [
         row["option_name"]
         for row in conn.execute(
-            "SELECT option_name FROM crawl_filter_options WHERE option_group = 'search_term' ORDER BY option_name"
+            "SELECT option_name FROM crawl_filter_options WHERE option_group = 'filter_term' ORDER BY option_name"
         )
     ]
-    return {"sources": sources, "search_terms": terms}
+    return {"sources": sources, "filter_terms": terms}
 
 
 # flat 뉴스 목록 API 응답을 조회한다.
 def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]:
+    query = {**query, "_conn": conn}
     where_sql, params = _where_clause(query)
     sort_sql = _sort_sql(query)
     page, page_size, offset = _page(query)
@@ -412,6 +649,7 @@ def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]
 
 # 그룹 뉴스 목록 API 응답을 조회한다.
 def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]:
+    query = {**query, "_conn": conn}
     where_sql, params = _where_clause(query)
     sort_sql = _sort_sql(query)
     page, page_size, offset = _page(query)
@@ -458,6 +696,7 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
 
 # 통계 카드 API 응답을 조회한다.
 def stats(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, int]:
+    query = {**query, "_conn": conn}
     where_sql, params = _where_clause(query, include_state_filters=False)
     row = conn.execute(
         f"""
@@ -615,7 +854,7 @@ ARTICLE_SELECT_COLUMNS = """
     a.article_id,
     a.title,
     a.source_site AS source_name,
-    a.search_term,
+    a.filter_term,
     a.published_at,
     a.canonical_url AS url,
     a.is_active AS is_major,
@@ -664,9 +903,21 @@ def _where_clause(query: dict[str, Any], *, include_state_filters: bool = True) 
     if query.get("source"):
         clauses.append("LOWER(a.source_site) LIKE LOWER(?)")
         params.append(f"%{query['source']}%")
-    if query.get("search_term"):
-        clauses.append("LOWER(a.search_term) LIKE LOWER(?)")
-        params.append(f"%{query['search_term']}%")
+    filter_term = query.get("filter_term")
+    if filter_term:
+        clauses.append("LOWER(a.filter_term) LIKE LOWER(?)")
+        params.append(f"%{filter_term}%")
+    category_code = str(query.get("category_code") or "").strip()
+    if category_code:
+        category_keywords = _category_filter_keywords(query)
+        if category_keywords:
+            keyword_clauses = []
+            for keyword in category_keywords:
+                keyword_clauses.append("LOWER(a.filter_term) LIKE LOWER(?)")
+                params.append(f"%{keyword}%")
+            clauses.append("(" + " OR ".join(keyword_clauses) + ")")
+        else:
+            clauses.append("1 = 0")
     if query.get("major_only"):
         clauses.append("a.is_active = 1")
     if include_state_filters:
@@ -679,6 +930,27 @@ def _where_clause(query: dict[str, Any], *, include_state_filters: bool = True) 
         elif query.get("favorite_status") == "nonfavorite":
             clauses.append("COALESCE(s.is_favorite, 0) = 0")
     return "WHERE " + " AND ".join(clauses), params
+
+
+# category_code 필터에 사용할 키워드를 설정 테이블에서 조회한다.
+def _category_filter_keywords(query: dict[str, Any]) -> list[str]:
+    conn = query.get("_conn")
+    if not isinstance(conn, sqlite3.Connection):
+        return []
+    category = str(query.get("category_code") or "").strip()
+    if not category:
+        return []
+    group = str(query.get("keyword_group") or "PR").strip() or "PR"
+    rows = conn.execute(
+        """
+        SELECT keyword
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ? AND category_code = ?
+        ORDER BY sort_order ASC, keyword ASC
+        """,
+        (_keyword_group(group), _category_code(category)),
+    ).fetchall()
+    return [row["keyword"] for row in rows]
 
 
 # sort 파라미터를 안전한 SQL 조각으로 바꾼다.
@@ -701,7 +973,7 @@ def _api_item(row: sqlite3.Row) -> dict[str, Any]:
         "article_id": row["article_id"],
         "title": row["title"],
         "source_name": row["source_name"],
-        "search_term": row["search_term"],
+        "filter_term": row["filter_term"],
         "published_at": row["published_at"],
         "url": row["url"],
         "is_major": bool(row["is_major"]),

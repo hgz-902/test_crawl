@@ -16,6 +16,8 @@ DAUM_NEWS_API_ATTR = "daum"
 KAKAO_REST_API_KEY_ENV = "KAKAO_REST_API_KEY"
 KAKAO_DAUM_WEB_API_HOST = "dapi.kakao.com"
 KAKAO_DAUM_WEB_API_PATH = "/v2/search/web"
+DAUM_SOURCE_ENRICH_ENV = "DAUM_NEWS_ENRICH_SOURCE"
+DAUM_SOURCE_ENRICH_TIMEOUT_ENV = "DAUM_NEWS_ENRICH_TIMEOUT_SECONDS"
 DAUM_WEB_SEARCH_MAX_PAGE = 50
 DAUM_WEB_SEARCH_MAX_SIZE = 50
 DEFAULT_PAGE_LIMIT = 1
@@ -69,6 +71,9 @@ def fetch_daum_news_api_items(
         deduped.append(item)
         if item_limit is not None and len(deduped) >= item_limit:
             break
+
+    if _bool_env(DAUM_SOURCE_ENRICH_ENV, default=True):
+        _enrich_items_with_daum_detail_source(deduped, timeout=_source_enrich_timeout(timeout))
 
     return deduped, final_url
 
@@ -274,6 +279,7 @@ def _normalize_item(raw_document: dict[str, Any], *, allowed_domains: tuple[str,
         "pubDate": pub_date,
         "description": description,
         "source_domain": normalized_host,
+        "source_platform_domain": normalized_host,
         "source_api": "kakao_daum_web_search",
         "source_filter_domains": list(allowed_domains),
     }
@@ -294,6 +300,112 @@ def _is_allowed_domain(host: str, allowed_domains: tuple[str, ...]) -> bool:
 def _clean_text(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+# Daum 상세 페이지에서 매체명을 보강한다. 원문 URL은 없는 경우가 많아 source_name을 우선 남긴다.
+def _enrich_items_with_daum_detail_source(items: list[dict[str, Any]], *, timeout: float) -> None:
+    if not items:
+        return
+    session = requests.Session()
+    session.trust_env = False
+    session.headers.update(_public_headers())
+    cache: dict[str, dict[str, str]] = {}
+    for item in items:
+        detail_url = str(item.get("detail_url") or item.get("link") or "").strip()
+        if not detail_url:
+            continue
+        if detail_url not in cache:
+            cache[detail_url] = _fetch_daum_detail_source(session, detail_url, timeout=timeout)
+        source = cache[detail_url]
+        if not source:
+            continue
+        for key, value in source.items():
+            if value and not item.get(key):
+                item[key] = value
+
+
+# Daum 상세 HTML에서 확인 가능한 매체 식별값을 추출한다.
+def _fetch_daum_detail_source(session: requests.Session, url: str, *, timeout: float) -> dict[str, str]:
+    try:
+        response = session.get(url, timeout=timeout, allow_redirects=True)
+        response.raise_for_status()
+    except requests.RequestException:
+        return {}
+    html = response.text or ""
+    source_name = (
+        _meta_content(html, "og:article:author")
+        or _alex_action_attr(html, "data-cp-name")
+        or _cp_object_value(html, "cpKorName")
+        or _site_name_media(html)
+    )
+    source_cp_id = _alex_action_attr(html, "data-cp-id") or _cp_object_value(html, "cpId")
+    result: dict[str, str] = {}
+    if source_name:
+        result["source_name"] = source_name
+    if source_cp_id:
+        result["source_cp_id"] = source_cp_id
+    return result
+
+
+# 공개 상세 페이지 요청용 헤더다. Kakao API Authorization을 절대 재사용하지 않는다.
+def _public_headers() -> dict[str, str]:
+    return {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+    }
+
+
+def _meta_content(html: str, property_name: str) -> str:
+    pattern = rf'<meta\s+[^>]*property=["\']{re.escape(property_name)}["\'][^>]*content=["\']([^"\']+)["\']'
+    match = re.search(pattern, html, flags=re.IGNORECASE)
+    return _clean_text(match.group(1)) if match else ""
+
+
+def _alex_action_attr(html: str, attr_name: str) -> str:
+    meta_match = re.search(r'<meta\s+[^>]*name=["\']alex-action["\'][^>]*>', html, flags=re.IGNORECASE)
+    if not meta_match:
+        return ""
+    attr_match = re.search(rf'{re.escape(attr_name)}=["\']([^"\']+)["\']', meta_match.group(0), flags=re.IGNORECASE)
+    return _clean_text(attr_match.group(1)) if attr_match else ""
+
+
+def _cp_object_value(html: str, key: str) -> str:
+    match = re.search(rf'{re.escape(key)}\s*:\s*(?:Number\()?["\']([^"\']+)["\']', html)
+    if not match:
+        return ""
+    return _decode_js_string(match.group(1))
+
+
+def _site_name_media(html: str) -> str:
+    value = _meta_content(html, "og:site_name")
+    if "|" not in value:
+        return ""
+    return _clean_text(value.rsplit("|", 1)[-1])
+
+
+def _decode_js_string(value: str) -> str:
+    try:
+        return json.loads(f'"{value}"')
+    except json.JSONDecodeError:
+        return _clean_text(value)
+
+
+def _bool_env(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _source_enrich_timeout(api_timeout: float) -> float:
+    try:
+        configured = float(os.environ.get(DAUM_SOURCE_ENRICH_TIMEOUT_ENV, ""))
+    except ValueError:
+        configured = 0.0
+    if configured > 0:
+        return configured
+    return max(2.0, min(float(api_timeout), 8.0))
 
 
 # 문자열 값을 최소값 이상 정수로 안전하게 변환한다.

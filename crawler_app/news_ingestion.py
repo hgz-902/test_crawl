@@ -4,14 +4,13 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from crawler_app.file_lock import FileLock
 from crawler_app.news_grouping import build_article_clusters
@@ -32,46 +31,9 @@ from crawler_app.news_sqlite_store import (
 
 WORKFLOW_RECORDS_NAME = "workflow_records.json"
 ROLLUP_GLOB = "workflow_records_*.json"
-KNOWN_DOMAIN_NAMES = {
-    "yna.co.kr": "연합뉴스",
-    "www.yna.co.kr": "연합뉴스",
-    "n.news.naver.com": "네이버뉴스",
-    "news.naver.com": "네이버뉴스",
-    "v.daum.net": "다음뉴스",
-    "news.google.com": "Google News",
-    "chosun.com": "조선일보",
-    "www.chosun.com": "조선일보",
-    "donga.com": "동아일보",
-    "www.donga.com": "동아일보",
-    "joongang.co.kr": "중앙일보",
-    "www.joongang.co.kr": "중앙일보",
-    "hankyung.com": "한국경제",
-    "www.hankyung.com": "한국경제",
-    "mk.co.kr": "매일경제",
-    "www.mk.co.kr": "매일경제",
-}
-NAVER_PRESS_NAMES = {
-    "001": "연합뉴스",
-    "005": "국민일보",
-    "008": "머니투데이",
-    "009": "매일경제",
-    "011": "서울경제",
-    "014": "파이낸셜뉴스",
-    "015": "한국경제",
-    "020": "동아일보",
-    "021": "문화일보",
-    "022": "세계일보",
-    "023": "조선일보",
-    "025": "중앙일보",
-    "028": "한겨레",
-    "032": "경향신문",
-    "081": "서울신문",
-    "082": "부산일보",
-    "088": "매일신문",
-    "421": "뉴스1",
-    "422": "연합뉴스TV",
-    "469": "한국일보",
-}
+GOOGLE_PARSER_NAMES = {"google", "google_news_rss"}
+NAVER_PARSER_NAMES = {"naver", "naver_news_api"}
+DAUM_PARSER_NAMES = {"daum", "daum_news_api", "kakao_daum_web_search"}
 
 
 # 적재 결과 요약을 담는 데이터 객체다.
@@ -246,7 +208,7 @@ def _article_from_record(record: dict[str, Any], *, config_name: str, records_fi
         "is_active": True,
         "crawl_date": crawl_date,
         "group_date": group_date,
-        "search_term": _record_text(record, "search_term"),
+        "filter_term": _record_text(record, "filter_term"),
     }
 
 
@@ -291,48 +253,61 @@ def _payload_config_name(payload: Any, records_file: Path) -> str:
 
 # record와 URL에서 UI 표시용 source_site 값을 결정한다.
 def _source_site(record: dict[str, Any], final_url: str, config_name: str) -> str:
-    for key in ("source_site", "source_name", "press_name"):
-        value = _record_text(record, key)
-        if value:
-            return value
-    domain = _domain(final_url)
-    title_source = _source_from_title(_record_text(record, "extract_title", "title"))
-    if title_source and domain in {"news.google.com", "v.daum.net", "n.news.naver.com", "news.naver.com"}:
-        return title_source
-    naver_press = _naver_press_name(final_url)
-    if naver_press:
-        return naver_press
-    if domain:
-        if domain in KNOWN_DOMAIN_NAMES:
-            return KNOWN_DOMAIN_NAMES[domain]
-        for suffix, name in KNOWN_DOMAIN_NAMES.items():
-            if domain.endswith("." + suffix):
-                return name
-        return domain
+    parser_name = _record_parser_name(record)
+    if parser_name in GOOGLE_PARSER_NAMES:
+        return (
+            _record_text(record, "source")
+            or _domain(_record_text(record, "source_url"))
+            or _domain(final_url)
+            or config_name
+            or "unknown"
+        )
+    if parser_name in NAVER_PARSER_NAMES:
+        return _source_domain_from_record(record, final_url, prefer_original=True) or config_name or "unknown"
+    if parser_name in DAUM_PARSER_NAMES:
+        return (
+            _source_domain_from_record(record, final_url, prefer_original=True)
+            or _record_text(record, "source_name")
+            or config_name
+            or "unknown"
+        )
     return config_name or "unknown"
 
 
-# Google/Daum RSS형 제목 끝의 " - 언론사" 표기를 source 후보로 추출한다.
-def _source_from_title(title: str) -> str:
-    if " - " not in title:
-        return ""
-    candidate = title.rsplit(" - ", 1)[-1].strip()
-    if not candidate or len(candidate) > 40:
-        return ""
-    return candidate
+# API item 안에서 언론사를 구분할 수 있는 도메인을 찾는다.
+def _source_domain_from_record(record: dict[str, Any], final_url: str, *, prefer_original: bool) -> str:
+    platform_domains = {
+        "n.news.naver.com",
+        "news.naver.com",
+        "v.daum.net",
+        "news.daum.net",
+        "m.media.daum.net",
+    }
+    keys = ("originallink", "source_url", "source_domain", "detail_url", "link", "url") if prefer_original else ()
+    for key in keys:
+        value = _record_text(record, key)
+        domain = _domain(value) if "://" in value else _text(value).lower()
+        if domain and domain not in platform_domains:
+            return domain
+    fallback_domain = _domain(final_url)
+    if fallback_domain not in platform_domains:
+        return fallback_domain
+    return ""
 
 
-# 네이버 지면보기 URL의 press id를 언론사명으로 변환한다.
-def _naver_press_name(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.netloc not in {"n.news.naver.com", "news.naver.com"}:
-        return ""
-    match = re.search(r"/article/newspaper/(?P<press>\d{3})/", parsed.path)
-    if not match:
-        match = re.search(r"/article/(?P<press>\d{3})/", parsed.path)
-    if not match:
-        return ""
-    return NAVER_PRESS_NAMES.get(match.group("press"), "")
+# workflow/parser record에서 수집 방식 이름을 정규화한다.
+def _record_parser_name(record: dict[str, Any]) -> str:
+    extracts = record.get("extracts") if isinstance(record.get("extracts"), dict) else {}
+    for value in (
+        record.get("parser_name"),
+        extracts.get("parser_name"),
+        extracts.get("source_provider"),
+        extracts.get("source_api"),
+    ):
+        text = _text(value).lower()
+        if text:
+            return text
+    return ""
 
 
 # URL에서 host를 정규화한다.
