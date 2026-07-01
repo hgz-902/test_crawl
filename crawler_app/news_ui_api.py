@@ -65,11 +65,11 @@ def init_news_ui_database(project_root: str | Path = PROJECT_ROOT) -> None:
 
 # UI 콤보박스용 출처/검색어 옵션을 반환한다.
 @router.get("/api/filter-options")
-def get_filter_options() -> dict[str, list[str]]:
+def get_filter_options(config_category: str = Query("PR")) -> dict[str, list[str]]:
     try:
         init_news_ui_database()
         with connect(news_ui_db_path()) as conn:
-            return filter_options(conn)
+            return filter_options(conn, _query_dict(locals()))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"DB Error: {exc}") from exc
 
@@ -171,6 +171,7 @@ def get_news(
     title: str | None = Query(None),
     source: str | None = Query(None),
     filter_term: str | None = Query(None),
+    config_category: str = Query("PR"),
     category_code: str | None = Query(None),
     keyword_group: str = Query("PR"),
     read_status: str = Query("all"),
@@ -198,6 +199,7 @@ def get_news_grouped(
     title: str | None = Query(None),
     source: str | None = Query(None),
     filter_term: str | None = Query(None),
+    config_category: str = Query("PR"),
     category_code: str | None = Query(None),
     keyword_group: str = Query("PR"),
     read_status: str = Query("all"),
@@ -225,6 +227,7 @@ def get_stats(
     title: str | None = Query(None),
     source: str | None = Query(None),
     filter_term: str | None = Query(None),
+    config_category: str = Query("PR"),
     category_code: str | None = Query(None),
     keyword_group: str = Query("PR"),
 ) -> dict[str, int]:

@@ -71,6 +71,7 @@ def init_db(db_path: str | Path) -> None:
                 record_key TEXT,
                 source_site TEXT NOT NULL,
                 source_config_name TEXT,
+                source_config_category TEXT,
                 canonical_url TEXT NOT NULL,
                 title TEXT,
                 published_at TEXT,
@@ -166,6 +167,7 @@ def init_db(db_path: str | Path) -> None:
             """
         )
         _migrate_crawl_articles_filter_term(conn)
+        _migrate_crawl_articles_config_category(conn)
         _migrate_article_sentiment(conn)
 
 
@@ -189,12 +191,12 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO crawl_articles (
-            article_id, record_key, source_site, source_config_name, canonical_url, title,
+            article_id, record_key, source_site, source_config_name, source_config_category, canonical_url, title,
             published_at, first_seen_at, last_seen_at, created_at, updated_at,
             is_active, crawl_date, group_date, filter_term
         )
         VALUES (
-            :article_id, :record_key, :source_site, :source_config_name, :canonical_url, :title,
+            :article_id, :record_key, :source_site, :source_config_name, :source_config_category, :canonical_url, :title,
             :published_at, :first_seen_at, :last_seen_at, :created_at, :updated_at,
             :is_active, :crawl_date, :group_date, :filter_term
         )
@@ -202,6 +204,7 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             record_key = excluded.record_key,
             source_site = excluded.source_site,
             source_config_name = excluded.source_config_name,
+            source_config_category = excluded.source_config_category,
             canonical_url = excluded.canonical_url,
             title = excluded.title,
             published_at = COALESCE(excluded.published_at, crawl_articles.published_at),
@@ -218,6 +221,7 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             "record_key": article.get("record_key"),
             "source_site": article["source_site"],
             "source_config_name": article.get("source_config_name"),
+            "source_config_category": article.get("source_config_category", "PR"),
             "canonical_url": article["canonical_url"],
             "title": article.get("title"),
             "published_at": article.get("published_at"),
@@ -261,6 +265,22 @@ def rebuild_filter_options(conn: sqlite3.Connection) -> None:
             )
 
 
+def update_source_config_categories(conn: sqlite3.Connection, categories_by_config: dict[str, str]) -> int:
+    updated = 0
+    for config_name, category in categories_by_config.items():
+        result = conn.execute(
+            """
+            UPDATE crawl_articles
+            SET source_config_category = ?
+            WHERE source_config_name = ?
+                AND COALESCE(source_config_category, '') != ?
+            """,
+            (str(category or ""), config_name, str(category or "")),
+        )
+        updated += int(result.rowcount or 0)
+    return updated
+
+
 # joined filter_term 값을 UI 옵션용 개별 term으로 분리한다.
 def _split_option_terms(value: str | None) -> list[str]:
     terms: list[str] = []
@@ -292,6 +312,18 @@ def _migrate_crawl_articles_filter_term(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_articles_filter_term ON crawl_articles(filter_term)")
     conn.execute("UPDATE OR IGNORE crawl_filter_options SET option_group = 'filter_term' WHERE option_group = 'search_term'")
     conn.execute("DELETE FROM crawl_filter_options WHERE option_group = 'search_term'")
+
+
+def _migrate_crawl_articles_config_category(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(crawl_articles)").fetchall()}
+    if "source_config_category" not in columns:
+        conn.execute("ALTER TABLE crawl_articles ADD COLUMN source_config_category TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_crawl_articles_source_config_category
+            ON crawl_articles(source_config_category)
+        """
+    )
 
 
 # 개발팀이 공유한 article_sentiment 확장 컬럼을 기존 SQLite DB에도 안전하게 추가한다.
@@ -622,20 +654,42 @@ def all_article_group_dates(conn: sqlite3.Connection) -> list[str]:
 
 
 # 필터 콤보박스 옵션을 반환한다.
-def filter_options(conn: sqlite3.Connection) -> dict[str, list[str]]:
+def filter_options(conn: sqlite3.Connection, query: dict[str, Any] | None = None) -> dict[str, list[str]]:
+    category_where, category_params = _config_category_filter_sql(query or {})
     sources = [
         row["option_name"]
         for row in conn.execute(
-            "SELECT option_name FROM crawl_filter_options WHERE option_group = 'source' ORDER BY option_name"
+            f"""
+            SELECT DISTINCT a.source_site AS option_name
+            FROM crawl_articles a
+            WHERE a.source_site IS NOT NULL
+                AND a.source_site != ''
+                {category_where}
+            ORDER BY option_name
+            """,
+            category_params,
         )
     ]
     terms = [
-        row["option_name"]
+        row["filter_term"]
         for row in conn.execute(
-            "SELECT option_name FROM crawl_filter_options WHERE option_group = 'filter_term' ORDER BY option_name"
+            f"""
+            SELECT DISTINCT a.filter_term
+            FROM crawl_articles a
+            WHERE a.filter_term IS NOT NULL
+                AND a.filter_term != ''
+                {category_where}
+            ORDER BY a.filter_term
+            """,
+            category_params,
         )
     ]
-    return {"sources": sources, "filter_terms": terms}
+    filter_terms: list[str] = []
+    for term in terms:
+        for option in _split_option_terms(term):
+            if option not in filter_terms:
+                filter_terms.append(option)
+    return {"sources": sources, "filter_terms": sorted(filter_terms)}
 
 
 # flat 뉴스 목록 API 응답을 조회한다.
@@ -962,6 +1016,10 @@ def _where_clause(query: dict[str, Any], *, include_state_filters: bool = True) 
     if query.get("source"):
         clauses.append("LOWER(a.source_site) LIKE LOWER(?)")
         params.append(f"%{query['source']}%")
+    config_category_sql, config_category_params = _config_category_filter_condition(query)
+    if config_category_sql:
+        clauses.append(config_category_sql)
+        params.extend(config_category_params)
     filter_term = query.get("filter_term")
     if filter_term:
         clauses.append("LOWER(a.filter_term) LIKE LOWER(?)")
@@ -989,6 +1047,36 @@ def _where_clause(query: dict[str, Any], *, include_state_filters: bool = True) 
         elif query.get("favorite_status") == "nonfavorite":
             clauses.append("COALESCE(s.is_favorite, 0) = 0")
     return "WHERE " + " AND ".join(clauses), params
+
+
+def _config_category_filter_sql(query: dict[str, Any]) -> tuple[str, list[Any]]:
+    condition, params = _config_category_filter_condition(query)
+    if not condition:
+        return "", []
+    return f"AND {condition}", params
+
+
+def _config_category_filter_condition(query: dict[str, Any]) -> tuple[str, list[Any]]:
+    allowed_categories = _config_category_tokens(query.get("config_category", "PR"))
+    if not allowed_categories:
+        return "", []
+    normalized_column = "',' || UPPER(REPLACE(COALESCE(a.source_config_category, ''), ' ', '')) || ','"
+    return (
+        "(" + " OR ".join(f"{normalized_column} LIKE ?" for _ in allowed_categories) + ")",
+        [f"%,{category},%" for category in allowed_categories],
+    )
+
+
+def _config_category_tokens(value: Any) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw or raw.casefold() in {"all", "*"}:
+        return []
+    tokens: list[str] = []
+    for token in raw.split(","):
+        normalized = token.strip().upper()
+        if normalized and normalized not in tokens:
+            tokens.append(normalized)
+    return tokens
 
 
 # category_code 필터에 사용할 키워드를 설정 테이블에서 조회한다.

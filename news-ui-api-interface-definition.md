@@ -265,6 +265,7 @@ UI 적용:
 GET /api/news
 GET /api/news/grouped
 GET /api/stats
+GET /api/filter-options
 ```
 
 위 API들은 기존 API이며, 신규 API가 아니라 파라미터가 확장되었다.
@@ -275,6 +276,17 @@ GET /api/stats
 |---|---|---|
 | `category_code` | 없음 | 사이드바 카테고리 코드. 예: `SK` |
 | `keyword_group` | `PR` | 카테고리 키워드 그룹 |
+| `config_category` | `PR` | `configs/*.json`의 `category` 기준 노출 제한. 예: `PR`, `PR,GR` |
+
+`config_category` 동작:
+
+- 기사 적재 시 JSON config의 `category` 값이 `crawl_articles.source_config_category`에 저장된다.
+- 저장된 `source_config_category` 값을 쉼표 기준 토큰으로 분리해 비교한다.
+- 요청의 `config_category` 토큰과 저장된 config category 토큰이 하나라도 겹치면 포함한다.
+- 기본값 `PR`은 `category: "PR"`과 `category: "GR,PR"` config에서 온 기사만 포함한다.
+- `config_category=PR,GR`은 `PR`, `GR`, `GR,PR` config에서 온 기사를 포함한다.
+- `config_category=all` 또는 빈 값은 config category 제한을 적용하지 않는다.
+- 이 값은 회사 분류용 `category_code=SK`와 다른 개념이다.
 
 ### 5.3 추가 응답 필드
 
@@ -298,7 +310,7 @@ GET /api/stats
 예를 들어 사이드바에서 `SK`를 클릭하면 다음처럼 호출한다.
 
 ```http
-GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size=20
+GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&config_category=PR&page=1&page_size=20
 ```
 
 서버 내부 처리:
@@ -400,7 +412,7 @@ GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size
 ### 5.7 `/api/news/grouped` 사용 예시
 
 ```http
-GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size=20
+GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&config_category=PR&page=1&page_size=20
 ```
 
 기능:
@@ -443,12 +455,13 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&p
 ### 5.8 `/api/stats` 사용 예시
 
 ```http
-GET /api/stats?user_id=unknown&category_code=SK&keyword_group=PR
+GET /api/stats?user_id=unknown&category_code=SK&keyword_group=PR&config_category=PR
 ```
 
 기능:
 
 - 카테고리 조건이 적용된 상태에서 전체/미확인/확인/즐겨찾기 수를 반환한다.
+- `config_category` 기본값은 `PR`이며, config category 제한도 함께 적용된다.
 
 ## 6. UI 적용 방식
 

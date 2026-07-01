@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+from crawler_app.config_store import list_configs
 from crawler_app.file_lock import FileLock
 from crawler_app.news_grouping import build_article_clusters
 from crawler_app.news_sentiment import analyze_unanalyzed_articles
@@ -25,6 +26,7 @@ from crawler_app.news_sqlite_store import (
     init_db,
     rebuild_filter_options,
     replace_clusters,
+    update_source_config_categories,
     upsert_article,
 )
 
@@ -102,6 +104,7 @@ def sync_news_ui_database(
         with connect(database_path) as conn:
             if rebuild:
                 clear_news_data(conn)
+            categories_by_config = _config_categories_by_name(root)
             read_started = time.perf_counter()
             for records_file in _workflow_record_files(outputs, source_output_dirs=source_output_dirs):
                 summary.files_read += 1
@@ -111,6 +114,7 @@ def sync_news_ui_database(
                     summary.errors.append(f"{records_file}: {type(exc).__name__}: {exc}")
                     continue
                 config_name = _payload_config_name(payload, records_file)
+                config_category = _payload_config_category(payload, config_name, categories_by_config)
                 records = payload.get("records") if isinstance(payload, dict) else None
                 if not isinstance(records, list):
                     continue
@@ -118,13 +122,19 @@ def sync_news_ui_database(
                     if not isinstance(record, dict):
                         continue
                     summary.records_seen += 1
-                    article = _article_from_record(record, config_name=config_name, records_file=records_file)
+                    article = _article_from_record(
+                        record,
+                        config_name=config_name,
+                        config_category=config_category,
+                        records_file=records_file,
+                    )
                     if not article:
                         continue
                     upsert_article(conn, article)
                     summary.articles_upserted += 1
                     if article.get("group_date"):
                         summary.group_dates.add(str(article["group_date"]))
+            update_source_config_categories(conn, categories_by_config)
             rebuild_filter_options(conn)
             summary.read_duration_seconds = time.perf_counter() - read_started
             sentiment_started = time.perf_counter()
@@ -175,8 +185,21 @@ def sync_news_ui_output_dir(*, project_root: str | Path, output_dir: str | Path)
     return sync_news_ui_database(project_root=root, source_output_dirs=[source_dir], rebuild=False)
 
 
+def _config_categories_by_name(project_root: Path) -> dict[str, str]:
+    return {
+        config.name: str(config.category or "")
+        for config in list_configs(project_root / "configs")
+    }
+
+
 # workflow record 하나를 crawl_articles row로 정규화한다.
-def _article_from_record(record: dict[str, Any], *, config_name: str, records_file: Path) -> dict[str, Any] | None:
+def _article_from_record(
+    record: dict[str, Any],
+    *,
+    config_name: str,
+    config_category: str,
+    records_file: Path,
+) -> dict[str, Any] | None:
     final_url = _record_text(record, "final_url", "url", "canonical_url")
     if not final_url:
         return None
@@ -198,6 +221,7 @@ def _article_from_record(record: dict[str, Any], *, config_name: str, records_fi
         "record_key": _record_text(record, "record_key"),
         "source_site": source_site,
         "source_config_name": config_name,
+        "source_config_category": config_category,
         "canonical_url": canonical_url,
         "title": title,
         "published_at": _format_dt(published),
@@ -249,6 +273,14 @@ def _payload_config_name(payload: Any, records_file: Path) -> str:
         return records_file.parts[outputs_index + 1]
     except (ValueError, IndexError):
         return records_file.parent.name
+
+
+def _payload_config_category(payload: Any, config_name: str, categories_by_config: dict[str, str]) -> str:
+    if isinstance(payload, dict):
+        value = _text(payload.get("category"))
+        if value:
+            return value
+    return categories_by_config.get(config_name, "")
 
 
 # record와 URL에서 UI 표시용 source_site 값을 결정한다.
