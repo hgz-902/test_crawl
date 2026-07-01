@@ -25,6 +25,7 @@ CONFIG_DIR = Path("configs")
 class ConfigSummary:
     name: str
     path: Path
+    category: str
     start_url: str
     output_dir: str
     search_terms: list[str]
@@ -49,6 +50,7 @@ def list_configs(config_dir: str | Path = CONFIG_DIR) -> list[ConfigSummary]:
             ConfigSummary(
                 name=str(config["name"]),
                 path=path,
+                category=str(config.get("category") or ""),
                 start_url=str(config.get("start_url") or ""),
                 output_dir=str(config.get("output_dir") or ""),
                 search_terms=list(_config_search_terms(config)),

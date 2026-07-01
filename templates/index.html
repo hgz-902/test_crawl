@@ -19,6 +19,7 @@
       <tr>
         <th class="center-col">번호</th>
         <th class="center-col">이름</th>
+        <th class="meta-col">카테고리</th>
         <th>목록 URL</th>
         <th class="meta-col">검색어</th>
         <th class="meta-col">필터</th>
@@ -26,12 +27,24 @@
         <th class="note-col">특이사항</th>
         <th>작업</th>
       </tr>
+      <tr class="config-filter-row">
+        <th></th>
+        <th><input type="search" data-config-filter="1" aria-label="이름 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="2" aria-label="카테고리 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="3" aria-label="목록 URL 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="4" aria-label="검색어 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="5" aria-label="필터 목록 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="6" aria-label="출력 경로 필터" placeholder="필터"></th>
+        <th><input type="search" data-config-filter="7" aria-label="특이사항 필터" placeholder="필터"></th>
+        <th></th>
+      </tr>
     </thead>
     <tbody>
       {% for config in configs %}
       <tr>
         <td class="center-col">{{ loop.revindex }}</td>
         <td class="center-col">{{ config.name }}</td>
+        <td class="meta-cell">{{ config.category or '-' }}</td>
         <td class="url config-url">{{ config.start_url }}</td>
         <td class="meta-cell">
           {% if config.search_terms %}
@@ -91,9 +104,34 @@
   (() => {
     const table = document.querySelector(".configs-table");
     if (!table) return;
+    const filterInputs = Array.from(table.querySelectorAll("[data-config-filter]"));
+
+    const applyFilters = () => {
+      const activeFilters = filterInputs
+        .map((input) => ({
+          index: Number(input.dataset.configFilter),
+          value: input.value.trim().toLowerCase(),
+        }))
+        .filter((filter) => filter.value);
+
+      table.querySelectorAll("tbody tr").forEach((row) => {
+        const visible = activeFilters.every((filter) => {
+          const cell = row.children[filter.index];
+          const text = (cell ? cell.textContent : "").trim().toLowerCase();
+          return text.includes(filter.value);
+        });
+        row.hidden = !visible;
+      });
+    };
 
     const syncRowHeights = () => {
       table.querySelectorAll("tbody tr").forEach((row) => {
+        if (row.hidden) {
+          Array.from(row.children).forEach((cell) => {
+            cell.style.height = "auto";
+          });
+          return;
+        }
         const cells = Array.from(row.children);
         if (!cells.length) return;
 
@@ -114,8 +152,18 @@
     };
 
     const schedule = () => requestAnimationFrame(syncRowHeights);
+    const filterAndSchedule = () => {
+      applyFilters();
+      schedule();
+    };
+
+    filterInputs.forEach((input) => {
+      input.addEventListener("input", filterAndSchedule);
+    });
+
     window.addEventListener("load", schedule, { once: true });
     window.addEventListener("resize", schedule);
+    applyFilters();
     schedule();
   })();
 </script>

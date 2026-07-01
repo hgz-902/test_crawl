@@ -185,6 +185,35 @@ table {
 
 .configs-table {
   table-layout: fixed;
+  min-width: 1320px;
+}
+
+.configs-table th {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.config-filter-row th {
+  padding-top: 4px;
+  padding-bottom: 6px;
+  background: #fbfcfe;
+}
+
+.config-filter-row input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+}
+
+.config-filter-row input::placeholder {
+  color: var(--placeholder);
 }
 
 .table-scroll {
