@@ -90,6 +90,7 @@ def sync_news_ui_database(
     outputs_root: str | Path | None = None,
     source_output_dirs: Iterable[str | Path] | None = None,
     rebuild: bool = False,
+    progress: bool = False,
 ) -> NewsIngestionSummary:
     root = Path(project_root)
     database_path = Path(db_path or os.getenv("NEWS_UI_DB_PATH") or default_db_path(root))
@@ -98,27 +99,36 @@ def sync_news_ui_database(
     total_started = time.perf_counter()
     lock_started = time.perf_counter()
     lock_timeout = float(os.getenv("NEWS_UI_SYNC_LOCK_TIMEOUT_SECONDS") or "180")
+    _progress(progress, f"waiting for DB lock: {database_path}")
     with FileLock(database_path, timeout_seconds=lock_timeout, stale_seconds=900, poll_seconds=0.2):
         summary.lock_wait_seconds = time.perf_counter() - lock_started
+        _progress(progress, f"DB lock acquired after {summary.lock_wait_seconds:.2f}s")
         init_db(database_path)
         with connect(database_path) as conn:
             if rebuild:
+                _progress(progress, "clearing existing news UI data")
                 clear_news_data(conn)
             categories_by_config = _config_categories_by_name(root)
+            _progress(progress, f"loaded config categories: {len(categories_by_config)} configs")
             read_started = time.perf_counter()
-            for records_file in _workflow_record_files(outputs, source_output_dirs=source_output_dirs):
+            record_files = _workflow_record_files(outputs, source_output_dirs=source_output_dirs)
+            _progress(progress, f"workflow record files: {len(record_files)}")
+            for file_index, records_file in enumerate(record_files, start=1):
                 summary.files_read += 1
+                _progress(progress, f"reading file {file_index}/{len(record_files)}: {records_file}")
                 try:
                     payload = json.loads(records_file.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError) as exc:
                     summary.errors.append(f"{records_file}: {type(exc).__name__}: {exc}")
+                    _progress(progress, f"skipped invalid file: {records_file} ({type(exc).__name__})")
                     continue
                 config_name = _payload_config_name(payload, records_file)
                 config_category = _payload_config_category(payload, config_name, categories_by_config)
                 records = payload.get("records") if isinstance(payload, dict) else None
                 if not isinstance(records, list):
+                    _progress(progress, f"skipped file without records list: {records_file}")
                     continue
-                for record in records:
+                for record_index, record in enumerate(records, start=1):
                     if not isinstance(record, dict):
                         continue
                     summary.records_seen += 1
@@ -134,26 +144,44 @@ def sync_news_ui_database(
                     summary.articles_upserted += 1
                     if article.get("group_date"):
                         summary.group_dates.add(str(article["group_date"]))
-            update_source_config_categories(conn, categories_by_config)
+                    if progress and record_index % 100 == 0:
+                        _progress(
+                            progress,
+                            f"processed {record_index}/{len(records)} records in {records_file.name}; "
+                            f"articles_upserted={summary.articles_upserted}",
+                        )
+            updated_categories = update_source_config_categories(conn, categories_by_config)
+            _progress(progress, f"backfilled source_config_category rows: {updated_categories}")
             rebuild_filter_options(conn)
+            _progress(progress, "rebuilt filter options")
             summary.read_duration_seconds = time.perf_counter() - read_started
             sentiment_started = time.perf_counter()
+            _progress(progress, "starting sentiment analysis")
             summary.sentiments_written = analyze_unanalyzed_articles(conn)
             summary.sentiment_duration_seconds = time.perf_counter() - sentiment_started
+            _progress(
+                progress,
+                f"sentiment analysis done: written={summary.sentiments_written}, "
+                f"elapsed={summary.sentiment_duration_seconds:.2f}s",
+            )
             grouping_started = time.perf_counter()
             group_dates, effective_scope = _group_dates_for_scope(conn, summary.group_dates)
             summary.grouping_scope = _text(os.getenv("NEWS_GROUPING_SCOPE")) or "touched_dates"
             summary.grouping_scope_effective = effective_scope
-            for group_date in group_dates:
+            _progress(progress, f"starting grouping: {len(group_dates)} dates ({effective_scope})")
+            for date_index, group_date in enumerate(group_dates, start=1):
                 date_started = time.perf_counter()
                 rows = article_rows_for_grouping(conn, group_date)
+                _progress(progress, f"grouping date {date_index}/{len(group_dates)}: {group_date} ({len(rows)} rows)")
                 assignments = build_article_clusters(rows, cache_conn=conn)
                 replace_clusters(conn, group_date, assignments)
                 summary.grouping_duration_by_date[group_date] = time.perf_counter() - date_started
                 summary.clusters_written += len(assignments)
             summary.grouping_duration_seconds = time.perf_counter() - grouping_started
+            _progress(progress, f"grouping done: clusters={summary.clusters_written}, elapsed={summary.grouping_duration_seconds:.2f}s")
     summary.total_duration_seconds = time.perf_counter() - total_started
     _write_last_sync_summary(database_path, summary)
+    _progress(progress, f"sync done: elapsed={summary.total_duration_seconds:.2f}s")
     return summary
 
 
@@ -183,6 +211,15 @@ def sync_news_ui_output_dir(*, project_root: str | Path, output_dir: str | Path)
     raw_output_dir = Path(output_dir)
     source_dir = raw_output_dir if raw_output_dir.is_absolute() else root / raw_output_dir
     return sync_news_ui_database(project_root=root, source_output_dirs=[source_dir], rebuild=False)
+
+
+def _progress(enabled: bool, message: str) -> None:
+    if enabled:
+        print(f"[news_ingestion] {now_progress()} {message}", flush=True)
+
+
+def now_progress() -> str:
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _config_categories_by_name(project_root: Path) -> dict[str, str]:
@@ -429,6 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-path", default="")
     parser.add_argument("--source-output-dir", action="append", default=[])
     parser.add_argument("--rebuild", action="store_true")
+    parser.add_argument("--progress", action="store_true")
     return parser
 
 
@@ -442,6 +480,7 @@ def main() -> None:
         outputs_root=args.outputs_root or None,
         source_output_dirs=args.source_output_dir or None,
         rebuild=args.rebuild,
+        progress=args.progress,
     )
     print(json.dumps(summary.to_dict(), ensure_ascii=False, indent=2))
 
