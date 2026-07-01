@@ -31,7 +31,6 @@
       "xpath_2": "//*[@id=\"listForm\"]/div[2]/div[7]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 2,
       "action": "click",
       "wait_state": "visible"
     },

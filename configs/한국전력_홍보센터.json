@@ -19,7 +19,6 @@
       "xpath_2": "//*[@id=\"frm\"]/div[2]/div[1]/div[5]/a/dl/dd/strong",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"

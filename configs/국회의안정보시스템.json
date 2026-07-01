@@ -53,7 +53,6 @@
       "xpath_2": "//*[@id=\"state-list\"]/div[1]/table/tbody/tr[2]/td[2]/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 3,
       "action": "click",
       "open_mode": "popup",
       "wait_state": "attached"

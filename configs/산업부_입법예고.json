@@ -75,7 +75,6 @@
       "xpath_2": "//*[@id=\"mytable\"]/tbody/tr[2]/td[2]/div/a",
       "loop": true,
       "loop_mode": "items",
-      "loop_limit": 1,
       "action": "click",
       "open_mode": "same_tab",
       "wait_state": "attached"
