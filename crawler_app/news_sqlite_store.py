@@ -658,8 +658,12 @@ def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]
         """,
         [query["user_id"], *params, page_size, offset],
     ).fetchall()
+    summary_counts = _news_summary_counts(conn, query, where_sql, params)
     return {
         "totalCount": int(total or 0),
+        "directMentionCount": summary_counts["directMentionCount"],
+        "negativeCount": summary_counts["negativeCount"],
+        "todayCount": summary_counts["todayCount"],
         "page": page,
         "pageSize": page_size,
         "items": [_api_item(row, category_index=category_index) for row in rows],
@@ -704,21 +708,22 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
         similar_articles = _similar_articles(conn, row["cluster_id"], query, category_index=category_index) if row["cluster_id"] else []
         item["similar_count"] = len(similar_articles)
         item["similar_articles"] = similar_articles
-    summary_counts = _grouped_summary_counts(conn, query, where_sql, params)
+    summary_counts = _news_summary_counts(conn, query, where_sql, params)
     total_articles = conn.execute("SELECT COUNT(*) AS cnt FROM crawl_articles WHERE title IS NOT NULL AND title != ''").fetchone()["cnt"]
     return {
         "totalCount": int(total or 0),
         "totalArticles": int(total_articles or 0),
         "directMentionCount": summary_counts["directMentionCount"],
         "negativeCount": summary_counts["negativeCount"],
+        "todayCount": summary_counts["todayCount"],
         "page": page,
         "pageSize": page_size,
         "items": items,
     }
 
 
-# grouped API의 필터 전체 대상 기사 기준 요약 집계를 계산한다.
-def _grouped_summary_counts(
+# 뉴스 목록 API의 필터 전체 대상 기사 기준 요약 집계를 계산한다.
+def _news_summary_counts(
     conn: sqlite3.Connection,
     query: dict[str, Any],
     where_sql: str,
@@ -726,7 +731,7 @@ def _grouped_summary_counts(
 ) -> dict[str, int]:
     rows = conn.execute(
         f"""
-        SELECT a.title, sen.sentiment
+        SELECT a.title, a.published_at, sen.sentiment
         FROM crawl_articles a
         LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ?
         LEFT JOIN article_sentiment sen ON a.article_id = sen.article_id
@@ -734,9 +739,11 @@ def _grouped_summary_counts(
         """,
         [query["user_id"], *params],
     ).fetchall()
+    today = today_kst()
     return {
         "directMentionCount": sum(1 for row in rows if _mentions_direct_sk(row["title"])),
         "negativeCount": sum(1 for row in rows if str(row["sentiment"] or "").lower() == "negative"),
+        "todayCount": sum(1 for row in rows if str(row["published_at"] or "")[:10] == today),
     }
 
 
@@ -1091,6 +1098,10 @@ def _normalize_term(value: Any) -> str:
 
 def _mentions_direct_sk(title: str | None) -> bool:
     return bool(DIRECT_SK_PATTERN.search(str(title or "")))
+
+
+def today_kst() -> str:
+    return datetime.now(KST).strftime("%Y-%m-%d")
 
 
 # 현재 한국 시간을 문자열로 반환한다.

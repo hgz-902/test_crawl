@@ -356,11 +356,24 @@ SKI -> SKE -> SKGC -> SKEN -> SKEO -> SKO -> SKIET -> E&S -> SK
 GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size=20
 ```
 
-응답은 기존 `/api/news` 형태에 `category_code`가 추가된다.
+응답은 기존 `/api/news` 형태에 `category_code`, `directMentionCount`, `negativeCount`, `todayCount`가 추가된다.
+
+추가 집계 필드:
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `directMentionCount` | `number` | 현재 필터 조건에 맞는 전체 기사 중 제목에 `SK`가 독립 단어로 직접 언급된 기사 수. 페이지네이션과 무관하다. |
+| `negativeCount` | `number` | 현재 필터 조건에 맞는 전체 기사 중 `sentiment`가 `negative`인 기사 수. 페이지네이션과 무관하다. |
+| `todayCount` | `number` | 현재 필터 조건에 맞는 전체 기사 중 `published_at` 날짜가 오늘인 기사 수. KST 기준이며 페이지네이션과 무관하다. |
+
+`directMentionCount`의 `SK` 판정은 `SK`, `SK 그룹`, `SK-이노베이션`처럼 독립적으로 등장한 경우만 포함한다. `SK온`, `SK하이닉스`, `SKI`, `SKO`처럼 다른 글자/숫자와 붙은 값은 제외한다.
 
 ```json
 {
   "totalCount": 10,
+  "directMentionCount": 4,
+  "negativeCount": 2,
+  "todayCount": 6,
   "page": 1,
   "pageSize": 20,
   "items": [
@@ -395,16 +408,8 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&p
 - 카테고리 조건으로 필터링한 뒤 유사 기사 그룹 대표 목록을 반환한다.
 - 기존 grouped API 응답 구조는 유지한다.
 - 대표 기사 item과 `similar_articles` item 모두 `category_code`를 포함한다.
-- 응답 최상위에 현재 필터 전체 대상 기준 `directMentionCount`, `negativeCount`를 포함한다.
-
-추가 집계 필드:
-
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `directMentionCount` | `number` | 현재 필터 조건에 맞는 전체 기사 중 제목에 `SK`가 독립 단어로 직접 언급된 기사 수. 대표 기사와 유사 기사를 모두 포함하며 페이지네이션과 무관하다. |
-| `negativeCount` | `number` | 현재 필터 조건에 맞는 전체 기사 중 `sentiment`가 `negative`인 기사 수. 대표 기사와 유사 기사를 모두 포함하며 페이지네이션과 무관하다. |
-
-`directMentionCount`의 `SK` 판정은 `SK`, `SK 그룹`, `SK-이노베이션`처럼 독립적으로 등장한 경우만 포함한다. `SK온`, `SK하이닉스`, `SKI`, `SKO`처럼 다른 글자/숫자와 붙은 값은 제외한다.
+- 응답 최상위에 현재 필터 전체 대상 기준 `directMentionCount`, `negativeCount`, `todayCount`를 포함한다.
+  - grouped에서는 대표 기사와 유사 기사를 모두 포함하며 페이지네이션과 무관하다.
 
 응답 일부 예시:
 
@@ -414,6 +419,7 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&p
   "totalArticles": 120,
   "directMentionCount": 4,
   "negativeCount": 2,
+  "todayCount": 6,
   "items": [
     {
       "article_id": "representative-id",
