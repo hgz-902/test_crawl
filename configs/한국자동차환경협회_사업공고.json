@@ -1,6 +1,18 @@
 {
+  "category": "GR",
+  "crawling_type": "",
   "created_at": "2026-05-26T13:47:41+09:00",
-  "filter_terms": [],
+  "filter_terms": [
+    "수소전기자동차",
+    "충전소",
+    "민간자본보조사업",
+    "수소충전소",
+    "운영사업자",
+    "연료비",
+    "민간경상보조사업",
+    "수소버스",
+    "버스"
+  ],
   "headless": true,
   "ignore_https_errors": false,
   "name": "한국자동차환경협회_사업공고",
@@ -50,7 +62,5 @@
     }
   ],
   "timeout_ms": 30000,
-  "updated_at": "2026-07-01T11:28:25+09:00",
-  "category": "GR",
-  "crawling_type": ""
+  "updated_at": "2026-07-01T14:24:04+09:00"
 }
