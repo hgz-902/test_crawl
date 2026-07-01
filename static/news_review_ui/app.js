@@ -351,7 +351,7 @@ async function loadNews() {
     state.lastItems = data.items || [];
     renderTable(data);
     renderPager(data);
-    renderClientStats(data.items || []);
+    renderClientStats(data);
     updateSelectionLabels();
     setStatus("");
   } catch (error) {
@@ -521,11 +521,39 @@ function pagerHtml(page, totalPages) {
   return pages.join("");
 }
 
-function renderClientStats(items) {
-  const direct = items.filter((item) => String(item.filter_term || "").trim()).length;
-  const negative = items.filter((item) => normalizeSentiment(item.sentiment).label === "부정").length;
+function renderClientStats(data) {
+  const items = flattenStatsItems(data.items || []);
+  const direct = Number.isFinite(Number(data.directMentionCount))
+    ? Number(data.directMentionCount)
+    : items.filter((item) => mentionsDirectSk(item.title)).length;
+  const negative = Number.isFinite(Number(data.negativeCount))
+    ? Number(data.negativeCount)
+    : items.filter((item) => normalizeSentiment(item.sentiment).label === "부정").length;
   els.statDirect.textContent = formatNumber(direct);
   els.statNegative.textContent = formatNumber(negative);
+}
+
+function flattenStatsItems(items) {
+  const flattened = [];
+  items.forEach((item) => {
+    flattened.push(item);
+    if (Array.isArray(item.similar_articles)) {
+      item.similar_articles.forEach((similar) => flattened.push(similar));
+    }
+  });
+  return flattened;
+}
+
+function mentionsDirectSk(title) {
+  const text = String(title || "");
+  const boundary = /[A-Za-z0-9가-힣]/;
+  for (let index = 0; index < text.length - 1; index += 1) {
+    if (text.slice(index, index + 2).toLowerCase() !== "sk") continue;
+    const prev = index > 0 ? text[index - 1] : "";
+    const next = index + 2 < text.length ? text[index + 2] : "";
+    if (!boundary.test(prev) && !boundary.test(next)) return true;
+  }
+  return false;
 }
 
 function openPicker(type) {

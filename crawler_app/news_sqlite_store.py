@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+import re
 import sqlite3
 import uuid
 
@@ -12,6 +13,7 @@ KST = timezone(timedelta(hours=9))
 DEFAULT_PAGE = 1
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
+DIRECT_SK_PATTERN = re.compile(r"(?<![A-Za-z0-9가-힣])SK(?![A-Za-z0-9가-힣])", re.IGNORECASE)
 ALLOWED_SORTS = {
     "published_at": "published_at",
     "title": "title",
@@ -702,13 +704,39 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
         similar_articles = _similar_articles(conn, row["cluster_id"], query, category_index=category_index) if row["cluster_id"] else []
         item["similar_count"] = len(similar_articles)
         item["similar_articles"] = similar_articles
+    summary_counts = _grouped_summary_counts(conn, query, where_sql, params)
     total_articles = conn.execute("SELECT COUNT(*) AS cnt FROM crawl_articles WHERE title IS NOT NULL AND title != ''").fetchone()["cnt"]
     return {
         "totalCount": int(total or 0),
         "totalArticles": int(total_articles or 0),
+        "directMentionCount": summary_counts["directMentionCount"],
+        "negativeCount": summary_counts["negativeCount"],
         "page": page,
         "pageSize": page_size,
         "items": items,
+    }
+
+
+# grouped API의 필터 전체 대상 기사 기준 요약 집계를 계산한다.
+def _grouped_summary_counts(
+    conn: sqlite3.Connection,
+    query: dict[str, Any],
+    where_sql: str,
+    params: list[Any],
+) -> dict[str, int]:
+    rows = conn.execute(
+        f"""
+        SELECT a.title, sen.sentiment
+        FROM crawl_articles a
+        LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ?
+        LEFT JOIN article_sentiment sen ON a.article_id = sen.article_id
+        {where_sql}
+        """,
+        [query["user_id"], *params],
+    ).fetchall()
+    return {
+        "directMentionCount": sum(1 for row in rows if _mentions_direct_sk(row["title"])),
+        "negativeCount": sum(1 for row in rows if str(row["sentiment"] or "").lower() == "negative"),
     }
 
 
@@ -1059,6 +1087,10 @@ def _split_filter_term_tokens(value: str | None) -> list[str]:
 
 def _normalize_term(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _mentions_direct_sk(title: str | None) -> bool:
+    return bool(DIRECT_SK_PATTERN.search(str(title or "")))
 
 
 # 현재 한국 시간을 문자열로 반환한다.
