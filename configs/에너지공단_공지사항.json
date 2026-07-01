@@ -1,17 +1,17 @@
 {
-  "name": "에너지공단_공지사항",
-  "start_url": "https://www.knrec.or.kr/biz/pds/notice/list.do?page={search_term}&",
-  "output_dir": "outputs/knrec_notice",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T13:15:44+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "에너지공단_공지사항",
   "notes": "공지사항이 매우 많은 것으로 보아, 개수 제한을 두지 않고 계속 공지사항을 쌓을 가능성이 있어보임. 만약 예상한 것보다 적게 수집되면, 공지사항의 개수가 16개보다 많아졌을 수 있으므로 확인 필요",
+  "output_dir": "outputs/knrec_notice",
+  "renderer": "playwright",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "start_url": "https://www.knrec.or.kr/biz/pds/notice/list.do?page={search_term}&",
   "steps": [
     {
       "name": "open_detail",
@@ -49,6 +49,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T13:15:44+09:00",
-  "updated_at": "2026-05-30T10:10:06+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:27:48+09:00",
+  "category": "GR",
+  "crawling_type": ""
 }

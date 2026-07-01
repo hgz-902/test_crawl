@@ -1,17 +1,17 @@
 {
-  "name": "산업부_공지사항",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCL6e90bb9de?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
-  "output_dir": "outputs/motir_notice",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T09:56:12+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "산업부_공지사항",
   "notes": "",
+  "output_dir": "outputs/motir_notice",
+  "renderer": "playwright",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "start_url": "https://www.motir.go.kr/kor/article/ATCL6e90bb9de?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&searchCategory=0&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
   "steps": [
     {
       "name": "open_detail",
@@ -51,6 +51,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:56:12+09:00",
-  "updated_at": "2026-05-30T10:08:59+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:25:07+09:00",
+  "category": "GR",
+  "crawling_type": ""
 }

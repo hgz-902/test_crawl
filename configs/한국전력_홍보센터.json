@@ -1,17 +1,17 @@
 {
-  "name": "한국전력_홍보센터",
-  "start_url": "https://www.kepco.co.kr/home/media/newsroom/pr/boardList.do?s_field=ALL&s_searchYn=Y&page={search_term}",
-  "output_dir": "outputs/kepco_media",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T11:16:54+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "한국전력_홍보센터",
   "notes": "게시판 내용(글)이 이미지로 되어있는데, 현재의 크롤링 설정만으로 내용을 추출하기 어려워 보임.",
+  "output_dir": "outputs/kepco_media",
+  "renderer": "playwright",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "start_url": "https://www.kepco.co.kr/home/media/newsroom/pr/boardList.do?s_field=ALL&s_searchYn=Y&page={search_term}",
   "steps": [
     {
       "name": "open_detail",
@@ -50,6 +50,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T11:16:54+09:00",
-  "updated_at": "2026-05-26T17:18:36+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:26:25+09:00",
+  "category": "GR",
+  "crawling_type": ""
 }

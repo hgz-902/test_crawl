@@ -1,17 +1,17 @@
 {
-  "name": "산업부_입법예고",
-  "start_url": "https://www.motir.go.kr/kor/article/ATCLa1cb24c71?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
-  "output_dir": "outputs/motir_lowmaking",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T09:43:45+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "산업부_입법예고",
   "notes": "",
+  "output_dir": "outputs/motir_lowmaking",
+  "renderer": "playwright",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "start_url": "https://www.motir.go.kr/kor/article/ATCLa1cb24c71?mno=&pageIndex={search_term}&rowPageC=0&displayAuthor=&schClear=on&startDtD=&endDtD=&searchCondition=1&searchKeyword=",
   "steps": [
     {
       "name": "open_detail",
@@ -51,6 +51,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T09:43:45+09:00",
-  "updated_at": "2026-05-30T10:08:46+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:24:49+09:00",
+  "category": "GR",
+  "crawling_type": ""
 }

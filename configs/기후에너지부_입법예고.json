@@ -1,4 +1,6 @@
 {
+  "category": "GR",
+  "crawling_type": "",
   "created_at": "2026-05-26T10:54:51+09:00",
   "filter_terms": [],
   "headless": true,
@@ -55,7 +57,5 @@
     }
   ],
   "timeout_ms": 30000,
-  "updated_at": "2026-06-25T09:06:55+09:00",
-  "category": "",
-  "crawling_type": ""
+  "updated_at": "2026-07-01T11:25:34+09:00"
 }

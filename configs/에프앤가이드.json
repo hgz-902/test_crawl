@@ -1,14 +1,14 @@
 {
-  "name": "에프앤가이드",
-  "start_url": "https://www.fnguide.com/",
-  "output_dir": "outputs/fnguide",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-15T00:00:00+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "에프앤가이드",
   "notes": "유료 회원 가입이 필요하여 크롤링 개발 보류. 현재는 기본정보와 시작 URL만 등록한 상태이며, 수집 실행 단계는 실제 크롤링을 수행하지 않는 placeholder이다.",
+  "output_dir": "outputs/fnguide",
+  "renderer": "playwright",
   "search_terms": [],
-  "filter_terms": [],
+  "start_url": "https://www.fnguide.com/",
   "steps": [
     {
       "name": "crawl_deferred_paid_membership",
@@ -19,6 +19,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-15T00:00:00+09:00",
-  "updated_at": "2026-05-21T09:56:19+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:30:01+09:00",
+  "category": "PR",
+  "crawling_type": ""
 }

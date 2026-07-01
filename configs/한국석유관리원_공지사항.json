@@ -1,17 +1,17 @@
 {
-  "name": "한국석유관리원_공지사항",
-  "start_url": "https://www.kpetro.or.kr/lay1/bbs/S1T52C254/A/1/list.do?rows=10&cpage={search_term}",
-  "output_dir": "outputs/kpetro_notice",
-  "timeout_ms": 30000,
-  "renderer": "playwright",
+  "created_at": "2026-05-26T13:38:25+09:00",
+  "filter_terms": [],
   "headless": true,
   "ignore_https_errors": false,
+  "name": "한국석유관리원_공지사항",
   "notes": "",
+  "output_dir": "outputs/kpetro_notice",
+  "renderer": "playwright",
   "search_terms": [
     "1",
     "2"
   ],
-  "filter_terms": [],
+  "start_url": "https://www.kpetro.or.kr/lay1/bbs/S1T52C254/A/1/list.do?rows=10&cpage={search_term}",
   "steps": [
     {
       "name": "open_detail",
@@ -50,6 +50,8 @@
       "wait_state": "attached"
     }
   ],
-  "created_at": "2026-05-26T13:38:25+09:00",
-  "updated_at": "2026-05-30T10:10:15+09:00"
+  "timeout_ms": 30000,
+  "updated_at": "2026-07-01T11:28:16+09:00",
+  "category": "GR",
+  "crawling_type": ""
 }

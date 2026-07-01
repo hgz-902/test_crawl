@@ -1,4 +1,6 @@
 {
+  "category": "CR",
+  "crawling_type": "",
   "created_at": "2026-05-22T16:56:20+09:00",
   "filter_terms": [
     "석유",
@@ -41,7 +43,11 @@
   "renderer": "playwright",
   "search_terms": [
     "0",
-    "20"
+    "20",
+    "40",
+    "60",
+    "80",
+    "100"
   ],
   "start_url": "https://theminjoo.kr/main/sub/news/list.php?sno={search_term}&par=&&par=&brd=230",
   "steps": [
@@ -53,6 +59,14 @@
       "loop_mode": "items",
       "action": "click",
       "open_mode": "same_tab",
+      "wait_state": "attached"
+    },
+    {
+      "name": "extract_date",
+      "xpath": "//*[@id=\"container\"]/div[2]/div/div[1]/div[1]/div[1]/ul/li[3]",
+      "loop": false,
+      "action": "extract",
+      "attr": "text",
       "wait_state": "attached"
     },
     {
@@ -73,7 +87,5 @@
     }
   ],
   "timeout_ms": 30000,
-  "updated_at": "2026-06-23T17:24:04+09:00",
-  "category": "",
-  "crawling_type": ""
+  "updated_at": "2026-07-01T11:23:34+09:00"
 }
