@@ -10,7 +10,9 @@
 범위는 다음 2가지다.
 
 1. 사이드바 카테고리별 키워드 관리 API
-2. 기존 뉴스 조회 API의 `category_code` 기반 필터 확장
+2. 기존 뉴스 조회 API의 `category_code` 기반 필터 및 응답 필드 확장
+
+추가로, 개발/검수 편의를 위해 독립 뉴스 리뷰 UI 프로토타입 정적 파일을 `/static/news_review_ui/` 아래에 포함한다.
 
 기존에 이미 있던 읽음/즐겨찾기/분석 저장/필터 옵션 API는 본 문서의 상세 정의 대상이 아니다.
 
@@ -21,6 +23,9 @@
 | API 라우터 | `crawler_app/news_ui_api.py` | FastAPI endpoint 정의 |
 | SQLite 저장/조회 로직 | `crawler_app/news_sqlite_store.py` | 카테고리 키워드 CRUD 및 뉴스 조회 조건 처리 |
 | API 라우터 연결 | `crawler_app/web.py` | `news_ui_router`를 FastAPI 앱에 include |
+| 뉴스 리뷰 UI 프로토타입 | `static/news_review_ui/index.html` | 독립 뉴스 리뷰 화면 |
+| 뉴스 리뷰 UI 스크립트 | `static/news_review_ui/app.js` | 뉴스 API 호출, 카테고리/필터/테이블 렌더링 |
+| 뉴스 리뷰 UI 스타일 | `static/news_review_ui/styles.css` | 독립 뉴스 리뷰 화면 스타일 |
 
 ## 3. DB 변경 사항
 
@@ -271,7 +276,22 @@ GET /api/stats
 | `category_code` | 없음 | 사이드바 카테고리 코드. 예: `SK` |
 | `keyword_group` | `PR` | 카테고리 키워드 그룹 |
 
-### 5.3 동작 방식
+### 5.3 추가 응답 필드
+
+`/api/news`와 `/api/news/grouped`의 기사 item에 `category_code`가 추가된다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `category_code` | `string \| null` | 해당 기사 `filter_term`을 카테고리 키워드 기준표와 매칭해 계산한 대표 카테고리 코드 |
+
+중요:
+
+- 이 값은 요청 파라미터 `category_code`를 그대로 echo하는 값이 아니다.
+- 서버가 `crawl_articles.filter_term`과 `monitoring_category_keywords`를 비교해서 기사별로 계산한다.
+- `GET /api/news/grouped`에서는 대표 기사 item과 `similar_articles` item 모두에 포함된다.
+- 카테고리 키워드 기준표가 비어 있거나 매칭되는 키워드가 없으면 `null`이다.
+
+### 5.4 카테고리 필터 동작 방식
 
 프론트엔드는 키워드 배열을 직접 넘기지 않는다.
 
@@ -303,13 +323,40 @@ OR LOWER(a.filter_term) LIKE LOWER('%SK%')
 OR LOWER(a.filter_term) LIKE LOWER('%대한상의%')
 ```
 
-### 5.4 `/api/news` 사용 예시
+### 5.5 기사별 `category_code` 계산 방식
+
+뉴스 목록에 표시할 `category_code`는 필터링과 별도로 계산한다.
+
+1. 요청의 `keyword_group` 기준으로 `monitoring_category_keywords` 전체를 한 번 조회한다.
+2. 각 기사 `filter_term`을 쉼표 기준으로 나눈다.
+3. 나뉜 토큰과 카테고리 키워드가 정확히 일치하면 해당 카테고리를 후보로 본다.
+4. 여러 카테고리가 매칭되면 매칭 키워드 수가 많은 카테고리를 우선한다.
+5. 동률이면 구체 카테고리 우선순위를 적용한다.
+
+구체 카테고리 우선순위:
+
+```text
+SKI -> SKE -> SKGC -> SKEN -> SKEO -> SKO -> SKIET -> E&S -> SK
+```
+
+예:
+
+- `filter_term = "SK온, 배터리"`이고 `SKO`에 `SK온`, `배터리`가 저장되어 있으면 `category_code = "SKO"`
+- `filter_term = "SK, SK온"`이면 `SK`와 `SKO`가 모두 후보가 될 수 있으나, 구체 카테고리 우선순위에 따라 `SKO`가 선택될 수 있다.
+- `filter_term = "반도체"`이고 어떤 카테고리 키워드와도 정확히 일치하지 않으면 `category_code = null`
+
+주의:
+
+- 필터링은 기존 호환을 위해 `LIKE` 조건을 사용한다.
+- 응답용 `category_code` 계산은 `SK`가 `SK온`, `SK하이닉스`를 과도하게 잡지 않도록 정확 토큰 매칭을 사용한다.
+
+### 5.6 `/api/news` 사용 예시
 
 ```http
 GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size=20
 ```
 
-응답은 기존 `/api/news`와 동일한 형태다.
+응답은 기존 `/api/news` 형태에 `category_code`가 추가된다.
 
 ```json
 {
@@ -322,6 +369,7 @@ GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size
       "title": "기사 제목",
       "source_name": "연합뉴스",
       "filter_term": "SK",
+      "category_code": "SK",
       "published_at": "2026-06-29 10:30:00",
       "url": "https://example.com/news/1",
       "is_major": true,
@@ -336,7 +384,7 @@ GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size
 }
 ```
 
-### 5.5 `/api/news/grouped` 사용 예시
+### 5.7 `/api/news/grouped` 사용 예시
 
 ```http
 GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size=20
@@ -346,8 +394,33 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&page=1&p
 
 - 카테고리 조건으로 필터링한 뒤 유사 기사 그룹 대표 목록을 반환한다.
 - 기존 grouped API 응답 구조는 유지한다.
+- 대표 기사 item과 `similar_articles` item 모두 `category_code`를 포함한다.
 
-### 5.6 `/api/stats` 사용 예시
+응답 일부 예시:
+
+```json
+{
+  "items": [
+    {
+      "article_id": "representative-id",
+      "title": "대표 기사 제목",
+      "filter_term": "SK온, 배터리",
+      "category_code": "SKO",
+      "similar_count": 1,
+      "similar_articles": [
+        {
+          "article_id": "similar-id",
+          "title": "유사 기사 제목",
+          "filter_term": "SK온",
+          "category_code": "SKO"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 5.8 `/api/stats` 사용 예시
 
 ```http
 GET /api/stats?user_id=unknown&category_code=SK&keyword_group=PR
@@ -373,13 +446,33 @@ GET /api/stats?user_id=unknown&category_code=SK&keyword_group=PR
 2. 프론트엔드는 `/api/news`에 `category_code=SK`만 전달
 3. 서버가 SK에 저장된 키워드 목록을 조회
 4. 서버가 `filter_term` 기준으로 해당 키워드들을 OR 검색
-5. 결과 기사를 테이블에 표시
+5. 결과 기사 item별 `category_code`를 함께 내려준다.
+6. UI는 사이드바에서 특정 카테고리를 선택한 상태라면 해당 선택값을 분류 표시에서 우선할 수 있다.
+7. 전체 조회에서는 서버가 내려준 item별 `category_code`를 분류 표시값으로 쓰는 것을 권장한다.
 
 ### 6.3 유사 기사 토글이 켜져 있을 때
 
 1. 사용자가 `SK` 클릭
 2. 유사 기사 토글 ON이면 `/api/news/grouped?category_code=SK` 호출
 3. 서버가 동일한 카테고리 필터를 적용한 뒤 대표 기사와 유사 기사 목록 반환
+4. 대표 기사와 유사 기사 모두 `category_code`를 포함하므로, 접힌 유사 기사 행에서도 같은 방식으로 분류 표시가 가능하다.
+
+### 6.4 독립 뉴스 리뷰 UI 프로토타입
+
+정적 UI 프로토타입은 아래 경로에서 제공한다.
+
+```http
+GET /static/news_review_ui/index.html
+```
+
+주요 연동 API:
+
+- 기사 목록: `GET /api/news`
+- 유사 기사 목록: `GET /api/news/grouped`
+- 통계: `GET /api/stats`
+- 출처/필터어 옵션: `GET /api/filter-options`
+- 카테고리 키워드 설정: `GET/PUT/POST/DELETE /api/category-keywords...`
+- 읽음/즐겨찾기 토글: `PATCH /api/news/{article_id}/read`, `PATCH /api/news/{article_id}/favorite`
 
 ## 7. 주의 사항
 
@@ -389,4 +482,5 @@ GET /api/stats?user_id=unknown&category_code=SK&keyword_group=PR
 4. `category_code` 검색은 제목/본문 검색이 아니라 `crawl_articles.filter_term` 검색이다.
 5. 카테고리에 키워드가 저장되어 있지 않으면 `category_code` 조회 결과는 0건이다.
 6. 프론트엔드에서 키워드 배열을 직접 `/api/news`에 넘기지 않는다. 키워드 배열은 서버 DB에 저장하고, 조회 시 `category_code`만 넘긴다.
-
+7. 전체 조회에서 기사별 분류를 표시하려면 `monitoring_category_keywords`에 카테고리 키워드 seed 데이터가 먼저 저장되어 있어야 한다.
+8. seed 데이터가 없으면 `/api/news` 응답의 `category_code`는 `null`이 될 수 있으며, 이 경우 UI fallback 값이 실제 분류처럼 보이지 않도록 주의해야 한다.

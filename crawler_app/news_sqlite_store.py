@@ -21,6 +21,17 @@ ALLOWED_SORTS = {
     "is_favorite": "is_favorite",
     "is_major": "is_active",
 }
+CATEGORY_PRIORITY = {
+    "SKI": 1,
+    "SKE": 2,
+    "SKGC": 3,
+    "SKEN": 4,
+    "SKEO": 5,
+    "SKO": 6,
+    "SKIET": 7,
+    "E&S": 8,
+    "SK": 99,
+}
 
 
 # 뉴스 UI SQLite DB의 기본 경로를 반환한다.
@@ -631,6 +642,7 @@ def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]
     where_sql, params = _where_clause(query)
     sort_sql = _sort_sql(query)
     page, page_size, offset = _page(query)
+    category_index = _category_keyword_index(conn, query)
     total = conn.execute(f"SELECT COUNT(*) AS cnt FROM crawl_articles a LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ? {where_sql}", [query["user_id"], *params]).fetchone()["cnt"]
     rows = conn.execute(
         f"""
@@ -644,7 +656,12 @@ def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]
         """,
         [query["user_id"], *params, page_size, offset],
     ).fetchall()
-    return {"totalCount": int(total or 0), "page": page, "pageSize": page_size, "items": [_api_item(row) for row in rows]}
+    return {
+        "totalCount": int(total or 0),
+        "page": page,
+        "pageSize": page_size,
+        "items": [_api_item(row, category_index=category_index) for row in rows],
+    }
 
 
 # 그룹 뉴스 목록 API 응답을 조회한다.
@@ -653,6 +670,7 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
     where_sql, params = _where_clause(query)
     sort_sql = _sort_sql(query)
     page, page_size, offset = _page(query)
+    category_index = _category_keyword_index(conn, query)
     base_params = [query["user_id"], *params]
     representative_where = f"{where_sql} AND (c.article_id IS NULL OR c.is_representative = 1)"
     total = conn.execute(
@@ -678,10 +696,10 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
         """,
         [*base_params, page_size, offset],
     ).fetchall()
-    items = [_api_item(row) for row in rows]
+    items = [_api_item(row, category_index=category_index) for row in rows]
     for item, row in zip(items, rows):
         item["cluster_id"] = row["cluster_id"]
-        similar_articles = _similar_articles(conn, row["cluster_id"], query) if row["cluster_id"] else []
+        similar_articles = _similar_articles(conn, row["cluster_id"], query, category_index=category_index) if row["cluster_id"] else []
         item["similar_count"] = len(similar_articles)
         item["similar_articles"] = similar_articles
     total_articles = conn.execute("SELECT COUNT(*) AS cnt FROM crawl_articles WHERE title IS NOT NULL AND title != ''").fetchone()["cnt"]
@@ -868,7 +886,13 @@ ARTICLE_SELECT_COLUMNS = """
 
 
 # cluster_id에 속한 대표 제외 유사 기사를 현재 목록 필터 안에서 조회한다.
-def _similar_articles(conn: sqlite3.Connection, cluster_id: str, query: dict[str, Any]) -> list[dict[str, Any]]:
+def _similar_articles(
+    conn: sqlite3.Connection,
+    cluster_id: str,
+    query: dict[str, Any],
+    *,
+    category_index: dict[str, list[str]],
+) -> list[dict[str, Any]]:
     where_sql, params = _where_clause(query)
     rows = conn.execute(
         f"""
@@ -884,7 +908,7 @@ def _similar_articles(conn: sqlite3.Connection, cluster_id: str, query: dict[str
         """,
         [query["user_id"], *params, cluster_id],
     ).fetchall()
-    return [_api_item(row) for row in rows]
+    return [_api_item(row, category_index=category_index) for row in rows]
 
 
 # 공통 필터 SQL과 파라미터를 만든다.
@@ -968,12 +992,14 @@ def _page(query: dict[str, Any]) -> tuple[int, int, int]:
 
 
 # SQLite row를 프론트엔드 호환 API item으로 변환한다.
-def _api_item(row: sqlite3.Row) -> dict[str, Any]:
+def _api_item(row: sqlite3.Row, *, category_index: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    filter_term = row["filter_term"]
     return {
         "article_id": row["article_id"],
         "title": row["title"],
         "source_name": row["source_name"],
-        "filter_term": row["filter_term"],
+        "filter_term": filter_term,
+        "category_code": _category_code_for_filter_term(filter_term, category_index or {}),
         "published_at": row["published_at"],
         "url": row["url"],
         "is_major": bool(row["is_major"]),
@@ -984,6 +1010,55 @@ def _api_item(row: sqlite3.Row) -> dict[str, Any]:
         "sentiment": row["sentiment"],
         "sentiment_confidence": row["sentiment_confidence"],
     }
+
+
+# 현재 요청 keyword_group 기준으로 category keyword index를 만든다.
+def _category_keyword_index(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, list[str]]:
+    group = str(query.get("keyword_group") or "PR").strip() or "PR"
+    rows = conn.execute(
+        """
+        SELECT category_code, keyword
+        FROM monitoring_category_keywords
+        WHERE keyword_group = ?
+        ORDER BY category_code ASC, sort_order ASC, keyword ASC
+        """,
+        (_keyword_group(group),),
+    ).fetchall()
+    index: dict[str, list[str]] = {}
+    for row in rows:
+        keyword = _normalize_term(row["keyword"])
+        category = _category_code(row["category_code"])
+        if keyword:
+            index.setdefault(keyword, [])
+            if category not in index[keyword]:
+                index[keyword].append(category)
+    return index
+
+
+# filter_term 토큰과 category keyword의 정확 일치만 사용해 대표 category_code를 계산한다.
+def _category_code_for_filter_term(filter_term: str | None, category_index: dict[str, list[str]]) -> str | None:
+    if not category_index:
+        return None
+    scores: dict[str, int] = {}
+    for token in _split_filter_term_tokens(filter_term):
+        for category in category_index.get(token, []):
+            scores[category] = scores.get(category, 0) + 1
+    if not scores:
+        return None
+    return sorted(scores, key=lambda category: (-scores[category], CATEGORY_PRIORITY.get(category.upper(), 50), category))[0]
+
+
+def _split_filter_term_tokens(value: str | None) -> list[str]:
+    tokens: list[str] = []
+    for term in str(value or "").split(","):
+        normalized = _normalize_term(term)
+        if normalized and normalized not in tokens:
+            tokens.append(normalized)
+    return tokens
+
+
+def _normalize_term(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 # 현재 한국 시간을 문자열로 반환한다.

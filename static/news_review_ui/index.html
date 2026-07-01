@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>News Monitoring Agent</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-title">News Monitoring</div>
+          <div class="brand-subtitle">Agent</div>
+        </div>
+
+        <section class="metric-card" aria-label="요약 통계">
+          <div class="metric-row">
+            <span>오늘 신규</span>
+            <strong id="statTotal">0</strong>
+          </div>
+          <div class="metric-row">
+            <span>직접 언급</span>
+            <strong id="statDirect">0</strong>
+          </div>
+          <div class="metric-row danger">
+            <span>부정</span>
+            <strong id="statNegative">0</strong>
+          </div>
+        </section>
+
+        <section class="side-section">
+          <div class="side-label">Category</div>
+          <nav class="category-list" id="categoryList" aria-label="회사 카테고리"></nav>
+        </section>
+
+        <section class="utility-list">
+          <button type="button" class="utility-btn" id="settingsBtn">나의 설정</button>
+          <button type="button" class="utility-btn" id="adminBtn">관리자</button>
+        </section>
+      </aside>
+
+      <main class="main-panel">
+        <section class="filter-bar" aria-label="검색 필터">
+          <label class="field">
+            <span>검색 기간 (시작)</span>
+            <input id="fromDate" type="date">
+          </label>
+          <label class="field">
+            <span>검색 기간 (종료)</span>
+            <input id="toDate" type="date">
+          </label>
+          <div class="field field-button">
+            <span>출처</span>
+            <button type="button" id="sourcePickerBtn" class="picker-btn">출처를 선택...</button>
+          </div>
+          <div class="field field-button">
+            <span>검색어</span>
+            <button type="button" id="termPickerBtn" class="picker-btn">검색어를 선택...</button>
+          </div>
+          <label class="field field-title">
+            <span>제목</span>
+            <input id="titleSearch" type="search" placeholder="제목을 입력하세요">
+          </label>
+          <button type="button" id="searchBtn" class="primary-btn">검색</button>
+        </section>
+
+        <section class="selection-bar" aria-label="선택 요약">
+          <button type="button" class="summary-chip" id="selectedCompany">선택 회사: 전체</button>
+          <button type="button" class="summary-chip" id="selectedSource">선택 출처: 전체</button>
+          <div class="toolbar-spacer"></div>
+          <label class="switch">
+            <input type="checkbox" id="groupToggle" checked>
+            <span>유사기사 그룹</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="autoRefreshToggle">
+            <span>자동 새로고침</span>
+          </label>
+          <button type="button" class="ghost-btn" id="refreshBtn">새로고침</button>
+        </section>
+
+        <section class="table-card">
+          <div class="table-meta">
+            <div id="resultSummary">조회 준비 중</div>
+            <div id="statusText" class="status-text"></div>
+          </div>
+          <div class="pager top-pager" id="topPager"></div>
+          <div class="table-scroll">
+            <table class="news-table">
+              <thead>
+                <tr>
+                  <th class="col-index">#</th>
+                  <th class="col-company">분류</th>
+                  <th class="col-title">제목</th>
+                  <th>감성</th>
+                  <th>중요도</th>
+                  <th>출처</th>
+                  <th>관련어</th>
+                  <th>일시</th>
+                  <th>확인</th>
+                  <th>AI</th>
+                  <th>즐겨찾기</th>
+                </tr>
+              </thead>
+              <tbody id="newsBody">
+                <tr>
+                  <td colspan="11" class="empty-cell">데이터를 불러오는 중입니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pager" id="bottomPager"></div>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="pickerModal" hidden>
+      <section class="picker-modal" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+        <header class="modal-head">
+          <h2 id="pickerTitle">선택</h2>
+          <button type="button" class="icon-btn" id="pickerCloseBtn" aria-label="닫기">X</button>
+        </header>
+        <div class="picker-actions">
+          <button type="button" class="ghost-btn" id="pickerResetBtn">선택 초기화</button>
+          <button type="button" class="primary-btn" id="pickerApplyBtn">적용</button>
+        </div>
+        <div class="picker-grid" id="pickerGrid"></div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="analysisModal" hidden>
+      <section class="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysisTitle">
+        <header class="modal-head">
+          <h2 id="analysisTitle">AI 분석</h2>
+          <button type="button" class="icon-btn" id="analysisCloseBtn" aria-label="닫기">X</button>
+        </header>
+        <div id="analysisContent" class="analysis-content"></div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="adminModal" hidden>
+      <section class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+        <header class="modal-head">
+          <div>
+            <h2 id="adminTitle">카테고리 단어 관리</h2>
+            <p class="modal-desc">왼쪽 카테고리를 눌렀을 때 기사 조회에 사용할 검색어 목록을 저장합니다.</p>
+          </div>
+          <button type="button" class="icon-btn" id="adminCloseBtn" aria-label="닫기">X</button>
+        </header>
+        <div class="admin-grid">
+          <aside class="admin-category-panel">
+            <div class="admin-section-title">카테고리</div>
+            <div id="adminCategoryList" class="admin-category-list"></div>
+          </aside>
+          <section class="admin-keyword-panel">
+            <div class="admin-section-head">
+              <div>
+                <div class="admin-section-title" id="adminKeywordTitle">전체</div>
+                <div class="admin-help">줄바꿈 또는 쉼표로 여러 단어를 입력할 수 있습니다.</div>
+              </div>
+              <button type="button" class="ghost-btn" id="adminReloadBtn">다시 조회</button>
+            </div>
+            <textarea id="adminKeywordInput" class="keyword-input" placeholder="예: 최태원&#10;Chey Tae-won&#10;SK"></textarea>
+            <div class="keyword-actions">
+              <button type="button" class="primary-btn" id="adminSaveBtn">전체 저장</button>
+              <button type="button" class="ghost-btn" id="adminAppendBtn">목록에 추가</button>
+              <button type="button" class="ghost-btn danger-btn" id="adminDeleteAllBtn">전체 삭제</button>
+            </div>
+            <div class="admin-section-title">저장된 단어</div>
+            <div id="adminKeywordList" class="keyword-list"></div>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
