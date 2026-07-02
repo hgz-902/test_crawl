@@ -172,6 +172,24 @@ python -m uvicorn crawler_app.web:app --host 127.0.0.1 --port 3000
 
 Open `http://127.0.0.1:3000/orchestration`.
 
+### News Review API Test URLs
+
+Run the web app, then open these URLs in a browser or API client.
+
+Flat list:
+
+- Latest first: `http://127.0.0.1:3000/api/news?user_id=unknown&sort_by=published_at&sort_order=desc&page=1&page_size=20`
+- Oldest first: `http://127.0.0.1:3000/api/news?user_id=unknown&sort_by=published_at&sort_order=asc&page=1&page_size=20`
+- Negative first: `http://127.0.0.1:3000/api/news?user_id=unknown&sort_by=sentiment_negative&sort_order=desc&page=1&page_size=20`
+
+Grouped list:
+
+- Latest first: `http://127.0.0.1:3000/api/news/grouped?user_id=unknown&sort_by=published_at&sort_order=desc&page=1&page_size=20`
+- Oldest first: `http://127.0.0.1:3000/api/news/grouped?user_id=unknown&sort_by=published_at&sort_order=asc&page=1&page_size=20`
+- Negative first: `http://127.0.0.1:3000/api/news/grouped?user_id=unknown&sort_by=sentiment_negative&sort_order=desc&page=1&page_size=20`
+
+`sentiment_negative` sorts by `negative > neutral > positive > empty/other`, then newest first inside each sentiment group.
+
 The orchestration page supports:
 
 - Selecting registered crawler configs.
