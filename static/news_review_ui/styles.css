@@ -219,6 +219,7 @@ button {
 
 .selection-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-top: 14px;
@@ -237,6 +238,35 @@ button {
 
 .toolbar-spacer {
   flex: 1;
+}
+
+.sort-control {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(76px, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-soft);
+}
+
+.sort-btn {
+  min-height: 38px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sort-btn:last-child {
+  border-right: 0;
+}
+
+.sort-btn.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 .switch {

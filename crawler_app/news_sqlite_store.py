@@ -1102,7 +1102,16 @@ def _category_filter_keywords(query: dict[str, Any]) -> list[str]:
 
 # sort 파라미터를 안전한 SQL 조각으로 바꾼다.
 def _sort_sql(query: dict[str, Any]) -> str:
-    sort_by = ALLOWED_SORTS.get(str(query.get("sort_by") or "published_at"), "published_at")
+    sort_by_key = str(query.get("sort_by") or "published_at")
+    if sort_by_key == "sentiment_negative":
+        return (
+            "CASE LOWER(COALESCE(sen.sentiment, '')) "
+            "WHEN 'negative' THEN 0 "
+            "WHEN 'neutral' THEN 1 "
+            "WHEN 'positive' THEN 2 "
+            "ELSE 3 END ASC, COALESCE(a.published_at, a.first_seen_at) DESC"
+        )
+    sort_by = ALLOWED_SORTS.get(sort_by_key, "published_at")
     sort_order = "ASC" if str(query.get("sort_order") or "").lower() == "asc" else "DESC"
     return f"{sort_by} {sort_order}"
 

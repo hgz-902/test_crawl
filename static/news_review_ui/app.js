@@ -27,6 +27,7 @@ const state = {
   source: "",
   filterTerm: "",
   title: "",
+  sortMode: "newest",
   options: { sources: [], filter_terms: [] },
   picker: { type: "", pendingValue: "" },
   admin: { category: "SK", detail: null },
@@ -121,6 +122,14 @@ function bindEvents() {
     state.grouped = els.groupToggle.checked;
     state.page = 1;
     loadNews();
+  });
+  document.querySelectorAll("[data-sort-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.sortMode = button.dataset.sortMode || "newest";
+      state.page = 1;
+      renderSortButtons();
+      loadNews();
+    });
   });
   els.autoRefreshToggle.addEventListener("change", () => {
     state.autoRefresh = els.autoRefreshToggle.checked;
@@ -343,8 +352,9 @@ async function loadNews() {
   const params = buildBaseParams();
   params.set("page", String(state.page));
   params.set("page_size", String(state.pageSize));
-  params.set("sort_by", "published_at");
-  params.set("sort_order", "desc");
+  const sort = currentSortParams();
+  params.set("sort_by", sort.sortBy);
+  params.set("sort_order", sort.sortOrder);
 
   try {
     const data = await apiGet(`${endpoint}?${params.toString()}`);
@@ -383,6 +393,18 @@ function readFilters() {
   state.fromDate = els.fromDate.value || "";
   state.toDate = els.toDate.value || "";
   state.title = els.titleSearch.value.trim();
+}
+
+function currentSortParams() {
+  if (state.sortMode === "oldest") return { sortBy: "published_at", sortOrder: "asc" };
+  if (state.sortMode === "negative") return { sortBy: "sentiment_negative", sortOrder: "desc" };
+  return { sortBy: "published_at", sortOrder: "desc" };
+}
+
+function renderSortButtons() {
+  document.querySelectorAll("[data-sort-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.sortMode === state.sortMode);
+  });
 }
 
 function renderTable(data) {
