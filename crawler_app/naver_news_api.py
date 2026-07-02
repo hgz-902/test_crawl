@@ -13,6 +13,8 @@ import re
 
 import requests
 
+from crawler_app.article_body_extractor import enrich_items_with_article_body
+
 
 NAVER_NEWS_API_ATTR = "naver"
 NAVER_CLIENT_ID_ENV = "NAVER_CLIENT_ID"
@@ -130,6 +132,12 @@ def save_naver_news_api_items(
     filter_terms: list[str] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    enrich_items_with_article_body(
+        items,
+        platform="naver",
+        timeout=30.0,
+        url_selector=lambda item: str(item.get("originallink") or item.get("detail_url") or item.get("link") or ""),
+    )
     date_label, time_label = _korean_timestamp_labels()
     items_dir = output_dir / "items" / date_label
     items_dir.mkdir(parents=True, exist_ok=True)

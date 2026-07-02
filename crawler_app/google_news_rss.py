@@ -14,6 +14,8 @@ import time
 
 import requests
 
+from crawler_app.article_body_extractor import enrich_items_with_article_body
+
 
 GOOGLE_NEWS_RSS_ATTR = "google"
 GOOGLE_NEWS_RSS_ALLOWED_HOST = "news.google.com"
@@ -110,6 +112,12 @@ def save_google_news_rss_items(
     filter_terms: list[str] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    enrich_items_with_article_body(
+        items,
+        platform="google",
+        timeout=30.0,
+        url_selector=lambda item: str(item.get("detail_url") or item.get("link") or ""),
+    )
     date_label, time_label = _korean_timestamp_labels()
     items_dir = output_dir / "items" / date_label
     items_dir.mkdir(parents=True, exist_ok=True)

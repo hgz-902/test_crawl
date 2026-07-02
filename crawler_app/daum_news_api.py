@@ -11,6 +11,8 @@ import re
 
 import requests
 
+from crawler_app.article_body_extractor import enrich_items_with_article_body
+
 
 DAUM_NEWS_API_ATTR = "daum"
 KAKAO_REST_API_KEY_ENV = "KAKAO_REST_API_KEY"
@@ -141,6 +143,12 @@ def save_daum_news_api_items(
     allowed_domains: tuple[str, ...] = DEFAULT_NEWS_DOMAINS,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    enrich_items_with_article_body(
+        items,
+        platform="daum",
+        timeout=30.0,
+        url_selector=lambda item: str(item.get("detail_url") or item.get("link") or ""),
+    )
     date_label, time_label = _korean_timestamp_labels()
     items_dir = output_dir / "items" / date_label
     items_dir.mkdir(parents=True, exist_ok=True)

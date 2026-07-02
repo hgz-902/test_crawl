@@ -12,3 +12,6 @@ httpx>=0.28.0,<1
 pyarrow>=16.0.0,<17
 openai>=1.90.0,<3
 sentence-transformers>=3.0.0,<4
+newspaper3k>=0.2.8,<0.3
+lxml_html_clean>=0.3.1,<0.4
+googlenewsdecoder>=0.1.7,<0.2

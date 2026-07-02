@@ -46,6 +46,7 @@ DEFAULT_JOB_LOCK_DIR = DEFAULT_STATE_DIR / "locks"
 DEFAULT_KEYWORDS = ["SK", "최태원"]
 DEFAULT_RECIPIENTS = ["bloodknihts@gmail.com", "superknihts@nate.com"]
 DEFAULT_SENDER = "bloodknihts@gmail.com"
+SCHEDULE_TIMEZONE = timezone(timedelta(hours=9), "KST")
 RUN_LOCK_STALE_AFTER = timedelta(hours=12)
 INTERVAL_UNITS = {"minutes", "hours", "days"}
 DEFAULT_CRON_EXPRESSION = "0 * * * *"
@@ -149,6 +150,7 @@ class OrchestrationStateStore:
     def save_job_state(self, job_id: str, state: dict[str, Any]) -> dict[str, Any]:
         normalized = {
             "job_id": config_file_stem(job_id),
+            "cron": normalize_cron_expression(state.get("cron") or "") if state.get("cron") else "",
             "last_run_at": _clean_optional_timestamp(state.get("last_run_at")),
             "next_run_at": _clean_optional_timestamp(state.get("next_run_at")),
             "last_status": str(state.get("last_status") or ""),
@@ -305,8 +307,8 @@ def next_cron_run(cron: Any, *, after: datetime | None = None) -> datetime:
     minute_field, hour_field, day_field, month_field, weekday_field = expression.split()
     base = after or datetime.now(timezone.utc)
     if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    candidate = base.astimezone(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
+        base = base.replace(tzinfo=SCHEDULE_TIMEZONE)
+    candidate = base.astimezone(SCHEDULE_TIMEZONE).replace(second=0, microsecond=0) + timedelta(minutes=1)
     deadline = candidate + timedelta(days=366)
     while candidate <= deadline:
         weekday = (candidate.weekday() + 1) % 7
@@ -317,7 +319,7 @@ def next_cron_run(cron: Any, *, after: datetime | None = None) -> datetime:
             and _cron_field_matches(month_field, candidate.month)
             and (_cron_field_matches(weekday_field, weekday) or (weekday == 0 and _cron_field_matches(weekday_field, 7)))
         ):
-            return candidate
+            return candidate.astimezone(timezone.utc)
         candidate += timedelta(minutes=1)
     raise ValueError(f"Could not resolve next run time within one year for cron expression: {expression}")
 
@@ -328,8 +330,8 @@ def cron_matches_datetime(cron: Any, candidate: datetime | None = None) -> bool:
     minute_field, hour_field, day_field, month_field, weekday_field = expression.split()
     value = candidate or datetime.now(timezone.utc)
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    value = value.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        value = value.replace(tzinfo=SCHEDULE_TIMEZONE)
+    value = value.astimezone(SCHEDULE_TIMEZONE).replace(second=0, microsecond=0)
     weekday = (value.weekday() + 1) % 7
     return (
         _cron_field_matches(minute_field, value.minute)
@@ -475,10 +477,15 @@ def apply_job_runtime_state(settings: dict[str, Any], store: OrchestrationStateS
         state = store.load_job_state(job_id)
         if not state:
             continue
-        for key in ("last_run_at", "next_run_at", "last_status"):
+        for key in ("last_run_at", "last_status"):
             value = state.get(key)
             if value:
                 job_settings[key] = value
+        state_cron = str(state.get("cron") or "").strip()
+        if state_cron and state_cron == str(job_settings.get("cron") or "").strip():
+            next_run_at = state.get("next_run_at")
+            if next_run_at:
+                job_settings["next_run_at"] = next_run_at
     return settings
 
 
@@ -698,8 +705,27 @@ def _lock_is_stale(lock_path: Path) -> bool:
     payload = _read_json_object(lock_path)
     created_at = _parse_timestamp(payload.get("created_at"))
     if created_at is None:
+        return True
+    if datetime.now(timezone.utc) - created_at > RUN_LOCK_STALE_AFTER:
+        return True
+    return not _lock_process_is_alive(payload.get("pid"))
+
+
+# lock 파일에 기록된 프로세스가 아직 살아 있는지 확인한다.
+def _lock_process_is_alive(pid_value: Any) -> bool:
+    try:
+        pid = int(pid_value)
+    except (TypeError, ValueError):
         return False
-    return datetime.now(timezone.utc) - created_at > RUN_LOCK_STALE_AFTER
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 # skipped running 결과 값을 계산해 반환한다.
@@ -749,6 +775,7 @@ def _update_job_runtime_state(
     store.save_job_state(
         job_id,
         {
+            "cron": cron,
             "last_run_at": started.isoformat(timespec="seconds"),
             "next_run_at": next_cron_run(cron, after=started).isoformat(timespec="seconds"),
             "last_status": result.status,

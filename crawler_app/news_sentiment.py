@@ -31,9 +31,9 @@ NEGATIVE_WORDS = {
 }
 
 
-# 개발팀 공유 노트북의 제목 키워드 기반 감성분석을 로컬 SQLite용으로 수행한다.
-def analyze_sentiment(title: str) -> dict[str, Any]:
-    text = (title or "").strip()
+# 개발팀 공유 노트북의 키워드 기반 감성분석을 로컬 SQLite용으로 수행한다.
+def analyze_sentiment(title: str, body: str = "") -> dict[str, Any]:
+    text = "\n".join(part.strip() for part in (title or "", body or "") if part and part.strip()).strip()
     if not text:
         return {"sentiment": "neutral", "confidence": 0.5}
 
@@ -57,7 +57,7 @@ def analyze_unanalyzed_articles(conn: Any) -> int:
     articles = unanalyzed_article_titles(conn)
     rows: list[dict[str, Any]] = []
     for article in articles:
-        result = analyze_sentiment(str(article.get("title") or ""))
+        result = analyze_sentiment(str(article.get("title") or ""), str(article.get("body") or ""))
         rows.append(
             {
                 "article_id": article["article_id"],

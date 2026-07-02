@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import time
+from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -26,6 +27,7 @@ from crawler_app.news_sqlite_store import (
     init_db,
     rebuild_filter_options,
     replace_clusters,
+    delete_batch_sentiments,
     update_source_config_categories,
     upsert_article,
 )
@@ -111,8 +113,10 @@ def sync_news_ui_database(
             categories_by_config = _config_categories_by_name(root)
             _progress(progress, f"loaded config categories: {len(categories_by_config)} configs")
             read_started = time.perf_counter()
+            _item_index_for_filter_dir.cache_clear()
             record_files = _workflow_record_files(outputs, source_output_dirs=source_output_dirs)
             _progress(progress, f"workflow record files: {len(record_files)}")
+            changed_article_ids: set[str] = set()
             for file_index, records_file in enumerate(record_files, start=1):
                 summary.files_read += 1
                 _progress(progress, f"reading file {file_index}/{len(record_files)}: {records_file}")
@@ -140,9 +144,11 @@ def sync_news_ui_database(
                     )
                     if not article:
                         continue
-                    upsert_article(conn, article)
+                    changed = upsert_article(conn, article)
                     summary.articles_upserted += 1
-                    if article.get("group_date"):
+                    if changed:
+                        changed_article_ids.add(str(article["article_id"]))
+                    if changed and article.get("group_date"):
                         summary.group_dates.add(str(article["group_date"]))
                     if progress and record_index % 100 == 0:
                         _progress(
@@ -156,6 +162,9 @@ def sync_news_ui_database(
             _progress(progress, "rebuilt filter options")
             summary.read_duration_seconds = time.perf_counter() - read_started
             sentiment_started = time.perf_counter()
+            invalidated = delete_batch_sentiments(conn, changed_article_ids)
+            if invalidated:
+                _progress(progress, f"invalidated batch sentiments for changed articles: {invalidated}")
             _progress(progress, "starting sentiment analysis")
             summary.sentiments_written = analyze_unanalyzed_articles(conn)
             summary.sentiment_duration_seconds = time.perf_counter() - sentiment_started
@@ -237,6 +246,7 @@ def _article_from_record(
     config_category: str,
     records_file: Path,
 ) -> dict[str, Any] | None:
+    item_payload = _item_payload_for_record(record, records_file)
     final_url = _record_text(record, "final_url", "url", "canonical_url")
     if not final_url:
         return None
@@ -253,6 +263,15 @@ def _article_from_record(
     source_site = _source_site(record, final_url, config_name)
     canonical_url = final_url.strip()
     article_id = _article_id(source_site, canonical_url)
+    body = _record_text(record, "extract_body", "body", "content")
+    if not body:
+        body = _record_text(item_payload, "extract_body", "body", "content")
+    body_extract_status = _record_text(record, "body_extract_status")
+    if not body_extract_status:
+        body_extract_status = _record_text(item_payload, "body_extract_status")
+    body_url = _record_text(record, "body_url")
+    if not body_url:
+        body_url = _record_text(item_payload, "body_url")
     return {
         "article_id": article_id,
         "record_key": _record_text(record, "record_key"),
@@ -261,6 +280,9 @@ def _article_from_record(
         "source_config_category": config_category,
         "canonical_url": canonical_url,
         "title": title,
+        "body": body,
+        "body_extract_status": body_extract_status,
+        "body_url": body_url,
         "published_at": _format_dt(published),
         "first_seen_at": _format_dt(first_seen),
         "last_seen_at": _format_dt(now),
@@ -271,6 +293,69 @@ def _article_from_record(
         "group_date": group_date,
         "filter_term": _record_text(record, "filter_term"),
     }
+
+
+def _item_payload_for_record(record: dict[str, Any], records_file: Path) -> dict[str, Any]:
+    for raw_path in _record_output_paths(record):
+        payload_path = _resolve_record_output_path(raw_path, records_file)
+        if not payload_path:
+            continue
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    record_key = _record_text(record, "record_key")
+    if record_key:
+        item_path = _item_index_for_filter_dir(str(records_file.parent)).get(record_key)
+        if item_path is not None:
+            try:
+                payload = json.loads(item_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
+            if isinstance(payload, dict):
+                return payload
+    return {}
+
+
+def _record_output_paths(record: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    value = _text(record.get("output_file"))
+    if value:
+        paths.append(value)
+    steps = record.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            value = _text(step.get("output_file"))
+            if value and value not in paths:
+                paths.append(value)
+    return paths
+
+
+def _resolve_record_output_path(raw_path: str, records_file: Path) -> Path | None:
+    path = Path(raw_path)
+    candidates = [path] if path.is_absolute() else [path, records_file.parent / path]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+@lru_cache(maxsize=128)
+def _item_index_for_filter_dir(filter_dir: str) -> dict[str, Path]:
+    root = Path(filter_dir)
+    if not root.exists():
+        return {}
+    index: dict[str, Path] = {}
+    for path in root.rglob("items/**/*.json"):
+        index.setdefault(path.stem, path)
+    return index
 
 
 # outputs 아래 workflow_records.json 및 rollup 파일을 찾는다.

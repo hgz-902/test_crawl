@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>검색엔진 3종 본문 수집 결과 요약</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #6a7280;
+      --line: #dfe4ec;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --soft-blue: #dbeafe;
+      --soft-green: #dcfce7;
+      --soft-amber: #fef3c7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1180px, calc(100% - 40px));
+      margin: 36px auto 56px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 22px 0;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 8px 20px rgba(20, 29, 46, 0.04);
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .note {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-top: 18px;
+      box-shadow: 0 8px 20px rgba(20, 29, 46, 0.04);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 19px;
+    }
+
+    .chart {
+      display: grid;
+      gap: 18px;
+      margin-top: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 110px 1fr 120px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .source {
+      font-weight: 700;
+    }
+
+    .bars {
+      display: grid;
+      gap: 7px;
+    }
+
+    .bar-line {
+      display: grid;
+      grid-template-columns: 92px 1fr 70px;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .bar-track {
+      height: 16px;
+      background: #edf1f7;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 999px;
+    }
+
+    .collected {
+      background: var(--blue);
+    }
+
+    .body {
+      background: var(--green);
+    }
+
+    .meaningful {
+      background: var(--amber);
+    }
+
+    .rate-pill {
+      display: inline-flex;
+      justify-content: center;
+      min-width: 76px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0f172a;
+      background: var(--soft-green);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin-top: 6px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 10px;
+      text-align: right;
+      vertical-align: middle;
+    }
+
+    th:first-child,
+    td:first-child {
+      text-align: left;
+      font-weight: 700;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      background: #f8fafc;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    .callout {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      color: #7c2d12;
+    }
+
+    .callout ul {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+
+    .reason-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .reason-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #ffffff;
+    }
+
+    .reason-card h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .reason-card p {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .reason-card ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        width: min(100% - 24px, 760px);
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+      }
+
+      .bar-line {
+        grid-template-columns: 82px 1fr 58px;
+      }
+
+      .reason-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>검색엔진 3종 본문 수집 결과 요약</h1>
+      <p class="subtitle">기준: limit 20 테스트 결과. 핵심 지표는 실제 활용 가능한 300자 이상 본문 확보율.</p>
+    </header>
+
+    <div class="summary-grid">
+      <div class="card">
+        <div class="label">전체 수집 기사</div>
+        <div class="value">2,029</div>
+        <div class="note">Google + Naver + Daum</div>
+      </div>
+      <div class="card">
+        <div class="label">300자 이상 본문</div>
+        <div class="value">1,864</div>
+        <div class="note">핵심 성공 지표, 전체 대비 91.9%</div>
+      </div>
+      <div class="card">
+        <div class="label">300자 미만 또는 실패</div>
+        <div class="value">165</div>
+        <div class="note">본문 실패 70건 + 300자 미만 95건</div>
+      </div>
+      <div class="card">
+        <div class="label">본문 추출 성공</div>
+        <div class="value">1,959</div>
+        <div class="note">보조 지표, 전체 대비 96.5%</div>
+      </div>
+    </div>
+
+    <section>
+      <h2>플랫폼별 수집 현황</h2>
+      <div class="chart">
+        <div class="row">
+          <div class="source">구글</div>
+          <div class="bars">
+            <div class="bar-line"><span>수집 기사</span><div class="bar-track"><div class="bar collected" style="width: 100%"></div></div><strong>353</strong></div>
+            <div class="bar-line"><span>본문 성공</span><div class="bar-track"><div class="bar body" style="width: 93.5%"></div></div><strong>330</strong></div>
+            <div class="bar-line"><span>300자 이상</span><div class="bar-track"><div class="bar meaningful" style="width: 83.3%"></div></div><strong>294</strong></div>
+          </div>
+          <span class="rate-pill">300자+ 83.3%</span>
+        </div>
+
+        <div class="row">
+          <div class="source">네이버뉴스</div>
+          <div class="bars">
+            <div class="bar-line"><span>수집 기사</span><div class="bar-track"><div class="bar collected" style="width: 100%"></div></div><strong>939</strong></div>
+            <div class="bar-line"><span>본문 성공</span><div class="bar-track"><div class="bar body" style="width: 95.1%"></div></div><strong>893</strong></div>
+            <div class="bar-line"><span>300자 이상</span><div class="bar-track"><div class="bar meaningful" style="width: 89.0%"></div></div><strong>836</strong></div>
+          </div>
+          <span class="rate-pill">300자+ 89.0%</span>
+        </div>
+
+        <div class="row">
+          <div class="source">다음</div>
+          <div class="bars">
+            <div class="bar-line"><span>수집 기사</span><div class="bar-track"><div class="bar collected" style="width: 100%"></div></div><strong>737</strong></div>
+            <div class="bar-line"><span>본문 성공</span><div class="bar-track"><div class="bar body" style="width: 99.9%"></div></div><strong>736</strong></div>
+            <div class="bar-line"><span>300자 이상</span><div class="bar-track"><div class="bar meaningful" style="width: 99.6%"></div></div><strong>734</strong></div>
+          </div>
+          <span class="rate-pill">300자+ 99.6%</span>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item"><span class="swatch collected"></span>수집 기사</span>
+        <span class="legend-item"><span class="swatch meaningful"></span>핵심 지표: 유의미한 본문(300자 이상)</span>
+        <span class="legend-item"><span class="swatch body"></span>보조 지표: 본문 수집 성공</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>상세 수치</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>구분</th>
+            <th>수집 기사 수</th>
+            <th>본문 성공</th>
+            <th>본문 실패</th>
+            <th>300자 이상</th>
+            <th>300자 이상 비율</th>
+            <th>본문 성공률</th>
+            <th>300자 미만 또는 실패</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>구글</td>
+            <td>353</td>
+            <td>330</td>
+            <td>23</td>
+            <td>294</td>
+            <td>83.3%</td>
+            <td>93.5%</td>
+            <td>59</td>
+          </tr>
+          <tr>
+            <td>네이버뉴스</td>
+            <td>939</td>
+            <td>893</td>
+            <td>46</td>
+            <td>836</td>
+            <td>89.0%</td>
+            <td>95.1%</td>
+            <td>103</td>
+          </tr>
+          <tr>
+            <td>다음</td>
+            <td>737</td>
+            <td>736</td>
+            <td>1</td>
+            <td>734</td>
+            <td>99.6%</td>
+            <td>99.9%</td>
+            <td>3</td>
+          </tr>
+          <tr>
+            <td>합계</td>
+            <td>2,029</td>
+            <td>1,959</td>
+            <td>70</td>
+            <td>1,864</td>
+            <td>91.9%</td>
+            <td>96.5%</td>
+            <td>165</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="callout">
+      <h2>300자 이상 본문 기준 유의사항</h2>
+      <ul>
+        <li>핵심 성공 기준은 단순 body 필드 생성이 아니라 300자 이상 본문 확보 여부다.</li>
+        <li>구글은 353건 중 294건이 300자 이상으로, 유의미한 본문 확보율은 83.3%다.</li>
+        <li>구글의 300자 이상 미확보 59건은 본문 추출 실패 23건과 300자 미만 저품질 본문 36건으로 나뉜다.</li>
+        <li>네이버뉴스는 939건 중 836건이 300자 이상이며, 다음은 737건 중 734건이 300자 이상이다.</li>
+        <li>300자 이상 미확보 원인은 단문 기사, 사진 기사, 언론사가 아닌 사이트, 외국 언론/투자 정보 사이트, 차단, 접속 실패, timeout 등이 섞여 있다.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>300자 이상 본문 미확보 원인 상세</h2>
+      <div class="reason-grid">
+        <div class="reason-card">
+          <h3>구글: 59건 미확보</h3>
+          <p>Google News 중계 URL을 원문으로 디코딩한 뒤 추출하지만, 원문 사이트 성격과 접근 제한의 영향을 가장 많이 받는다.</p>
+          <ul>
+            <li>300자 미만 저품질 본문 36건: 공유 문구, 요약, 사이트 푸터, 짧은 안내 문구만 추출된 케이스.</li>
+            <li>empty_body 13건: 원문 URL 접근은 했지만 newspaper3k가 본문 영역을 찾지 못한 케이스.</li>
+            <li>403 Forbidden 6건: Investing.com 등 사이트가 자동 접근을 차단한 케이스.</li>
+            <li>max retries 3건, timeout 1건: 실행 시간을 줄이기 위해 둔 제한 시간 안에 응답/파싱이 끝나지 않은 케이스.</li>
+            <li>언론사가 아닌 블로그/투자 정보 사이트, 외국 언론/외국어 사이트, 특수한 기사 템플릿에서 미확보가 집중된다.</li>
+          </ul>
+        </div>
+
+        <div class="reason-card">
+          <h3>네이버뉴스: 103건 미확보</h3>
+          <p>원문 링크 기준 추출은 대체로 안정적이지만, 일부 언론사의 기사 형식이 newspaper3k와 맞지 않았다.</p>
+          <ul>
+            <li>300자 미만 본문 57건: 사진 기사, 단신, 캡션 중심 기사, 짧은 보도자료성 기사.</li>
+            <li>empty_body 41건: The Bell, News1 등 일부 사이트에서 본문 DOM 구조 또는 스크립트 렌더링 때문에 본문을 못 찾은 케이스.</li>
+            <li>403/접속 실패 4건: 사이트 접근 제한 또는 일시적 연결 실패.</li>
+            <li>외국 언론/영문 사이트 링크가 섞이면 한국어 기사보다 본문 추출 안정성이 낮아진다.</li>
+          </ul>
+        </div>
+
+        <div class="reason-card">
+          <h3>다음: 3건 미확보</h3>
+          <p>Daum 기사 URL은 구조가 상대적으로 일정해서 가장 안정적이었다.</p>
+          <ul>
+            <li>300자 미만 본문 2건: 기사 자체가 짧거나 캡션/요약 위주인 케이스.</li>
+            <li>empty_body 1건: 본문 영역을 newspaper3k가 찾지 못한 케이스.</li>
+            <li>현재 테스트 기준으로 차단, timeout, DNS 문제는 사실상 발생하지 않았다.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

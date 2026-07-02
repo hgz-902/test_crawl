@@ -213,11 +213,12 @@ async def save_orchestration_route(request: Request) -> Response:
     form = await request.form()
     settings, jobs = settings_for_registered_jobs(store=ORCHESTRATION_STORE)
     try:
-        updated = _settings_from_form(form, jobs, settings, reset_next_run=False)
+        updated = _settings_from_form(form, jobs, settings, reset_next_run=True)
         validate_windows_schedule_settings(updated, jobs)
     except ValueError as exc:
-        return _redirect_orchestration(error=f"Cron 설정 오류: {exc}")
-    ORCHESTRATION_STORE.save_settings(updated)
+        return _redirect_orchestration(error=f"Cron 설정 오류: {exc} 저장되지 않았습니다.")
+    saved = ORCHESTRATION_STORE.save_settings(updated)
+    _persist_job_schedule_state(saved, jobs)
     return _redirect_orchestration(message="오케스트레이션 설정을 저장했습니다. 스케줄러와 크롤링 실행은 변경하지 않았습니다.")
 
 
@@ -230,7 +231,7 @@ async def run_orchestration_route(request: Request) -> Response:
     try:
         updated = _settings_from_form(form, jobs, settings, reset_next_run=False)
     except ValueError as exc:
-        return _redirect_orchestration(error=f"Cron 설정 오류: {exc}")
+        return _redirect_orchestration(error=f"Cron 설정 오류: {exc} 저장되지 않았습니다.")
     saved = ORCHESTRATION_STORE.save_settings(updated)
     _persist_job_schedule_state(saved, jobs)
     selected = [job.job_id for job in jobs if saved["jobs"].get(job.job_id, {}).get("enabled")]
@@ -281,7 +282,7 @@ async def sync_orchestration_scheduler_route(request: Request) -> Response:
             status_code = 200
         except Exception as exc:
             message = None
-            error = f"모니터링 시작 실패: {exc}"
+            error = f"모니터링 시작 실패: {exc} 저장되지 않았습니다."
     return _redirect_orchestration(message=message, error=error)
 
 
@@ -662,6 +663,7 @@ def _persist_job_schedule_state(settings: dict[str, Any], jobs: list[Any]) -> No
         ORCHESTRATION_STORE.save_job_state(
             job.job_id,
             {
+                "cron": job_settings.get("cron"),
                 "last_run_at": job_settings.get("last_run_at"),
                 "next_run_at": job_settings.get("next_run_at"),
                 "last_status": job_settings.get("last_status"),
@@ -697,6 +699,8 @@ def _smtp_ready() -> bool:
 def _scheduler_context(settings: dict[str, Any], jobs: list[Any], *, include_details: bool = True) -> tuple[list[dict[str, Any]], str]:
     try:
         registry_entries = load_scheduler_registry()
+        if include_details and not registry_entries:
+            return _scheduler_rows(settings, jobs, registry_entries, []), ""
         task_details = list_managed_task_details() if include_details else []
     except Exception as exc:
         return [], str(exc)

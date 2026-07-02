@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 import re
 import sqlite3
 import uuid
@@ -74,6 +74,9 @@ def init_db(db_path: str | Path) -> None:
                 source_config_category TEXT,
                 canonical_url TEXT NOT NULL,
                 title TEXT,
+                body TEXT,
+                body_extract_status TEXT,
+                body_url TEXT,
                 published_at TEXT,
                 first_seen_at TEXT,
                 last_seen_at TEXT,
@@ -168,6 +171,7 @@ def init_db(db_path: str | Path) -> None:
         )
         _migrate_crawl_articles_filter_term(conn)
         _migrate_crawl_articles_config_category(conn)
+        _migrate_crawl_articles_body_columns(conn)
         _migrate_article_sentiment(conn)
 
 
@@ -185,19 +189,29 @@ def clear_news_data(conn: sqlite3.Connection) -> None:
         conn.execute(f"DELETE FROM {table}")
 
 
-# 기사 1건을 안정 article_id 기준으로 upsert한다.
-def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
+# 기사 1건을 안정 article_id 기준으로 upsert하고, 재분석이 필요한 변경 여부를 반환한다.
+def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> bool:
     now = now_kst()
+    existing = conn.execute(
+        """
+        SELECT source_site, source_config_name, source_config_category, canonical_url, title,
+            body, body_extract_status, body_url, published_at, is_active, group_date, filter_term
+        FROM crawl_articles
+        WHERE article_id = ?
+        """,
+        (article["article_id"],),
+    ).fetchone()
+    changed = _article_changed(existing, article)
     conn.execute(
         """
         INSERT INTO crawl_articles (
             article_id, record_key, source_site, source_config_name, source_config_category, canonical_url, title,
-            published_at, first_seen_at, last_seen_at, created_at, updated_at,
+            body, body_extract_status, body_url, published_at, first_seen_at, last_seen_at, created_at, updated_at,
             is_active, crawl_date, group_date, filter_term
         )
         VALUES (
             :article_id, :record_key, :source_site, :source_config_name, :source_config_category, :canonical_url, :title,
-            :published_at, :first_seen_at, :last_seen_at, :created_at, :updated_at,
+            :body, :body_extract_status, :body_url, :published_at, :first_seen_at, :last_seen_at, :created_at, :updated_at,
             :is_active, :crawl_date, :group_date, :filter_term
         )
         ON CONFLICT(article_id) DO UPDATE SET
@@ -207,6 +221,9 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             source_config_category = excluded.source_config_category,
             canonical_url = excluded.canonical_url,
             title = excluded.title,
+            body = excluded.body,
+            body_extract_status = excluded.body_extract_status,
+            body_url = excluded.body_url,
             published_at = COALESCE(excluded.published_at, crawl_articles.published_at),
             first_seen_at = COALESCE(crawl_articles.first_seen_at, excluded.first_seen_at),
             last_seen_at = excluded.last_seen_at,
@@ -224,6 +241,9 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             "source_config_category": article.get("source_config_category", "PR"),
             "canonical_url": article["canonical_url"],
             "title": article.get("title"),
+            "body": article.get("body"),
+            "body_extract_status": article.get("body_extract_status"),
+            "body_url": article.get("body_url"),
             "published_at": article.get("published_at"),
             "first_seen_at": article.get("first_seen_at") or now,
             "last_seen_at": article.get("last_seen_at") or now,
@@ -235,6 +255,36 @@ def upsert_article(conn: sqlite3.Connection, article: dict[str, Any]) -> None:
             "filter_term": article.get("filter_term"),
         },
     )
+    return changed
+
+
+# last_seen/updated_at 같은 관측 시간만 바뀐 경우는 감성/그룹핑 재처리 대상으로 보지 않는다.
+def _article_changed(existing: sqlite3.Row | None, article: dict[str, Any]) -> bool:
+    if existing is None:
+        return True
+    checks = (
+        "source_site",
+        "source_config_name",
+        "source_config_category",
+        "canonical_url",
+        "title",
+        "body",
+        "body_extract_status",
+        "body_url",
+        "published_at",
+        "group_date",
+        "filter_term",
+    )
+    for key in checks:
+        if _normalize_compare(existing[key]) != _normalize_compare(article.get(key)):
+            return True
+    return int(existing["is_active"] or 0) != (1 if article.get("is_active", True) else 0)
+
+
+def _normalize_compare(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 # source/filter_term 필터 옵션 테이블을 현재 기사 기준으로 재생성한다.
@@ -324,6 +374,19 @@ def _migrate_crawl_articles_config_category(conn: sqlite3.Connection) -> None:
             ON crawl_articles(source_config_category)
         """
     )
+
+
+# 기존 SQLite DB의 검색엔진 본문 저장 컬럼을 안전하게 추가한다.
+def _migrate_crawl_articles_body_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(crawl_articles)").fetchall()}
+    expected = {
+        "body": "TEXT",
+        "body_extract_status": "TEXT",
+        "body_url": "TEXT",
+    }
+    for column, definition in expected.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE crawl_articles ADD COLUMN {column} {definition}")
 
 
 # 개발팀이 공유한 article_sentiment 확장 컬럼을 기존 SQLite DB에도 안전하게 추가한다.
@@ -550,11 +613,11 @@ def _renumber_category_keywords(conn: sqlite3.Connection, keyword_group: str, ca
         )
 
 
-# 감성분석이 아직 없는 기사 제목들을 조회한다.
+# 감성분석이 아직 없는 기사 제목/본문을 조회한다.
 def unanalyzed_article_titles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT a.article_id, a.title
+        SELECT a.article_id, a.title, a.body
         FROM crawl_articles a
         LEFT JOIN article_sentiment s ON a.article_id = s.article_id
         WHERE s.article_id IS NULL
@@ -601,6 +664,27 @@ def upsert_batch_sentiments(conn: sqlite3.Connection, rows: list[dict[str, Any]]
         ],
     )
     return len(rows)
+
+
+# 제목/본문이 바뀐 기사의 자동 감성분석 결과만 무효화한다.
+def delete_batch_sentiments(conn: sqlite3.Connection, article_ids: Iterable[str]) -> int:
+    ids = [article_id for article_id in article_ids if article_id]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    cursor = conn.execute(
+        f"""
+        DELETE FROM article_sentiment
+        WHERE article_id IN ({placeholders})
+            AND (
+                sentiment_source IS NULL
+                OR sentiment_source = ''
+                OR sentiment_source = 'batch'
+            )
+        """,
+        ids,
+    )
+    return int(cursor.rowcount or 0)
 
 
 # 특정 날짜의 기존 cluster를 지우고 새 그룹핑 결과를 저장한다.

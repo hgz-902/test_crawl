@@ -2419,6 +2419,9 @@ def _workflow_record_snapshot_record(
         "filter_term": _record_filter_terms(record, filter_terms),
         "extract_title": _record_title(record),
         "description": _record_description(record),
+        "extract_body": _record_body(record),
+        "body_extract_status": _record_body_extract_status(record),
+        "body_url": _record_body_url(record),
         "pub_date": _record_pub_date(record),
         "final_url": _record_final_url(config, record),
     }
@@ -2513,6 +2516,32 @@ def _record_description(record: dict[str, Any]) -> str:
         extracts.get("desc"),
         extracts.get("summary"),
     )
+
+
+# record 본문 값을 계산해 반환한다.
+def _record_body(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(
+        record.get("extract_body"),
+        record.get("body"),
+        record.get("content"),
+        extracts.get("extract_body"),
+        extracts.get("body"),
+        extracts.get("content"),
+        extracts.get("text"),
+    )
+
+
+# record 본문 추출 상태 값을 계산해 반환한다.
+def _record_body_extract_status(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(record.get("body_extract_status"), extracts.get("body_extract_status"))
+
+
+# record 본문 추출 URL 값을 계산해 반환한다.
+def _record_body_url(record: dict[str, Any]) -> str:
+    extracts = _record_extracts(record)
+    return _first_record_text(record.get("body_url"), extracts.get("body_url"))
 
 
 # record pub 날짜 값을 계산해 반환한다.
