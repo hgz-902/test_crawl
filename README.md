@@ -190,6 +190,8 @@ Grouped list:
 
 `sentiment_negative` sorts by `negative > neutral > positive > empty/other`, then newest first inside each sentiment group.
 
+`/api/news` and `/api/news/grouped` include `has_analysis` on each item. Passing `has_analysis=true` filters the list to articles with confirmed AI analysis saved through `/analysis/save`; this filter is combined with the existing query parameters.
+
 The orchestration page supports:
 
 - Selecting registered crawler configs.

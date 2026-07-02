@@ -699,7 +699,16 @@ def list_news(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[str, Any]
     sort_sql = _sort_sql(query)
     page, page_size, offset = _page(query)
     category_index = _category_keyword_index(conn, query)
-    total = conn.execute(f"SELECT COUNT(*) AS cnt FROM crawl_articles a LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ? {where_sql}", [query["user_id"], *params]).fetchone()["cnt"]
+    total = conn.execute(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM crawl_articles a
+        LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ?
+        LEFT JOIN article_sentiment sen ON a.article_id = sen.article_id
+        {where_sql}
+        """,
+        [query["user_id"], *params],
+    ).fetchone()["cnt"]
     rows = conn.execute(
         f"""
         SELECT {ARTICLE_SELECT_COLUMNS}
@@ -738,6 +747,7 @@ def list_news_grouped(conn: sqlite3.Connection, query: dict[str, Any]) -> dict[s
         SELECT COUNT(*) AS cnt
         FROM crawl_articles a
         LEFT JOIN user_article_state s ON a.article_id = s.article_id AND s.user_id = ?
+        LEFT JOIN article_sentiment sen ON a.article_id = sen.article_id
         LEFT JOIN article_clusters c ON a.article_id = c.article_id
         {representative_where}
         """,
@@ -970,7 +980,14 @@ ARTICLE_SELECT_COLUMNS = """
     COALESCE(s.is_favorite, 0) AS is_favorite,
     s.favorite_at,
     sen.sentiment,
-    sen.confidence AS sentiment_confidence
+    sen.confidence AS sentiment_confidence,
+    CASE
+        WHEN sen.confirmed_at IS NOT NULL
+            AND sen.action_plan IS NOT NULL
+            AND sen.action_plan != ''
+        THEN 1
+        ELSE 0
+    END AS has_analysis
 """
 
 
@@ -1037,6 +1054,10 @@ def _where_clause(query: dict[str, Any], *, include_state_filters: bool = True) 
             clauses.append("1 = 0")
     if query.get("major_only"):
         clauses.append("a.is_active = 1")
+    if query.get("has_analysis"):
+        clauses.append("sen.confirmed_at IS NOT NULL")
+        clauses.append("sen.action_plan IS NOT NULL")
+        clauses.append("sen.action_plan != ''")
     if include_state_filters:
         if query.get("read_status") == "read":
             clauses.append("COALESCE(s.is_read, 0) = 1")
@@ -1141,6 +1162,7 @@ def _api_item(row: sqlite3.Row, *, category_index: dict[str, list[str]] | None =
         "favorite_at": row["favorite_at"],
         "sentiment": row["sentiment"],
         "sentiment_confidence": row["sentiment_confidence"],
+        "has_analysis": bool(row["has_analysis"]),
     }
 
 

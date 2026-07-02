@@ -277,6 +277,7 @@ GET /api/filter-options
 | `category_code` | 없음 | 사이드바 카테고리 코드. 예: `SK` |
 | `keyword_group` | `PR` | 카테고리 키워드 그룹 |
 | `config_category` | `PR` | `configs/*.json`의 `category` 기준 노출 제한. 예: `PR`, `PR,GR` |
+| `has_analysis` | `false` | `/analysis/save`로 확정 저장된 AI 분석 결과가 있는 기사만 조회 |
 
 `config_category` 동작:
 
@@ -290,11 +291,12 @@ GET /api/filter-options
 
 ### 5.3 추가 응답 필드
 
-`/api/news`와 `/api/news/grouped`의 기사 item에 `category_code`가 추가된다.
+`/api/news`와 `/api/news/grouped`의 기사 item에 `category_code`, `has_analysis`가 추가된다.
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `category_code` | `string \| null` | 해당 기사 `filter_term`을 카테고리 키워드 기준표와 매칭해 계산한 대표 카테고리 코드 |
+| `has_analysis` | `boolean` | `/analysis/save`로 확정 저장된 AI 분석 결과가 있으면 `true` |
 
 중요:
 
@@ -302,6 +304,8 @@ GET /api/filter-options
 - 서버가 `crawl_articles.filter_term`과 `monitoring_category_keywords`를 비교해서 기사별로 계산한다.
 - `GET /api/news/grouped`에서는 대표 기사 item과 `similar_articles` item 모두에 포함된다.
 - 카테고리 키워드 기준표가 비어 있거나 매칭되는 키워드가 없으면 `null`이다.
+- `has_analysis=true` 요청은 기존 날짜/제목/출처/카테고리/읽음/즐겨찾기 조건과 `AND`로 결합된다.
+- 분석 완료 기준은 `article_sentiment.confirmed_at`이 있고 `action_plan`이 비어 있지 않은 경우다.
 
 ### 5.4 카테고리 필터 동작 방식
 
@@ -403,7 +407,8 @@ GET /api/news?user_id=unknown&category_code=SK&keyword_group=PR&page=1&page_size
       "is_favorite": false,
       "favorite_at": null,
       "sentiment": "neutral",
-      "sentiment_confidence": 0.5
+      "sentiment_confidence": 0.5,
+      "has_analysis": true
     }
   ]
 }
@@ -419,7 +424,7 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&config_c
 
 - 카테고리 조건으로 필터링한 뒤 유사 기사 그룹 대표 목록을 반환한다.
 - 기존 grouped API 응답 구조는 유지한다.
-- 대표 기사 item과 `similar_articles` item 모두 `category_code`를 포함한다.
+- 대표 기사 item과 `similar_articles` item 모두 `category_code`, `has_analysis`를 포함한다.
 - 응답 최상위에 현재 필터 전체 대상 기준 `directMentionCount`, `negativeCount`, `todayCount`를 포함한다.
   - grouped에서는 대표 기사와 유사 기사를 모두 포함하며 페이지네이션과 무관하다.
 
@@ -438,13 +443,15 @@ GET /api/news/grouped?user_id=unknown&category_code=SK&keyword_group=PR&config_c
       "title": "대표 기사 제목",
       "filter_term": "SK온, 배터리",
       "category_code": "SKO",
+      "has_analysis": true,
       "similar_count": 1,
       "similar_articles": [
         {
           "article_id": "similar-id",
           "title": "유사 기사 제목",
           "filter_term": "SK온",
-          "category_code": "SKO"
+          "category_code": "SKO",
+          "has_analysis": false
         }
       ]
     }
